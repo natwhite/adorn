@@ -1,0 +1,30 @@
+{
+  "name": "adorn",
+  "version": "1.0.0",
+  "description": "A collection of convinient TypeScript decorators and simplified decorator creation wrapper",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "node dist/src/Tests.js"
+  },
+  "keywords": [
+    "TypeScript",
+    "decorators",
+    "prameter",
+    "decorators",
+    "method",
+    "decorators",
+    "generate",
+    "decorators"
+  ],
+  "author": "natwhite",
+  "license": "ISC",
+  "dependencies": {
+    "tslib": "^1.10.0",
+    "rxjs": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^12.11.1",
+    "ts-node": "^8.4.1",
+    "typescript": "^3.6.4"
+  }
+}
