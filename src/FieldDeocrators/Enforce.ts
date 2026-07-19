@@ -5,7 +5,7 @@ export class Enforce {
         return (target, key) => {
             Object.defineProperty(target, key, {
                 configurable: false,
-                set: v => func(target, key, v),
+                set: v => func(v, key, target),
             });
         };
     }

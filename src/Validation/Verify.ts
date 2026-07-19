@@ -6,7 +6,7 @@ export class Verify {
      * @param value - The value being assigned
      */
     static positive(keyName, value) {
-        if (value > 0) {
+        if (value < 0) {
             throw new Error(`ValueError: ${String(keyName)} is expected to be a positive number, got '${value}'`);
         }
         return value;
