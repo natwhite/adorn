@@ -20,11 +20,24 @@ That single trick — *turning a declaration into behavior* — is the seed of e
 
 ## North Star
 
-**adorn exists to let developers state what they mean, right where they mean it — and have the runtime honor it.**
+**adorn exists so that a developer states an intention once, and the system derives everything that follows from it — enforcement, documentation, tests, and the search for counterexamples.**
 
-The intent of a method, a field, or a class often lives in comments, in documentation, in the heads of the people who wrote it, or in defensive boilerplate scattered through the body. adorn's ambition is to pull that intent to the surface, express it as a small, readable annotation next to the code it governs, and make it *true* at runtime rather than merely *hoped for*.
+The intent of a method, a field, or a class is normally scattered across four places that immediately begin to disagree: a runtime check in the body, a sentence in the docs, a hand-written unit test, and whatever the author actually meant. Each is maintained separately. Each drifts. The documentation describes last year's behavior; the tests cover the cases someone thought of on a Tuesday; the check in the body is the only one that is definitely true, and it is the one nobody reads.
 
-If it succeeds, reading a signature tells you the contract, and the contract is enforced. Nothing drifts. The declaration and the behavior are the same thing.
+**The contract stops being only a runtime guard and becomes the single source from which documentation, validation, and tests all descend.**
+
+State the constraint once, on the parameter it governs, and it should yield all four:
+
+| | What the declaration produces |
+|---|---|
+| **Validation** | the check that runs on every call |
+| **Documentation** | the API reference, generated from the same statement it enforces |
+| **Testing** | inputs that satisfy the contract, and assertions about what must hold afterward |
+| **Fuzzing** | inputs designed to break it, and a definition of what "broken" means |
+
+That last column is what makes the idea more than convenience. A generated input is only as useful as the question you can ask about the result — so a codebase that declares what its methods *guarantee*, not merely what they *accept*, becomes automatically explorable. The contract supplies both the generator and the oracle.
+
+If adorn succeeds, reading a signature tells you the contract; the contract is enforced; the documentation is that same contract rendered; and the test suite is that same contract explored. Nothing drifts, because there is only one thing to drift *from*.
 
 ---
 
@@ -33,6 +46,8 @@ If it succeeds, reading a signature tells you the contract, and the contract is 
 These are the commitments that should survive as the surface area grows.
 
 - **Declaration over instruction.** The user says *what* must hold; adorn takes care of *when* and *how* it is checked or applied. A decorator is a statement of intent, not a call site buried in a method body.
+
+- **A declaration must describe itself.** This is the principle the north star rests on, and it is a real constraint on design rather than a nicety. A contract expressed only as a piece of executable logic can be *run* and nothing else — it cannot be read, rendered, translated into a specification, or used to generate an example. To project a declaration into documentation and tests, the library must know not merely *how to check* a constraint but *what the constraint is*. Every contract should therefore carry its own meaning alongside its enforcement. A constraint that can only be executed is a dead end, however elegantly it reads at the call site.
 
 - **Locality of intent.** A contract belongs next to the thing it constrains — on the parameter, the field, the method — not in a separate schema file that can rot out of sync with the code.
 
@@ -120,7 +135,7 @@ adorn does not need to live alone. Its value multiplies when it connects to the 
 
 - **Framework citizenship.** Decorator-heavy frameworks are a natural home. adorn's contracts could ride alongside dependency injection, controller routing, and ORM entity definitions, adding a layer of enforced meaning to code that is already annotation-shaped.
 
-- **Contracts as a source of truth.** Here is the most exciting positioning move. If a method's parameters, bounds, and return guarantees are *declared*, then that declaration is machine-readable. From it, adorn could generate artifacts: API documentation, OpenAPI-style specifications, validation for request payloads at a service boundary, even test fixtures and property-based test generators. The contract stops being only a runtime guard and becomes the **single source from which documentation, validation, and tests all descend.** Write the intent once; let everything else be projected from it.
+- **Contracts as a source of truth — now the north star, not a side benefit.** This has been promoted out of this list and to the top of the document, because it is no longer one attractive consequence among several; it is the thing adorn is *for*. The positioning consequence belongs here, though: it changes who adorn competes with. A library that merely validates values competes with excellent, mature, schema-first tools and has to argue it is somehow better at checking a number. A library whose declarations *project into four artifacts* is not in that argument at all. **Nothing in the surrounding ecosystem produces validation, documentation, tests, and fuzzing from one declaration** — the schema libraries stop at validation and inferred types, the compile-time transformers stop at validation, and the contract libraries stop at runtime enforcement. The nearest precedent is not in this ecosystem at all; it is `clojure.spec`, which pairs specification with generative testing and demonstrates the idea is sound rather than merely appealing.
 
 - **A shared authoring standard.** Because the whole premise is that *anyone* can write a decorator over the friendly parameter object, adorn could become the substrate for a community ecosystem — a common shape for third-party contract and concern packages, so that domain-specific validators and behaviors compose with the core and with each other.
 
@@ -128,22 +143,30 @@ adorn does not need to live alone. Its value multiplies when it connects to the 
 
 ## Horizons
 
-A tiered sketch of ambition — conceptual, not a schedule. Each horizon assumes the spirit of the ones before it.
+A tiered sketch of ambition — conceptual, not a schedule. Each horizon assumes the spirit of the ones before it. The tiers have been reordered around the north star: the sequence below is the order in which the *four projections* become possible, because that is what actually gates progress.
 
-### Near horizon — *complete the obvious*
+### Near horizon — *declarations that describe themselves*
 
-Fill out the vocabulary the project already dreams of: the full set of string and number contracts, coercions and defaults, generalized memoization, timing, and the first resilience and flow-control concerns. Make the built-in decorators quiet, well-documented, and pleasant, and make the global configuration real so contracts can be toggled. The goal here is simply that adorn becomes *trustworthy and delightful* for the things it already almost does.
+Fill out the vocabulary the project already dreams of — the full set of string and number contracts, coercions, defaults, timing — but write every one of them as a **self-describing declaration** rather than a check. This is the unglamorous, decisive step: a constraint that knows it is "a minimum of zero" rather than merely knowing how to reject a negative number. Make the built-in decorators quiet and pleasant, and make configuration real so contracts can be toggled.
 
-### Mid horizon — *from checks to contracts*
+The reward arrives at the end of this horizon and it is the proof the whole idea works: **generated documentation**. It needs nothing but declarations that describe themselves, and it is the first moment the same statement serves two masters without being written twice.
 
-Cross the line from validating single values to guaranteeing whole objects: postconditions, invariants, and cross-parameter relationships. Deepen the type-level integration so declaration and type agree and the IDE participates. Establish adorn as a genuine **Design-by-Contract toolkit** for TypeScript, and settle its relationship with schema validators as complement rather than rival. Begin projecting artifacts — documentation and specifications — from declared contracts.
+### Mid horizon — *guarantees, and therefore an oracle*
 
-### Far horizon — *contracts as the source of truth*
+Cross the line from constraining inputs to guaranteeing outcomes: postconditions, invariants, cross-parameter relationships. This is where adorn becomes a genuine **Design-by-Contract toolkit** for TypeScript, in the tradition the idea comes from.
 
-Let the declarations become the canonical description of a system's behavior, from which documentation, boundary validation, and tests are all generated. Explore contracts that adapt — informed by runtime observation, or negotiated across the boundaries between services so that a caller and callee can agree on the promises between them. At this horizon adorn is no longer "a library of decorators"; it is a way of writing programs where **intent is stated once, honored everywhere, and never allowed to drift** from the code that claims it.
+It is also the horizon that unlocks the remaining two projections, and the reason they cannot come sooner. A contract on inputs tells a generator what to *produce*; only a contract on outcomes tells it what to *check*. Without that, exploration can discover crashes and nothing more. With it, **testing and fuzzing** become possible in the same motion — the declaration supplies the generator, the guarantee supplies the oracle, and a properly annotated codebase becomes explorable without anyone writing a test.
+
+### Far horizon — *contracts between systems*
+
+With all four projections in hand, push the idea outward past the boundary of a single program. Contracts that adapt, informed by what actually happens at runtime. Contracts negotiated *across* service boundaries, so a caller and a callee can agree on the promises between them and detect when one side has quietly changed its mind. Specifications that are not written to describe a system but are simply *read off* it, always current because they are the system.
+
+At this horizon adorn is no longer "a library of decorators." It is a way of writing programs where **intent is stated once, honored everywhere, rendered for anyone who needs to read it, and continuously tested against reality** — never allowed to drift from the code that claims it.
 
 ---
 
 ## Closing
 
-adorn's founding insight is quiet but powerful: a declaration can *become behavior*. Everything above is that one idea, taken seriously across more kinds of contract, more cross-cutting concerns, and more of the software lifecycle. The current library is a small proof that the trick works. The vision is a codebase where what a developer *means* and what the program *does* are, at last, the same text.
+adorn's founding insight is quiet but powerful: a declaration can *become behavior*. The north star extends that insight one step, and the step is the whole point — a declaration can become **behavior, documentation, tests, and the search for counterexamples**, all at once, because all four were only ever restatements of the same intention in different dialects. Writing them separately was never a feature; it was the cost of having nowhere to say the thing once.
+
+The current library is a small proof that the first of those four works. The vision is a codebase where what a developer *means*, what the program *does*, what the documentation *claims*, and what the tests *check* are, at last, the same text.

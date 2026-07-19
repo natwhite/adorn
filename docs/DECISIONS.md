@@ -89,7 +89,7 @@ Follow-on consequences:
 ---
 
 ## DEC-007 — Artifact generation: runtime registry vs compile-time transformer
-**Status:** OPEN · recommendation recorded
+**Status:** ACCEPTED (recommended) · ratified in `implementation-plan-t0-t1.md` §9
 
 **Context.** DEC-006 requires producing docs/specs/tests from contracts. Runtime decorators are not statically analyzable without executing the module, which is the standard objection to this whole approach.
 
@@ -119,9 +119,33 @@ Follow-on consequences:
 
 ---
 
-## DEC-010 — Reified descriptor shape
-**Status:** OPEN · blocks bulk constraint authoring
+## DEC-010 — Reified descriptor shape: derive predicates from params
+**Status:** ACCEPTED · source: `implementation-plan-t0-t1.md` §1.5, P1.0
 
-**Context.** DEC-006 requires descriptors, but their exact shape is unsettled: which fields are mandatory, how the runtime predicate relates to the descriptor (derived from it, or attached alongside), and how an optional generator/arbitrary hook is expressed for fuzzing.
+**Context.** DEC-006 requires descriptors, but their shape was unsettled — in particular how the runtime predicate relates to the descriptor. Today a constraint is a closure that throws: its *identity* (`min`) and its *parameters* (`0`) exist only as instructions inside a function body, so nothing can be projected from it.
 
-**Why it matters now.** This is the highest-leverage unresolved design question. It gates the constraint-authoring work and, per DEC-006, retrofitting it later is the expensive path.
+**Decision.** Introduce a `ConstraintDescriptor` carrying kind, params, and message, and **derive the predicate from `params`** rather than attaching a hand-written predicate alongside it.
+
+**Consequences.** Derivation is what makes descriptor and check unable to drift (see Q-4 — drift is the worst failure mode this goal introduces, because generated docs would *look* authoritative while disagreeing with enforcement). Scheduled as **P1.0, first in Phase 1**, because P3.3 would otherwise author ~15 constraints as opaque predicates and require ~15 rewrites. Carries a real risk of premature abstraction: pressure to build a constraint algebra before any projection has exercised it.
+
+---
+
+## DEC-011 — Registry needs two structures: WeakMap for lookup, Set for enumeration
+**Status:** ACCEPTED · source: `implementation-plan-t0-t1.md` P1.1
+
+**Context.** The registry was designed as a `WeakMap` keyed by prototype — ideal for the hot path ("what contracts does this prototype have?"). But **a `WeakMap` cannot be enumerated by construction**: it exposes no `keys()`/`values()`/`entries()` and is not iterable, precisely because its entries are collectable. A documentation or fuzzing tool needs the *inverse* question — "what classes have contracts?" — which a `WeakMap` can never answer. The original design silently assumed lookup was the only access pattern.
+
+**Decision.** Keep the `WeakMap` for per-prototype lookup, and have `@Contract()` additionally append to an enumerable `Set` that backs enumeration.
+
+**Consequences.** The `Set` holds **strong references**, so registered classes are never collected — acceptable for a decorated codebase, but it must be stated rather than discovered. Registry introspection also becomes **semver-relevant** the moment a projection binds to it; it was internal before and could change freely.
+
+---
+
+## DEC-012 — Projections must not depend on any decorator adapter
+**Status:** ACCEPTED · source: `implementation-plan-t0-t1.md` §2
+
+**Context.** DEC-003 established a decorator-agnostic core with thin adapters. Adding a `Projections/` band (docs, specs, tests, fuzzing) introduces a new way to violate that layering.
+
+**Decision.** Projections may depend on `Core/` and `Contracts/` only, never on an adapter.
+
+**Consequences.** Without this rule, "four artifacts from one declaration" silently degrades into "four artifacts from the *legacy* syntax," stranding every consumer on standard decorators — the precise reach problem DEC-003 exists to solve.

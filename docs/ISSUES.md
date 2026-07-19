@@ -53,7 +53,10 @@ Running log of bugs, code smells, infrastructure gaps, and open questions found 
 |---|---|---|
 | Q-1 | OPEN | `Positive` accepts `0` (it rejects only `value < 0`), but "positive" strictly means `> 0`. The name and the semantics disagree. Pick one and apply it consistently across `Positive`, `Verify.positive`, and any future `Negative`. |
 | Q-2 | OPEN | Should preconditions guarding *untrusted external* input ever be strippable in production? A single blanket toggle is unsafe — internal self-checks can be stripped, boundary checks generally cannot. Tracked as DEC-008. |
-| Q-3 | OPEN | Generating meaningful arbitraries for *arbitrary hand-written predicates* is unsolved — a closure is a black box to a generator. This is the core reason contracts must be reified as data (DEC-006), and it means fuzzing coverage will be partial by construction. How partial is not yet known. |
+| Q-3 | OPEN | Generating meaningful arbitraries for *arbitrary hand-written predicates* is unsolved — a closure is a black box to a generator. Built-in constraints are tractable via their descriptors; **user-written predicates are not**, and generate-and-filter degrades badly for narrow ones. Consequence to state publicly rather than bury: **"decorate your code, get a fuzz suite" is not deliverable.** Coverage is partial by construction. |
+| Q-4 | OPEN | **Descriptor/predicate drift** — the worst failure mode this goal introduces. If a descriptor says `min: 0` while its predicate checks `> 0`, generated documentation *looks* authoritative while disagreeing with what is actually enforced. Mitigated by deriving predicates from params (DEC-010), but any escape hatch permitting hand-written predicates reopens it. |
+| Q-5 | OPEN | **Postcondition expressiveness**, not plumbing, is the real difficulty. Useful postconditions often need prior state and can be as hard to write correctly as the implementation they describe. Adoption may stall here regardless of how good the tooling is. |
+| Q-6 | OPEN | Registry introspection becomes **semver-relevant** the moment a projection binds to it (DEC-011). It was internal and freely changeable before; what subset becomes public API is undecided. |
 
 ## Feature ideas
 
@@ -61,10 +64,10 @@ Large directions live in [vision.md](vision.md) and are not duplicated here. Ite
 
 | ID | Status | Summary |
 |---|---|---|
-| IDEA-1 | **Adopted** | Reified constraint **descriptors** (contract as data, not closure) — prerequisite for the source-of-truth goal. See DEC-006. |
-| IDEA-2 | **Adopted** | Promote the contract registry from an internal install mechanism to a first-class, introspectable public API. |
+| IDEA-1 | **Adopted** | Reified constraint **descriptors** (contract as data, not closure) — prerequisite for the source-of-truth goal. Shape settled: derive predicates from params. See DEC-006, DEC-010. |
+| IDEA-2 | **Adopted** | Promote the contract registry from an internal install mechanism to a first-class, introspectable public API. Requires a second, enumerable structure — see DEC-011. |
 | IDEA-3 | OPEN | Integrate **fast-check** for property testing / fuzzing driven by contract descriptors. Precedent: `clojure.spec` yields validation *and* generative testing from one declaration. |
 | IDEA-4 | OPEN | Postconditions with `old()` state capture. Promoted in priority — fuzzing needs an oracle, and without postconditions generated inputs only test "it didn't throw." |
 | IDEA-5 | OPEN | Class invariants, likely `Proxy`-based (the `decorator-contracts` approach). |
 | IDEA-6 | OPEN | Cross-parameter contracts (`start < end`; "if mode is custom then config is required"). Highest marginal value — hardest rules to maintain by hand. |
-| IDEA-7 | OPEN | Generate documentation / OpenAPI-style specs from the registry. |
+| IDEA-7 | OPEN | Generate documentation / OpenAPI-style specs from the registry. **Recommended as the first projection to build** — it is the safest of the four, needing only descriptors and enumeration, with no oracle and no generator problem. |
