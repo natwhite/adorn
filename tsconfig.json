@@ -1,27 +1,32 @@
 {
   "compileOnSave": true,
   "compilerOptions": {
-    "baseUrl": "./",
     "outDir": "./dist",
+    "rootDir": "./",
     "module": "commonjs",
     "target": "es2019",
+    "strict": false,
+    "lib": [
+      "es2019",
+      "dom"
+    ],
+    "declaration": true,
+    "declarationMap": true,
     "sourceMap": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "importHelpers": true,
-    "moduleResolution": "node",
     "typeRoots": [
       "./node_modules/@types"
     ],
     "types": [
       "node"
-    ],
-    "lib": [
-      "es2018",
-      "dom"
     ]
   },
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "dist",
+    "test",
+    "**/*.test.ts"
   ]
 }

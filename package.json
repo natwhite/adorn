@@ -3,28 +3,42 @@
   "version": "1.0.0",
   "description": "A collection of convinient TypeScript decorators and simplified decorator creation wrapper",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "test": "node dist/src/Tests.js"
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc",
+    "rebuild": "npm run clean && npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "demo": "ts-node src/Tests.ts",
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "keywords": [
-    "TypeScript",
+    "typescript",
     "decorators",
-    "prameter",
-    "decorators",
-    "method",
-    "decorators",
-    "generate",
-    "decorators"
+    "parameter-decorators",
+    "method-decorators",
+    "field-decorators",
+    "validation",
+    "contracts",
+    "design-by-contract"
   ],
   "author": "natwhite",
   "license": "ISC",
   "dependencies": {
     "tslib": "^1.10.0",
-    "rxjs": "latest"
+    "rxjs": "^6.5.3"
   },
   "devDependencies": {
-    "@types/node": "^12.11.1",
-    "ts-node": "^8.4.1",
-    "typescript": "^3.6.4"
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.10.0",
+    "jest": "^30.4.2",
+    "reflect-metadata": "^0.2.2",
+    "ts-jest": "^29.4.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
   }
 }

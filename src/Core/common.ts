@@ -25,10 +25,14 @@ export abstract class DecoratorFactory {
         const ogDefine = Object.defineProperty;
 
         // console.log('Overriding Object.defineProperty to preserve changes...');
-        Object.defineProperty = (...args) => {
+        // The cast is required from TS 4.0 onward: Object.defineProperty's lib
+        // signature became generic (<T>(o: T, ...) => T), so a boolean-returning
+        // arrow is no longer assignable. Type-level only; no runtime change.
+        // This whole method is deleted at P1.4 (see DEC-005), which removes the issue.
+        Object.defineProperty = ((...args) => {
             Object.defineProperty = ogDefine;
             // console.log('Restoring Object.defineProperty...');
             return true;
-        };
+        }) as typeof Object.defineProperty;
     }
 }

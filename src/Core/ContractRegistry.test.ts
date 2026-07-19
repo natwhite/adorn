@@ -1,0 +1,325 @@
+import {
+    getContract,
+    getContractedClasses,
+    getContracts,
+    isClassEnumerationEnabled,
+    markInstalled,
+    recordParameterConstraint,
+    registerContractedClass,
+    resetRegistry,
+    setClassEnumerationEnabled,
+    setParameterMetadata,
+} from './ContractRegistry';
+import {ConstraintDescriptor, defineConstraint, JsonObject} from './Descriptor';
+
+interface MinParams extends JsonObject {
+    min: number;
+}
+
+const min = defineConstraint<MinParams>({
+    kind: 'number',
+    constraint: 'test:registry:min',
+    derive: params => value => (value as number) >= params.min,
+    describe: params => `a number greater than or equal to ${params.min}`,
+});
+
+const maxLength = defineConstraint<JsonObject>({
+    kind: 'string',
+    constraint: 'test:registry:maxLength',
+    derive: params => value => String(value).length <= (params.maxLength as number),
+    describe: params => `a string of at most ${params.maxLength} characters`,
+});
+
+beforeEach(resetRegistry);
+
+describe('recording and lookup', () => {
+    it('returns an empty map for a target with no contracts', () => {
+        expect(getContracts({}).size).toBe(0);
+        expect(getContract({}, 'anything')).toBeUndefined();
+    });
+
+    it('records a constraint against a parameter position', () => {
+        const target = {};
+        const constraint = min({min: 0});
+
+        recordParameterConstraint(target, 'send', 0, constraint);
+        const contract = getContract(target, 'send');
+
+        expect(contract).toBeDefined();
+        expect(contract!.params).toHaveLength(1);
+        expect(contract!.params[0].index).toBe(0);
+        expect(contract!.params[0].constraints).toEqual([constraint]);
+        expect(contract!.installed).toBe(false);
+        expect(contract!.pre).toEqual([]);
+        expect(contract!.post).toEqual([]);
+    });
+
+    it('accumulates several constraints on one parameter', () => {
+        const target = {};
+        const lower = min({min: 0});
+        const upper = min({min: 5});
+
+        recordParameterConstraint(target, 'send', 1, lower);
+        recordParameterConstraint(target, 'send', 1, upper);
+
+        expect(getContract(target, 'send')!.params[0].constraints).toEqual([lower, upper]);
+    });
+
+    it('keeps parameters ordered by index regardless of decoration order', () => {
+        const target = {};
+
+        // Parameter decorators are evaluated right-to-left, so out-of-order arrival is the norm.
+        recordParameterConstraint(target, 'send', 2, min({min: 0}));
+        recordParameterConstraint(target, 'send', 0, min({min: 1}));
+        recordParameterConstraint(target, 'send', 1, min({min: 2}));
+
+        expect(getContract(target, 'send')!.params.map(entry => entry.index)).toEqual([0, 1, 2]);
+    });
+
+    it('keeps methods and targets separate', () => {
+        const target = {};
+        const other = {};
+
+        recordParameterConstraint(target, 'send', 0, min({min: 0}));
+        recordParameterConstraint(target, 'receive', 0, min({min: 1}));
+        recordParameterConstraint(other, 'send', 0, min({min: 2}));
+
+        expect(getContracts(target).size).toBe(2);
+        expect(getContracts(other).size).toBe(1);
+        expect(getContract(other, 'send')!.params[0].constraints[0].params).toEqual({min: 2});
+    });
+
+    it('supports symbol method keys', () => {
+        const target = {};
+        const key = Symbol('send');
+
+        recordParameterConstraint(target, key, 0, min({min: 0}));
+
+        expect(getContract(target, key)).toBeDefined();
+    });
+
+    it('rejects a bare predicate in place of a descriptor', () => {
+        expect(() => recordParameterConstraint({}, 'send', 0, ((v: number) => v > 0) as any))
+            .toThrow(/ConstraintDescriptor/);
+    });
+
+    it('rejects a non-integer parameter index', () => {
+        expect(() => recordParameterConstraint({}, 'send', -1, min({min: 0}))).toThrow(/index/);
+        expect(() => recordParameterConstraint({}, 'send', 1.5, min({min: 0}))).toThrow(/index/);
+    });
+
+    it('rejects a non-object target', () => {
+        expect(() => recordParameterConstraint(null as any, 'send', 0, min({min: 0})))
+            .toThrow(/target must be an object/);
+    });
+});
+
+describe('descriptors survive round-trip retrieval', () => {
+    it('returns the descriptor with its params, predicate, and message intact', () => {
+        const target = {};
+        recordParameterConstraint(target, 'send', 0, min({min: 10}));
+
+        const retrieved: ConstraintDescriptor = getContract(target, 'send')!.params[0].constraints[0];
+
+        expect(retrieved.constraint).toBe('test:registry:min');
+        expect(retrieved.params).toEqual({min: 10});
+        expect(retrieved.predicate(10)).toBe(true);
+        expect(retrieved.predicate(9)).toBe(false);
+        expect(retrieved.message({value: 9, paramName: 'count'}))
+            .toBe('Value Error: count expected a number greater than or equal to 10 but received 9 instead');
+    });
+
+    it('stores constraints of different kinds side by side', () => {
+        const target = {};
+        recordParameterConstraint(target, 'send', 0, maxLength({maxLength: 3}));
+        recordParameterConstraint(target, 'send', 1, min({min: 1}));
+
+        const contract = getContract(target, 'send')!;
+        expect(contract.params[0].constraints[0].kind).toBe('string');
+        expect(contract.params[1].constraints[0].kind).toBe('number');
+    });
+});
+
+describe('own-property scoping', () => {
+    it('does not let a subclass see — or corrupt — its parent\'s contract', () => {
+        class Base {
+            send(_value: number) { /* no-op */ }
+        }
+
+        class Sub extends Base {
+        }
+
+        recordParameterConstraint(Base.prototype, 'send', 0, min({min: 0}));
+
+        // The subclass prototype is a distinct key, so it starts empty even though `send` is
+        // reachable through it. This is the fix for the inheritance bug in the current factory,
+        // which reads `target[propertyKey]` and walks the prototype chain into the parent.
+        expect(getContracts(Sub.prototype).size).toBe(0);
+        expect(getContract(Sub.prototype, 'send')).toBeUndefined();
+
+        recordParameterConstraint(Sub.prototype, 'send', 0, min({min: 100}));
+
+        expect(getContract(Base.prototype, 'send')!.params[0].constraints).toHaveLength(1);
+        expect(getContract(Base.prototype, 'send')!.params[0].constraints[0].params).toEqual({min: 0});
+        expect(getContract(Sub.prototype, 'send')!.params[0].constraints[0].params).toEqual({min: 100});
+    });
+});
+
+describe('parameter metadata', () => {
+    it('attaches a name and reflected type independently of constraints', () => {
+        const target = {};
+
+        setParameterMetadata(target, 'send', 0, {name: 'count', type: Number});
+
+        const parameter = getContract(target, 'send')!.params[0];
+        expect(parameter.name).toBe('count');
+        expect(parameter.type).toBe(Number);
+        expect(parameter.constraints).toEqual([]);
+    });
+
+    it('merges with constraints recorded for the same position', () => {
+        const target = {};
+
+        recordParameterConstraint(target, 'send', 0, min({min: 0}));
+        setParameterMetadata(target, 'send', 0, {name: 'count'});
+
+        const contract = getContract(target, 'send')!;
+        expect(contract.params).toHaveLength(1);
+        expect(contract.params[0].name).toBe('count');
+        expect(contract.params[0].constraints).toHaveLength(1);
+    });
+});
+
+describe('installation flag', () => {
+    it('starts false and flips on markInstalled', () => {
+        const target = {};
+        recordParameterConstraint(target, 'send', 0, min({min: 0}));
+
+        expect(getContract(target, 'send')!.installed).toBe(false);
+
+        markInstalled(target, 'send');
+
+        expect(getContract(target, 'send')!.installed).toBe(true);
+    });
+
+    it('makes the "contracts recorded but never installed" case detectable', () => {
+        // This is what P1.3's missing-@Contract() dev warning keys off. Without it, forgetting the
+        // annotation is a silent no-op — and silently absent from generated artifacts too.
+        const target = {};
+        recordParameterConstraint(target, 'send', 0, min({min: 0}));
+
+        const uninstalled: string[] = [];
+        getContracts(target).forEach((contract, key) => {
+            if (!contract.installed) uninstalled.push(String(key));
+        });
+
+        expect(uninstalled).toEqual(['send']);
+    });
+});
+
+describe('enumeration (DEC-011)', () => {
+    it('is empty until a class is explicitly registered', () => {
+        class Task {
+        }
+
+        recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
+
+        // Recording constraints is not enough: enumeration reports the classes an installer
+        // annotated, which is exactly the set whose contracts are actually enforced.
+        expect(getContractedClasses()).toEqual([]);
+
+        registerContractedClass(Task);
+
+        expect(getContractedClasses()).toEqual([Task]);
+    });
+
+    it('answers the question a WeakMap cannot: which classes have contracts', () => {
+        class First {
+        }
+
+        class Second {
+        }
+
+        registerContractedClass(First);
+        registerContractedClass(Second);
+
+        const constrained = getContractedClasses().map(entry => ({
+            name: entry.name,
+            methods: Array.from(getContracts(entry.prototype).keys()),
+        }));
+
+        expect(constrained).toEqual([
+            {name: 'First', methods: []},
+            {name: 'Second', methods: []},
+        ]);
+    });
+
+    it('deduplicates repeat registrations', () => {
+        class Task {
+        }
+
+        registerContractedClass(Task);
+        registerContractedClass(Task);
+
+        expect(getContractedClasses()).toHaveLength(1);
+    });
+
+    it('returns a snapshot that callers cannot use to mutate the registry', () => {
+        class Task {
+        }
+
+        registerContractedClass(Task);
+
+        const snapshot = getContractedClasses();
+        snapshot.push(function Injected() { /* no-op */ });
+
+        expect(getContractedClasses()).toHaveLength(1);
+    });
+
+    it('rejects a non-constructor', () => {
+        expect(() => registerContractedClass({} as any)).toThrow(/constructor/);
+    });
+
+    it('can be opted out of, which drops the strong references it holds', () => {
+        class Task {
+        }
+
+        registerContractedClass(Task);
+        expect(getContractedClasses()).toHaveLength(1);
+
+        setClassEnumerationEnabled(false);
+
+        expect(isClassEnumerationEnabled()).toBe(false);
+        expect(getContractedClasses()).toEqual([]);
+
+        registerContractedClass(Task);
+        expect(getContractedClasses()).toEqual([]);
+    });
+
+    it('still supports per-target lookup while enumeration is disabled', () => {
+        class Task {
+        }
+
+        setClassEnumerationEnabled(false);
+        recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
+
+        expect(getContract(Task.prototype, 'send')).toBeDefined();
+    });
+});
+
+describe('resetRegistry', () => {
+    it('clears per-target contracts, enumeration, and the opt-out flag', () => {
+        class Task {
+        }
+
+        recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
+        registerContractedClass(Task);
+        setClassEnumerationEnabled(false);
+
+        resetRegistry();
+
+        expect(getContracts(Task.prototype).size).toBe(0);
+        expect(getContractedClasses()).toEqual([]);
+        expect(isClassEnumerationEnabled()).toBe(true);
+    });
+});
