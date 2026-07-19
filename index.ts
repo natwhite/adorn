@@ -1,7 +1,7 @@
 import {StringMinLength, Positive, GreaterThanEqual, LessThanEqual} from './src/ParameterDecorators/Constraints';
-import {Enforce} from 'src/FieldDeocrators/Enforce';
-import {Verify} from 'src/Validation/Verify';
-import {Log, Memoize} from 'src/MethodDecorators/promise/Memoize';
+import {Enforce} from './src/FieldDeocrators/Enforce';
+import {Verify} from './src/Validation/Verify';
+import {Log, Memoize} from './src/MethodDecorators/promise/Memoize';
 
 export {
     LessThanEqual,
