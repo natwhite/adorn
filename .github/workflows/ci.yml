@@ -1,6 +1,6 @@
 # CI for adorn (GAP-4).
 #
-# Deliberately minimal: install, lint, typecheck, build, test. There is finally a real suite
+# Deliberately minimal: install, format, lint, typecheck, build, test. There is finally a real suite
 # (444 tests across 15 suites) for this to protect, which is what made CI worth adding.
 #
 # Ordering note: the steps run cheapest-and-most-specific first, so a failure names its own
@@ -59,6 +59,14 @@ jobs:
       # test noticing.
       - name: Verify rxjs is absent (GAP-6)
         run: node -e "try { require.resolve('rxjs'); console.error('rxjs resolved - it must not be a dependency'); process.exit(1) } catch { console.log('rxjs absent, as intended') }"
+
+      # Cheapest and most specific, so it runs first. Prettier is the sole authority on layout;
+      # `.prettierignore` records what is deliberately kept out of its reach (all Markdown) and
+      # `// prettier-ignore` marks the few places in `index.ts` where hand-grouping carries meaning.
+      # This step is what stops formatting drifting again — it was kept out of CI until the tree
+      # was actually clean, which it now is.
+      - name: Format check
+        run: npm run format:check
 
       - name: Lint
         run: npm run lint

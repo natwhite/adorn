@@ -1,4 +1,7 @@
 // --- Parameter decorators -------------------------------------------------
+// The line breaks group these by what they constrain — ordering, then the other numeric
+// predicates, then string — which one-specifier-per-line would flatten away.
+// prettier-ignore
 import {
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
@@ -25,6 +28,8 @@ import {
 } from './src/Core/ContractDiagnostics';
 
 // --- Enforcement configuration (DEC-008) ----------------------------------
+// Grouped by line: the mode/trust setters, then the guard controls.
+// prettier-ignore
 import {
     setEnforcementMode, setAssertEnforcement, setDefaultTrust,
     disableGuardEnforcement, enableGuardEnforcement, setViolationPolicy,
@@ -36,6 +41,9 @@ import {
 // exported: they would let a caller bypass the adapter that owns declaration
 // ordering (SMELL-13) and installation, and write contracts the enforcement path
 // never sees.
+//
+// Grouped by line: method reads, then declared-field reads, then the inheritance-aware reads.
+// prettier-ignore
 import {
     getContracts, getContract, getContractedClasses, getContractsForClass,
     getFieldContract, getFieldContracts, getFieldContractsForClass,
@@ -65,6 +73,12 @@ export type {
 import * as NumberContracts from './src/Contracts/number';
 import * as StringContracts from './src/Contracts/string';
 
+// The public surface, and the one place a reader can see its whole shape at once. Both the
+// section comments and the line grouping within each section are load-bearing: they say which
+// exports belong together. Prettier would put every specifier on its own line, turning a
+// 60-line map of the API into a 120-line alphabet-soup column, and would drop the blank line
+// after `Validate` that separates installation from diagnostics.
+// prettier-ignore
 export {
     // Parameter decorators
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,

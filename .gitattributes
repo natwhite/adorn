@@ -1,0 +1,9 @@
+# Prettier is configured with `endOfLine: "lf"`, which checks the bytes on disk.
+#
+# Without this file, `core.autocrlf=true` (the Windows default) checks every file out with CRLF
+# endings, and `npm run format:check` then fails on a clean clone for every file in the repo —
+# while the same check passes in CI on Linux. Pinning the working tree to LF on every platform
+# is what makes the CI gate reproducible locally.
+#
+# Git already stores these blobs with LF, so this changes what is checked out, not what is committed.
+* text=auto eol=lf

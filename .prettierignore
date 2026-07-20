@@ -2,3 +2,17 @@ dist/
 node_modules/
 coverage/
 package-lock.json
+
+# Markdown is hand-maintained and deliberately outside Prettier's reach.
+#
+# These documents carry information in their layout that Prettier would flatten:
+#   - docs/decorators-modernization.md quotes compiler input verbatim inside ```ts fences and
+#     then cites the diagnostics it produced by line and column ("modern.ts(3,5): error TS1206").
+#     Reformatting that source silently invalidates the citation — it is evidence, not layout.
+#   - The comparison tables throughout docs/ and README.md are hand-aligned.
+#   - Prettier also rewrites *emphasis* to _emphasis_, which would churn several hundred lines
+#     of prose for no semantic gain and bury real documentation changes in future diffs.
+#
+# Prettier is here to settle *code* formatting, where consistency removes review friction.
+# Prose gains little and stands to lose meaning, so it is excluded as a single clear rule.
+*.md
