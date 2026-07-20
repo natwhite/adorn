@@ -1,22 +1,34 @@
 /**
- * Tests for the documentation projection.
+ * Unit tests for the documentation projection, against the registry's **read API**.
  *
- * **The registry is populated by hand here, not by decorators.** Registry-driven installation is
- * P1.3 and is not landed, so nothing wires a decorator to `recordParameterConstraint` yet. These
- * tests therefore exercise exactly the contract the projection actually depends on — the registry's
- * read API — which is what P1.3 will populate. They are not a substitute for an end-to-end test of
- * "decorate a class, get docs"; that test belongs with P1.3.
+ * **The registry is populated by hand here, not by decorators** — deliberately, and no longer alone.
+ * Driving the write API directly is the cheapest way to reach shapes a real decorator cannot easily
+ * produce (a symbol key, a constraint-free parameter, an anonymous class, a pipe in author prose), and
+ * it pins exactly the read contract the projection depends on.
+ *
+ * What it **cannot** do is notice that no production caller ever writes what it reads. That is how
+ * BUG-14 stayed green here while enforcement said `parameter 'sku'` and this projection said `arg0`:
+ * these tests supplied the name themselves, so the missing writer was invisible. `docs.decorators.test.ts`
+ * is the answer to that — it decorates classes with real `@` syntax and asserts through the rendered
+ * document, comparing enforcement and documentation *to each other*. Neither file replaces the other.
+ *
+ * Note also that this file runs **without `reflect-metadata`**, so `design:type` is genuinely
+ * unavailable — which is what lets it assert honest degradation (an absent type renders as absent)
+ * rather than merely asserting nothing read it.
  */
 
 import {
+    markFieldInstalled,
     markInstalled,
+    recordFieldConstraint,
     recordParameterConstraint,
     registerContractedClass,
     resetRegistry,
+    setFieldMetadata,
     setParameterMetadata,
 } from '../Core/ContractRegistry';
 import {GreaterThan, GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
-import {StringMinLength} from '../Contracts/string';
+import {Matches, StringMinLength} from '../Contracts/string';
 import {
     ClassDoc,
     documentClass,
@@ -212,11 +224,214 @@ describe('a method with several parameters', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The field band (GAP-9)
+// ---------------------------------------------------------------------------
+
+describe('contracted fields', () => {
+    /** Table rows of the `### Fields` section — the field twin of the parameter-row filter above. */
+    function fieldRows(markdown: string): string[] {
+        const lines = markdown.split('\n');
+        const start = lines.indexOf('### Fields');
+        if (start < 0) return [];
+        return lines.slice(start + 1)
+            .filter(line => /^\| `/.test(line));
+    }
+
+    it('models a field with its constraints, type, and installed flag', () => {
+        class Basket {
+        }
+
+        recordFieldConstraint(Basket.prototype, 'itemCount', Positive());
+        setFieldMetadata(Basket.prototype, 'itemCount', {type: Number});
+        markFieldInstalled(Basket.prototype, 'itemCount');
+
+        const [field] = documentClass(Basket).fields;
+
+        expect(field.name).toBe('itemCount');
+        expect(field.isStatic).toBe(false);
+        expect(field.typeName).toBe('Number');
+        expect(field.installed).toBe(true);
+        expect(field.constraints.map(constraint => constraint.constraint)).toEqual(['positive']);
+        expect(field.constraints[0].expectation).toBe('a positive number');
+    });
+
+    it('carries several constraints on one field, in recorded order', () => {
+        class Basket {
+        }
+
+        recordFieldConstraint(Basket.prototype, 'capacity', GreaterThanEqual(1));
+        recordFieldConstraint(Basket.prototype, 'capacity', LessThanEqual(100));
+
+        const [field] = documentClass(Basket).fields;
+
+        expect(field.constraints.map(constraint => constraint.constraint)).toEqual(['min', 'max']);
+    });
+
+    it('emits one table row per constraint, not per field', () => {
+        class Basket {
+        }
+
+        recordFieldConstraint(Basket.prototype, 'capacity', GreaterThanEqual(1));
+        recordFieldConstraint(Basket.prototype, 'capacity', LessThanEqual(100));
+        markFieldInstalled(Basket.prototype, 'capacity');
+
+        const rows = fieldRows(renderMarkdown([documentClass(Basket)]));
+
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toContain('a number greater than or equal to 1');
+        expect(rows[1]).toContain('a number less than or equal to 100');
+    });
+
+    it('documents static fields, which are recorded against the constructor', () => {
+        // The other key band. A projection walking only the prototype would drop this row entirely
+        // and nothing would throw to reveal it — which is why the walk lives in the registry (DEC-018).
+        class Widget {
+        }
+
+        recordFieldConstraint(Widget, 'limit', GreaterThanEqual(1));
+        recordFieldConstraint(Widget.prototype, 'count', Positive());
+        markFieldInstalled(Widget, 'limit');
+        markFieldInstalled(Widget.prototype, 'count');
+
+        const classDoc = documentClass(Widget);
+
+        expect(classDoc.fields.map(field => ({name: field.name, isStatic: field.isStatic})))
+            .toEqual([
+                {name: 'count', isStatic: false},
+                {name: 'limit', isStatic: true},
+            ]);
+        expect(fieldRows(renderMarkdown([classDoc])).map(row => row.split('|')[1].trim()))
+            .toEqual(['`count`', '`limit` _(static)_']);
+    });
+
+    it('orders fields deterministically regardless of decoration order', () => {
+        class Widget {
+        }
+
+        recordFieldConstraint(Widget.prototype, 'zebra', Positive());
+        recordFieldConstraint(Widget.prototype, 'alpha', Positive());
+
+        expect(documentClass(Widget).fields.map(field => field.name)).toEqual(['alpha', 'zebra']);
+    });
+
+    it('marks a field whose contracts are recorded but not installed, naming it', () => {
+        // Same reasoning as the method warning: a document describing an unenforced guarantee is
+        // worse than no document. Named individually because one table can hold both kinds.
+        class Widget {
+        }
+
+        recordFieldConstraint(Widget.prototype, 'unarmed', Positive());
+        recordFieldConstraint(Widget.prototype, 'armed', Positive());
+        markFieldInstalled(Widget.prototype, 'armed');
+
+        const markdown = renderMarkdown([documentClass(Widget)]);
+
+        expect(markdown).toContain('**Not enforced.**');
+        expect(markdown).toContain('`unarmed`');
+        expect(markdown).toMatch(/\*\*Not enforced\.\*\*[^\n]*`unarmed`/);
+        // The enforced field must not be swept into the warning alongside it.
+        expect(markdown).not.toMatch(/\*\*Not enforced\.\*\*[^\n]*`armed`,/);
+    });
+
+    it('renders an absent type as absent rather than guessing one', () => {
+        // `emitDecoratorMetadata` is unavailable under a transpile-only toolchain (DEC-004) and this
+        // file runs without `reflect-metadata` at all, so there is genuinely no type to report. The
+        // document must say so instead of inferring one from an assigned value.
+        class Basket {
+        }
+
+        recordFieldConstraint(Basket.prototype, 'itemCount', Positive());
+        markFieldInstalled(Basket.prototype, 'itemCount');
+
+        const [field] = documentClass(Basket).fields;
+
+        expect(field.typeName).toBeUndefined();
+        expect(fieldRows(renderMarkdown([documentClass(Basket)]))[0]).toContain('| — |');
+    });
+
+    it('renders a symbol field key', () => {
+        const key = Symbol('hidden');
+
+        class Basket {
+        }
+
+        recordFieldConstraint(Basket.prototype, key, Positive());
+        markFieldInstalled(Basket.prototype, key);
+
+        expect(documentClass(Basket).fields[0].name).toBe('Symbol(hidden)');
+        expect(fieldRows(renderMarkdown([documentClass(Basket)]))[0]).toContain('`Symbol(hidden)`');
+    });
+
+    it('handles a field recorded with metadata but no constraints', () => {
+        // Reachable via `setFieldMetadata` alone. An empty table with a header and no rows would be
+        // a worse artifact than saying plainly that nothing is constrained.
+        class Basket {
+        }
+
+        setFieldMetadata(Basket.prototype, 'itemCount', {type: Number});
+
+        const markdown = renderMarkdown([documentClass(Basket)]);
+
+        expect(markdown).toContain('### Fields');
+        expect(markdown).toContain('_No field constraints recorded._');
+        expect(markdown).not.toContain('| Field |');
+    });
+
+    it('renders both bands for a class carrying methods and fields', () => {
+        class Task {
+            send(_message: string) { /* no-op */ }
+        }
+
+        recordParameterConstraint(Task.prototype, 'send', 0, StringMinLength(10));
+        setParameterMetadata(Task.prototype, 'send', 0, {name: 'message', type: String});
+        markInstalled(Task.prototype, 'send');
+
+        recordFieldConstraint(Task.prototype, 'retries', Positive());
+        setFieldMetadata(Task.prototype, 'retries', {type: Number});
+        markFieldInstalled(Task.prototype, 'retries');
+
+        expect(renderMarkdown([documentClass(Task)])).toBe([
+            '# Contracts',
+            '',
+            '## Task',
+            '',
+            '### Task.send(message)',
+            '',
+            '| Parameter | Type | Constraint | Expectation |',
+            '| --- | --- | --- | --- |',
+            '| `message` (0) | `String` | `minLength` | a string of length greater than 10 |',
+            '',
+            '### Fields',
+            '',
+            '| Field | Type | Constraint | Expectation |',
+            '| --- | --- | --- | --- |',
+            '| `retries` | `Number` | `positive` | a positive number |',
+            '',
+        ].join('\n'));
+    });
+
+    it('escapes a pipe in a field expectation so it cannot split a row', () => {
+        class Basket {
+        }
+
+        recordFieldConstraint(Basket.prototype, 'code', Matches('^a|b$'));
+        markFieldInstalled(Basket.prototype, 'code');
+
+        const row = fieldRows(renderMarkdown([documentClass(Basket)]))[0];
+
+        expect(row).toContain('\\|');
+        // Four cells means five unescaped delimiters, so six parts once the leading and trailing
+        // empties are counted — the same arithmetic the parameter-table case uses.
+        expect(row.split(/(?<!\\)\|/)).toHaveLength(6);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // The empty cases
 // ---------------------------------------------------------------------------
 
 describe('the empty case', () => {
-    it('models a class with no contracts as an empty method list, not a failure', () => {
+    it('models a class with no contracts as empty method AND field lists, not a failure', () => {
         class Plain {
             run() { /* no-op */ }
         }
@@ -225,6 +440,24 @@ describe('the empty case', () => {
 
         expect(classDoc.name).toBe('Plain');
         expect(classDoc.methods).toEqual([]);
+        expect(classDoc.fields).toEqual([]);
+    });
+
+    it('does NOT report a field-only class as having no contracts', () => {
+        // The regression guard for this task. `_No contracts recorded._` keyed on `methods.length`
+        // alone, so a class contracted purely through fields was enforced at runtime and reported as
+        // having nothing — a document that looks complete and is not (DEC-011).
+        class Basket {
+        }
+
+        recordFieldConstraint(Basket.prototype, 'itemCount', Positive());
+        markFieldInstalled(Basket.prototype, 'itemCount');
+
+        const markdown = renderMarkdown([documentClass(Basket)]);
+
+        expect(documentClass(Basket).methods).toEqual([]);
+        expect(markdown).not.toContain('_No contracts recorded._');
+        expect(markdown).toContain('`positive`');
     });
 
     it('renders a class with no contracts without inventing any', () => {
@@ -454,6 +687,10 @@ describe('markdown escaping', () => {
 
         const markdown = renderMarkdown([{
             name: 'Task',
+            // `fields` is required rather than optional on `ClassDoc`: an optional band is one a
+            // future projection can silently forget to populate, which is the failure this whole
+            // task exists to remove. The cost is this one line.
+            fields: [],
             methods: [{
                 name: 'run',
                 isStatic: false,

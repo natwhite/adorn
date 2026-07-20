@@ -20,6 +20,8 @@ import {
 } from './FieldDecoratorFactory';
 import {GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
 import {StringMinLength} from '../Contracts/string';
+import {getFieldContract, getFieldContractsForClass} from './ContractRegistry';
+import {Enforce} from '../FieldDeocrators/Enforce';
 
 describe('the constraint store', () => {
     it('reports nothing for an untouched target', () => {
@@ -291,6 +293,111 @@ describe('observability — why the WeakMap side table was rejected', () => {
         const keys: string[] = [];
         for (const key in new Sparse()) keys.push(key);
         expect(keys).toEqual(['assigned']);
+    });
+});
+
+describe('field contracts are visible to projections (GAP-9)', () => {
+    /**
+     * The store used to be adapter-local, so a field was **enforced at runtime and absent from every
+     * generated artifact** — the same shape as BUG-14 and the same failure DEC-016 rejects: nothing
+     * throws, and the document looks complete.
+     *
+     * These go through `@Enforce`, the real public authoring surface, for the reason BUG-14 exists at
+     * all: a test that records into the store by hand cannot tell you whether any decorator ever
+     * reaches it.
+     */
+
+    it('exposes an @Enforce field through the registry, tagged by band', () => {
+        class Basket {
+            @Enforce.positive()
+            itemCount: number = 1;
+
+            @Enforce.nonNegative()
+            static minimumOrder: number = 0;
+        }
+
+        const entries = getFieldContractsForClass(Basket);
+
+        expect(entries.map(entry => ({key: entry.key, isStatic: entry.isStatic}))).toEqual([
+            {key: 'itemCount', isStatic: false},
+            {key: 'minimumOrder', isStatic: true},
+        ]);
+    });
+
+    it('carries the identity and params a document renders, not an opaque closure', () => {
+        class Basket {
+            @Enforce.between(1, 10)
+            itemCount: number = 1;
+        }
+
+        const [field] = getFieldContractsForClass(Basket);
+
+        expect(field.contract.constraints[0].constraint).toBe('between');
+        expect(field.contract.constraints[0].params).toEqual({min: 1, max: 10});
+        expect(field.contract.constraints[0].describe()).toContain('between 1 and 10');
+    });
+
+    it('marks the field installed, so a projection can tell enforced from merely recorded', () => {
+        class Basket {
+            @Enforce.positive()
+            itemCount: number = 1;
+        }
+
+        expect(getFieldContractsForClass(Basket)[0].contract.installed).toBe(true);
+
+        // Recorded but never installed stays `false` — the field-band twin of what the docs renderer
+        // already flags loudly for methods.
+        const recordedOnly = {};
+        recordFieldConstraint(recordedOnly, 'count', Positive());
+        expect(getFieldContract(recordedOnly, 'count')!.installed).toBe(false);
+    });
+
+    it('lists stacked constraints in the order enforcement applies them', () => {
+        class Reading {
+            @Enforce.greaterThanEqual(10)
+            @Enforce.lessThanEqual(100)
+            value: number = 50;
+        }
+
+        const [field] = getFieldContractsForClass(Reading);
+
+        // Declaration order in the registry, and the first-declared constraint is the one that
+        // reports — so the document and the runtime tell the same story (DEC-017).
+        expect(field.contract.constraints.map(c => c.constraint)).toEqual(['min', 'max']);
+        expect(() => { new Reading().value = 5; }).toThrow(/greater than or equal to 10/);
+    });
+
+    it('does not conjure a field contract for an installed-but-unrecorded field', () => {
+        // `installFieldContract` may be driven class-wide; it must not put an empty contract into the
+        // registry that a document would then render as a contracted field with no constraints.
+        const target: any = {};
+        installFieldContract(target, 'count');
+
+        expect(getFieldContract(target, 'count')).toBeUndefined();
+    });
+
+    it('OPEN QUESTION (Q-14): a subclass redeclaring a field REPLACES the base contract', () => {
+        // Unchanged by the move to the registry — the field band is own-scoped exactly as the method
+        // band is. Whether a subclass should inherit, be allowed to strengthen, or be forbidden from
+        // weakening a field precondition is a Design-by-Contract / Liskov decision and is NOT settled
+        // here; this pins the status quo so whichever way it is answered is a deliberate change.
+        class Base {
+            @Enforce.greaterThanEqual(10)
+            value: number = 10;
+        }
+
+        class Sub extends Base {
+            @Enforce.greaterThanEqual(0)
+            value: number = 0;
+        }
+
+        expect(getFieldContractsForClass(Base)[0].contract.constraints[0].params).toEqual({min: 10});
+        expect(getFieldContractsForClass(Sub)[0].contract.constraints[0].params).toEqual({min: 0});
+
+        // The subclass's own accessor shadows the base's and enforces only its own constraint.
+        const sub = new Sub();
+        sub.value = 5;
+        expect(sub.value).toBe(5);
     });
 });
 

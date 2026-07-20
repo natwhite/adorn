@@ -37,6 +37,18 @@
  *   later; it is ISSUES.md Q-3 showing up in the API. Anything that wants to be documented or
  *   fuzzed must be authored as a descriptor.
  *
+ * ## Signature capture — BUG-14
+ *
+ * Install time is also where parameter **names** and **types** are written to the registry. That is
+ * not an arbitrary home for it: `planChecks` recovers the names in order to build violation messages,
+ * so recording them from the same array is what makes the runtime error and the generated document
+ * literally one source rather than two recoveries that happen to agree. Before this, the registry had
+ * a writer (`setParameterMetadata`) that nothing in production ever called, so a single declaration
+ * produced an error naming `sku` and a document naming `arg0`.
+ *
+ * See {@link captureSignature} for what is recorded, what is deliberately not guessed when the
+ * toolchain supplies no types, and how much of Q-10's arity problem falls out of it.
+ *
  * ## Evaluation order — SMELL-11, now settled deliberately
  *
  * `__decorate` applies its decorator array back-to-front, so decorators arrive here in **reverse**
@@ -58,7 +70,13 @@
  */
 
 import {ConstraintDescriptor} from './Descriptor';
-import {getContract, MethodKey, recordParameterConstraint} from './ContractRegistry';
+import {
+    getContract,
+    MethodContract,
+    MethodKey,
+    recordParameterConstraint,
+    setParameterMetadata,
+} from './ContractRegistry';
 import {notePendingContract} from './ContractDiagnostics';
 import {DecoratorFactory} from './common';
 import {InvocationContext} from './MethodDecoratorFactory';
@@ -237,6 +255,12 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
     const funcName: string = original.name;
     const joinedNames = paramNames.join(', ');
 
+    // BUG-14. The names just recovered are about to be baked into every violation message for this
+    // method; record them so the registry — and therefore every projection — says the same thing.
+    // Done here rather than in the decorator because *this* is the computation the messages use, so
+    // there is literally one source rather than two that happen to agree today.
+    if (contract) captureSignature(target, propertyKey, contract, paramNames);
+
     // Built lazily and identically to the previous implementation, so every existing violation
     // message is byte-for-byte unchanged.
     const signatureFor = (index: number) =>
@@ -303,6 +327,122 @@ function descriptorCheck(
             paramName: paramNames[index],
         }));
     };
+}
+
+// ---------------------------------------------------------------------------
+// Signature capture — BUG-14, and as much of Q-10 as honestly falls out
+// ---------------------------------------------------------------------------
+
+const PLAIN_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * Whether the recovered name list can be trusted as *the method's signature*, as opposed to merely
+ * as the strings enforcement will quote.
+ *
+ * `getParamNames` regex-parses `Function.prototype.toString`, and that parse does not survive
+ * destructuring or rest syntax: `test({a, b})` yields `['{a', 'b}']` — two "names" for one parameter,
+ * and `test(a, ...rest)` yields a position that is not a fixed slot at all. Under either, the *count*
+ * is wrong even though the individual strings may look fine.
+ *
+ * So the two uses are separated. Recording a name onto an **already-decorated** position is always
+ * right: enforcement is quoting that identical string, so the registry and the violation message
+ * continue to agree — which is the property BUG-14 is about, and it holds whether or not the string
+ * is a good name. **Inventing a new position** is only right when the whole parse is coherent;
+ * otherwise the registry would gain a parameter that exists nowhere and that no enforcement path
+ * would ever contradict. One bad entry disqualifies the list, not just itself.
+ */
+function isTrustworthySignature(paramNames: string[]): boolean {
+    if (paramNames.length === 0) return false;
+    return paramNames.every(name => PLAIN_IDENTIFIER.test(name));
+}
+
+/**
+ * Record real parameter names and reflected types against `target[propertyKey]`.
+ *
+ * ## Names (BUG-14)
+ *
+ * `paramNames` is the array the violation messages are built from, a few lines up. Writing it here
+ * is what makes "one declaration, four artifacts" true for names: the error saying `parameter 'sku'`
+ * and the document saying `sku` are now the same string, not two independent recoveries that agree
+ * by luck. It carries SMELL-1's minification caveat along with it — but *consistently*, which is the
+ * property that matters. A document that says `arg0` about a check that says `sku` is worse than one
+ * that says `s` about a check that says `s`.
+ *
+ * ## Types
+ *
+ * `design:paramtypes` fills the documentation's Type column. It is available only when
+ * `emitDecoratorMetadata` is on **and** `reflect-metadata` is loaded; esbuild ignores the former
+ * permanently (DEC-004) and Babel drops legacy parameter decorators outright. When it is unavailable
+ * the field is simply left unset — the doc renders `—`. Nothing is guessed from the runtime value,
+ * because a type inferred from one observed argument would be a claim the compiler never made.
+ *
+ * ## Arity (Q-10)
+ *
+ * `getParamNames` returns *every* declared parameter, not only the decorated ones, so positions with
+ * no constraints get an entry too. That is what lets a signature render as `Task.send(sku, count)`
+ * rather than `Task.send(arg0, ...)` with the trailing parameter missing entirely. It is deliberately
+ * limited to what the name parse can vouch for — see {@link PLAIN_IDENTIFIER} — so the registry never
+ * gains a position that does not exist.
+ */
+function captureSignature(
+    target: object,
+    propertyKey: MethodKey,
+    contract: MethodContract,
+    paramNames: string[],
+): void {
+    const types = designParamTypes(target, propertyKey);
+    const trustworthy = isTrustworthySignature(paramNames);
+
+    const decorated = new Set<number>();
+    let highestDecorated = -1;
+    contract.params.forEach(parameter => {
+        decorated.add(parameter.index);
+        if (parameter.index > highestDecorated) highestDecorated = parameter.index;
+    });
+
+    // Cover every position either source knows about: the parsed signature, and any decorated index
+    // beyond it (which happens when the name parse fails but the decorator did not).
+    const limit = Math.max(paramNames.length, highestDecorated + 1);
+
+    for (let index = 0; index < limit; index++) {
+        // Never create a position the parse cannot vouch for; always keep an existing one in sync.
+        if (!decorated.has(index) && !trustworthy) continue;
+
+        const name = paramNames[index];
+        const type = types && types[index];
+        setParameterMetadata(target, propertyKey, index, {
+            name: typeof name === 'string' ? name : undefined,
+            type: typeof type === 'function' ? type : undefined,
+        });
+    }
+}
+
+/**
+ * `design:paramtypes` for `target[propertyKey]`, or `undefined` when the toolchain did not emit it.
+ *
+ * Everything about this read is adapter knowledge — `Reflect.getMetadata`, `target`, `propertyKey`,
+ * and the legacy `emitDecoratorMetadata` protocol all stop at this layer, so `ContractRegistry` and
+ * the projections stay decorator-agnostic (DEC-012). A standard-decorator adapter has no equivalent
+ * to read (nothing in the TC39 model emits design-time types) and simply records no type.
+ *
+ * Feature-detected rather than assumed: `reflect-metadata` is what makes `__metadata` store anything,
+ * and adorn does not require it. `getMetadata` — not `getOwnMetadata` — because a contract may be
+ * installed against a subclass whose method is inherited, in which case the base's metadata is the
+ * honest answer and matches the function the names were parsed from.
+ */
+function designParamTypes(target: object, propertyKey: MethodKey): Function[] | undefined {
+    const reflect: any = typeof Reflect === 'object' ? Reflect : undefined;
+    if (!reflect || typeof reflect.getMetadata !== 'function') return undefined;
+
+    let types: unknown;
+    try {
+        types = reflect.getMetadata('design:paramtypes', target, propertyKey);
+    } catch (error) {
+        // A metadata polyfill throwing must never take an installation down with it.
+        return undefined;
+    }
+
+    return Array.isArray(types) ? (types as Function[]) : undefined;
 }
 
 // ---------------------------------------------------------------------------

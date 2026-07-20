@@ -223,6 +223,33 @@ describe('@Contract() installation', () => {
         expect(() => Task.parse('ab')).toThrow(/length greater than 3/);
     });
 
+    it('names the CLASS in a static violation, not Function (BUG-12)', () => {
+        @Contract()
+        class Task {
+            static parse(@StringMinLength(3) input: string) { return input.trim(); }
+            run(@StringMinLength(3) input: string) { return input.trim(); }
+        }
+
+        // PREVIOUSLY UNPINNED, which is why the bug survived: the test above matches only the
+        // expectation clause, so it passed just as happily against `Function.parse(input)`.
+        //
+        // `DecoratorFactory.getObjectName` read `target.constructor.name`. That is right for a
+        // prototype and wrong for a constructor — and a static member's decoration target IS the
+        // constructor, so `.constructor` was `Function`. The instance form was correct throughout,
+        // which is what made the discrepancy easy to miss.
+        expect(() => Task.parse('ab')).toThrow(
+            "Value Error: Task.parse(input) parameter 'input' " +
+            "expected a string of length greater than 3 but received 'ab' instead",
+        );
+
+        // The instance form is asserted alongside it, so the two bands are pinned as agreeing rather
+        // than as two independent facts.
+        expect(() => new Task().run('ab')).toThrow(
+            "Value Error: Task.run(input) parameter 'input' " +
+            "expected a string of length greater than 3 but received 'ab' instead",
+        );
+    });
+
     it('is idempotent — installing twice does not double-wrap', () => {
         @Contract()
         class Task {

@@ -46,6 +46,17 @@
  * why returning a Subject from a public method is already questionable, but it is a real behaviour
  * change and is called out rather than left to be discovered.
  *
+ * **The alternative was evaluated and rejected** (SMELL-15). `source.lift(operator)` *does* preserve
+ * the source's type — verified against rxjs 6.5.3, where a lifted `Subject` comes back as an
+ * `AnonymousSubject` and keeps `next`. It is not used, for two reasons that both matter more than
+ * the normalisation does. `lift` is rxjs-internal API, documented as an implementation detail and
+ * deprecated outright in rxjs 7, so building on it trades a documented behaviour change for an
+ * undocumented breakage on the next major. And it does not exist on the duck-typed interop
+ * observables this file deliberately accepts (see {@link isObservableLike}), so it would need the
+ * plain-`Observable` path as a fallback anyway — meaning the normalisation would still happen, just
+ * unpredictably, depending on which library produced the source. A behaviour change that is uniform
+ * and documented beats one that is conditional and surprising.
+ *
  * ## Built on the existing installation path (P1.2)
  *
  * This is a plain {@link CreateMethodDecorator} around-behaviour, the first consumer of that factory
@@ -255,6 +266,19 @@ function timeObservable(source: any, report: Report): any {
  * A static import would make rxjs a hard dependency of every consumer of `@Time`, including the ones
  * timing plain synchronous methods. GAP-6 is moving rxjs to a peer/optional dependency, so this must
  * degrade rather than fail to load.
+ *
+ * **SMELL-16 is real and is deliberately not worked around.** The argument is a string literal, so a
+ * bundler resolves it statically no matter that the call sits inside a guarded function: webpack and
+ * friends will pull rxjs into any build that imports `@Time`, including one that only times
+ * synchronous methods. The lazy `require` buys nothing there — it only buys the Node/CommonJS case,
+ * where it does work.
+ *
+ * The two ways out are both worse than the smell. Hiding the specifier from static analysis
+ * (`eval('require')('rxjs')`) breaks under a strict CSP and under ESM, and earns a bundler warning
+ * rather than avoiding one. Injecting the constructor through a new `setObservableConstructor()`
+ * export invents public API for a problem no consumer has yet — rxjs is still a hard dependency
+ * here, so the smell has no victim until GAP-6 actually lands, and GAP-6 is a `package.json` change.
+ * The right moment to fix this is when the dependency moves, and the fix belongs with that move.
  */
 let observableCtor: any;
 let observableLookupDone = false;

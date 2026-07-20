@@ -27,6 +27,24 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * The lower bound to assert for a method that slept for `ms`.
+ *
+ * `busyWait` below avoids cross-clock comparison by spinning on the clock `@Time` reads.
+ * `sleep` **cannot**: `setTimeout` is scheduled on the platform timer, `@Time` measures with
+ * `performance.now()`, and the two are only loosely coupled — so a 50ms sleep can be measured
+ * as 49.87ms and fail `>= 50` for reasons that have nothing to do with the code under test.
+ * Observed once as a full-suite-only failure at `durationMs >= 50`.
+ *
+ * The tolerance does not weaken what these tests check. Their purpose, stated in each, is to
+ * separate a correct measurement from the naive "time the call" implementation, which reports
+ * approximately **zero** for anything asynchronous. A floor of 80% discriminates between ~0 and
+ * ~50 exactly as sharply as a floor of 100%, and does not depend on which clock won the race.
+ */
+function atLeastSlept(ms: number): number {
+    return ms * 0.8;
+}
+
+/**
  * Spins on the **same clock `@Time` measures with**.
  *
  * Spinning on `Date.now()` while the decorator reads `performance.now()` compares two clocks that
@@ -143,7 +161,7 @@ describe('promise-returning methods', () => {
 
         expect(records).toHaveLength(1);
         // The naive "time the call" implementation reports ~0 here.
-        expect(records[0].durationMs).toBeGreaterThanOrEqual(50);
+        expect(records[0].durationMs).toBeGreaterThanOrEqual(atLeastSlept(50));
         expect(records[0].kind).toBe('promise');
         expect(records[0].outcome).toBe('returned');
     });
@@ -176,7 +194,7 @@ describe('promise-returning methods', () => {
 
         expect(records).toHaveLength(1);
         expect(records[0].outcome).toBe('threw');
-        expect(records[0].durationMs).toBeGreaterThanOrEqual(20);
+        expect(records[0].durationMs).toBeGreaterThanOrEqual(atLeastSlept(20));
     });
 
     it('times a hand-rolled thenable, not just a real Promise', async () => {
@@ -193,7 +211,7 @@ describe('promise-returning methods', () => {
         await expect(new Task().work() as any).resolves.toBe('ok');
         expect(records).toHaveLength(1);
         expect(records[0].kind).toBe('promise');
-        expect(records[0].durationMs).toBeGreaterThanOrEqual(30);
+        expect(records[0].durationMs).toBeGreaterThanOrEqual(atLeastSlept(30));
     });
 });
 
@@ -248,7 +266,7 @@ describe('Observable-returning methods', () => {
                 expect(records).toHaveLength(1);
                 expect(records[0].kind).toBe('observable');
                 expect(records[0].outcome).toBe('returned');
-                expect(records[0].durationMs).toBeGreaterThanOrEqual(50);
+                expect(records[0].durationMs).toBeGreaterThanOrEqual(atLeastSlept(50));
                 done();
             },
         });
@@ -271,7 +289,7 @@ describe('Observable-returning methods', () => {
                 expect(error).toBe(boom);
                 expect(records).toHaveLength(1);
                 expect(records[0].outcome).toBe('threw');
-                expect(records[0].durationMs).toBeGreaterThanOrEqual(20);
+                expect(records[0].durationMs).toBeGreaterThanOrEqual(atLeastSlept(20));
                 done();
             },
         });

@@ -16,7 +16,31 @@ export abstract class DecoratorFactory {
         return result === null ? [] : result;
     }
 
+    /**
+     * The class name for a decoration target — **BUG-12**.
+     *
+     * A decorator is handed two different objects depending on where the member lives, and this
+     * helper has to reconcile them. For an instance member `target` is `Class.prototype`, whose
+     * `.constructor` is the class. For a **static** member `target` *is* the constructor, so
+     * `.constructor` is `Function` — and the previous unconditional `object.constructor.name`
+     * therefore reported every static violation as belonging to `Function`:
+     *
+     * ```
+     * Value Error: Function.parse(input) parameter 'input' expected ...   // before
+     * Value Error: Task.parse(input) parameter 'input' expected ...       // after
+     * ```
+     *
+     * The same two-band split `getContractsForClass` exists to centralise (DEC-018): a class's
+     * members live on two objects, and *getting it wrong does not fail* — it produces a plausible,
+     * wrong answer. That is why the check belongs here once rather than at each call site.
+     *
+     * Returns a falsy value when no name can be determined (an anonymous class, a null-prototype
+     * object); callers decide what to substitute.
+     */
     static getObjectName(object: Object) {
+        // A constructor is its own owner. `typeof` rather than an `instanceof Function` test so a
+        // cross-realm constructor resolves correctly too.
+        if (typeof object === 'function') return (object as Function).name;
         return object && object.constructor && object.constructor.name;
     }
 

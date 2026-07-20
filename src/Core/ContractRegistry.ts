@@ -29,6 +29,17 @@
  * for anyone whose situation differs (dynamically generated classes, long-lived workers churning
  * through modules).
  *
+ * ## Two contract bands: methods and fields (GAP-9)
+ *
+ * A target carries two independent stores — {@link MethodContract} for methods (parameters, `pre`,
+ * `post`) and {@link FieldContract} for fields (one value, a constraint list). They are kept apart
+ * because a field has no parameters and a method has no single value; folding them together would
+ * ship permanently-empty slots and make every projection disambiguate before reading.
+ *
+ * The field band exists at all because without it `FieldDecoratorFactory` had to keep its store
+ * adapter-local, which left `@Enforce.positive()` **enforced at runtime but invisible to every
+ * projection** — a generated document that looks complete and is not.
+ *
  * ## Own-property scoping
  *
  * Lookups are keyed by the exact object passed in and never walk the prototype chain. A subclass
@@ -47,6 +58,13 @@ import {ConstraintDescriptor} from './Descriptor';
 export type ContractTarget = object;
 
 export type MethodKey = string | symbol;
+
+/**
+ * A field name. Structurally identical to {@link MethodKey}, named separately because the two bands
+ * are separate: a class may legitimately carry a method and a field of the same name on different
+ * key bands, and a reader of a signature should not have to work out which one an API means.
+ */
+export type FieldKey = string | symbol;
 
 /** Contract data for a single parameter position. */
 export interface ParameterContract {
@@ -98,6 +116,42 @@ export interface MethodContract {
     readonly installed: boolean;
 }
 
+/**
+ * Everything recorded about one contracted **field** (GAP-9).
+ *
+ * ## Why the registry needs a field band at all
+ *
+ * `FieldDecoratorFactory` kept this store adapter-local, which meant a `@Enforce.positive()` field
+ * was enforced at runtime and **absent from every projection**. That is the same shape as BUG-14 and
+ * the same failure DEC-016 rejects: adorn guaranteeing something at runtime that it will not admit to
+ * in a generated document. Nothing throws, and the artifact looks complete.
+ *
+ * ## Why it is a separate band rather than a `MethodContract` variant
+ *
+ * A field has no parameters, no arity, and no pre/post — it has one value and a list of constraints
+ * on it. Folding it into `MethodContract` would ship four permanently-empty slots and force every
+ * projection to ask "is this actually a method?" before reading. The bands are separate for the same
+ * reason `getContractsForClass` tags `isStatic` rather than returning two shapes: the distinction is
+ * real and the consumer needs it anyway.
+ *
+ * Layering is unchanged (DEC-012): nothing here knows a field constraint arrived from a property
+ * decorator rather than from a schema, a standard-decorator `context.addInitializer`, or an
+ * imperative call.
+ */
+export interface FieldContract {
+    /** Declaration order — see {@link recordFieldConstraint}'s `position`. */
+    readonly constraints: ReadonlyArray<ConstraintDescriptor>;
+    /**
+     * `design:type`, when `emitDecoratorMetadata` is on. Advisory only and subject to exactly the
+     * caveats on {@link ParameterContract.type}: it erases to `Object` for interfaces, unions, and
+     * generics, and it is **absent entirely** under a transpile-only toolchain (esbuild, Babel),
+     * which is why it is optional rather than defaulted.
+     */
+    readonly type?: Function;
+    /** Whether an installer has attached the validating accessor. */
+    readonly installed: boolean;
+}
+
 // --- internal mutable twins -------------------------------------------------
 
 interface MutableParameterContract {
@@ -114,12 +168,21 @@ interface MutableMethodContract {
     installed: boolean;
 }
 
+interface MutableFieldContract {
+    constraints: ConstraintDescriptor[];
+    type?: Function;
+    installed: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
 
 /** Authoritative per-target store. Lookup only — a WeakMap cannot be enumerated (DEC-011). */
 let contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>();
+
+/** The field band's twin of {@link contractsByTarget} (GAP-9). Same keying, same own-scoping. */
+let fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
 
 /** Companion enumerable store. Strong references; see the header note. */
 let contractedClasses = new Set<Function>();
@@ -128,6 +191,9 @@ let classEnumerationEnabled = true;
 
 const EMPTY_CONTRACTS: ReadonlyMap<MethodKey, MethodContract> =
     new Map<MethodKey, MethodContract>();
+
+const EMPTY_FIELD_CONTRACTS: ReadonlyMap<FieldKey, FieldContract> =
+    new Map<FieldKey, FieldContract>();
 
 // ---------------------------------------------------------------------------
 // Reads — the public introspection surface
@@ -223,6 +289,71 @@ export function getContractsForClass(constructor: Function): ClassMethodContract
     return entries;
 }
 
+// --- field band reads (GAP-9) ----------------------------------------------
+
+/**
+ * Field contracts recorded directly on `target`. Own-scoped exactly as {@link getContracts} is: a
+ * subclass prototype returns only what was declared on it, never its parent's.
+ *
+ * Whether a subclass redeclaring a decorated field should *inherit*, be permitted to *strengthen*,
+ * or be forbidden from *weakening* its parent's field precondition is a Design-by-Contract / Liskov
+ * question (**Q-14**) and is deliberately not answered here. Own-scoping is the status quo this
+ * band inherited from the adapter store it replaced, not a ruling.
+ */
+export function getFieldContracts(target: ContractTarget): ReadonlyMap<FieldKey, FieldContract> {
+    if (!isRegisterableTarget(target)) return EMPTY_FIELD_CONTRACTS;
+    const fields = fieldsByTarget.get(target);
+    return fields ? fields : EMPTY_FIELD_CONTRACTS;
+}
+
+/** The contract for one field on `target`, or `undefined` if it has none. */
+export function getFieldContract(target: ContractTarget, key: FieldKey): FieldContract | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const fields = fieldsByTarget.get(target);
+    return fields ? fields.get(key) : undefined;
+}
+
+/** One field's contract, tagged with which key band it was recorded on. */
+export interface ClassFieldContract {
+    readonly key: FieldKey;
+    readonly contract: FieldContract;
+    /** `true` when recorded against the constructor — i.e. a `static` field. */
+    readonly isStatic: boolean;
+    /** The object it is recorded against: `constructor` for statics, `constructor.prototype` otherwise. */
+    readonly target: ContractTarget;
+}
+
+/**
+ * Every field contract on a class, from **both** key bands — the field-band twin of
+ * {@link getContractsForClass}, and for the same reason (DEC-018).
+ *
+ * A static field's constraints are recorded against the constructor, an instance field's against the
+ * prototype, and a projection that walks only one silently emits an artifact missing half the
+ * contracts. That rule lives here once.
+ *
+ * Ordering is deterministic — instance fields first, then statics, each in registry insertion order.
+ */
+export function getFieldContractsForClass(constructor: Function): ClassFieldContract[] {
+    if (typeof constructor !== 'function') {
+        throw new TypeError('getFieldContractsForClass: expected a constructor function');
+    }
+
+    const entries: ClassFieldContract[] = [];
+
+    const prototype = constructor.prototype;
+    if (prototype) {
+        getFieldContracts(prototype).forEach((contract, key) => {
+            entries.push({key, contract, isStatic: false, target: prototype});
+        });
+    }
+
+    getFieldContracts(constructor).forEach((contract, key) => {
+        entries.push({key, contract, isStatic: true, target: constructor});
+    });
+
+    return entries;
+}
+
 // ---------------------------------------------------------------------------
 // Writes — called by adapters and installers
 // ---------------------------------------------------------------------------
@@ -288,7 +419,23 @@ export function recordParameterConstraint(
 
 /**
  * Attach recovered name / reflected type to a parameter position. Separate from constraint
- * recording because these arrive from different places (P1.5) and either may be absent.
+ * recording because these arrive from different places and either may be absent.
+ *
+ * ## BUG-14 — this had no production caller
+ *
+ * It was written in P1.1 and then never wired up, so the only things that ever called it were its own
+ * tests and the documentation projection's tests. Enforcement, meanwhile, recovered real parameter
+ * names for its violation messages and never told anyone. One declaration therefore produced an error
+ * saying `parameter 'sku'` and a generated document saying `arg0` — two artifacts from one source,
+ * disagreeing, which is the exact failure DEC-006 exists to prevent.
+ *
+ * Worse, it was **masked by construction**: the projection's tests populate the registry by hand
+ * through this function, so they exercised a path no real decorator ever took and reported green.
+ *
+ * The caller is now `ParameterDecoratorFactory.captureSignature`, which records the *same*
+ * `getParamNames` result that the violation message is built from — one computation, both artifacts.
+ * Passing `undefined` for either field leaves the stored value alone, so a toolchain that cannot
+ * supply types degrades to "no type" rather than to a fabricated one.
  */
 export function setParameterMetadata(
     target: ContractTarget,
@@ -304,6 +451,62 @@ export function setParameterMetadata(
 /** Mark a method as wrapped by an installer. */
 export function markInstalled(target: ContractTarget, key: MethodKey): void {
     methodEntry(target, key).installed = true;
+}
+
+// --- field band writes (GAP-9) ---------------------------------------------
+
+/**
+ * Record a constraint against a field. A field may carry several, and the same field may be written
+ * more than once.
+ *
+ * `position` means exactly what it does on {@link recordParameterConstraint}, and exists for the same
+ * reason: an adapter whose decorators arrive in reverse declaration order passes `'prepend'` so the
+ * store is correct *as recorded*, keeping knowledge of `__decorate`'s back-to-front application in
+ * the adapter (DEC-015/DEC-017) rather than leaking it into the registry. The legacy field adapter
+ * passes `'prepend'`; a standard-decorator adapter takes the default.
+ */
+export function recordFieldConstraint(
+    target: ContractTarget,
+    key: FieldKey,
+    constraint: ConstraintDescriptor,
+    position: ConstraintPosition = 'append',
+): void {
+    if (!constraint || typeof constraint.predicate !== 'function') {
+        throw new TypeError(
+            'recordFieldConstraint: expected a ConstraintDescriptor. Bare predicates are not ' +
+            'accepted — a closure carries no identity or params, so nothing can be projected from it ' +
+            '(DEC-006).',
+        );
+    }
+    if (position !== 'append' && position !== 'prepend') {
+        throw new TypeError(
+            `recordFieldConstraint: position must be 'append' or 'prepend', received ${String(position)}`,
+        );
+    }
+
+    const constraints = fieldEntry(target, key).constraints;
+    if (position === 'prepend') constraints.unshift(constraint);
+    else constraints.push(constraint);
+}
+
+/**
+ * Attach the reflected type to a field. The field-band twin of {@link setParameterMetadata}; a field
+ * needs no `name` because its key *is* its name, so `design:type` is the only metadata there is.
+ *
+ * `undefined` leaves the stored value alone — the same honest-degradation rule.
+ */
+export function setFieldMetadata(
+    target: ContractTarget,
+    key: FieldKey,
+    metadata: {type?: Function},
+): void {
+    const entry = fieldEntry(target, key);
+    if (metadata.type !== undefined) entry.type = metadata.type;
+}
+
+/** Mark a field as carrying an installed validating accessor. */
+export function markFieldInstalled(target: ContractTarget, key: FieldKey): void {
+    fieldEntry(target, key).installed = true;
 }
 
 /**
@@ -342,9 +545,22 @@ export function isClassEnumerationEnabled(): boolean {
 /**
  * Drop all registry state. Test support — the per-target store is replaced wholesale because a
  * `WeakMap` cannot be cleared, which is the same non-enumerability that motivates DEC-011.
+ *
+ * ## It now disarms already-installed field contracts (GAP-9 consequence)
+ *
+ * Method enforcement is *planned* at install time into closures that hold their descriptors, so
+ * clearing the registry afterwards does not stop a wrapper checking. **Field enforcement reads the
+ * registry on every assignment**, so a field accessor installed before this call will find no
+ * constraints and silently accept anything.
+ *
+ * That asymmetry is a property of the two enforcement strategies, not something introduced here, but
+ * it only became reachable when the field store moved into the registry — so it is stated rather than
+ * left to be discovered. Test support only: no production path calls this, and any suite that resets
+ * between tests must declare its contracted classes *inside* the test rather than at module scope.
  */
 export function resetRegistry(): void {
     contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>();
+    fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
     contractedClasses = new Set<Function>();
     classEnumerationEnabled = true;
 }
@@ -374,7 +590,16 @@ function methodEntry(target: ContractTarget, key: MethodKey): MutableMethodContr
     return contract;
 }
 
-/** Params are kept dense and ordered by index; only decorated positions get an entry. */
+/**
+ * Params are kept ordered by index.
+ *
+ * **Not necessarily only decorated positions** — that was the invariant until BUG-14's fix, and the
+ * reason Q-10 existed. The adapter now also records name/type for *undecorated* positions it can
+ * confidently name, so `params` describes the method's real signature rather than only the subset
+ * carrying constraints. A constraint-free entry is meaningful data (an OpenAPI emitter needs the
+ * parameter to exist before it can say it is unconstrained), and a projection reading `constraints`
+ * sees an empty array exactly as it would for a position it never knew about.
+ */
 function parameterEntry(contract: MutableMethodContract, index: number): MutableParameterContract {
     if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
         throw new TypeError(`ContractRegistry: parameter index must be a non-negative integer, received ${String(index)}`);
@@ -386,4 +611,21 @@ function parameterEntry(contract: MutableMethodContract, index: number): Mutable
     contract.params.push(entry);
     contract.params.sort((a, b) => a.index - b.index);
     return entry;
+}
+
+function fieldEntry(target: ContractTarget, key: FieldKey): MutableFieldContract {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('ContractRegistry: target must be an object (a prototype or constructor)');
+    }
+    let fields = fieldsByTarget.get(target);
+    if (!fields) {
+        fields = new Map<FieldKey, MutableFieldContract>();
+        fieldsByTarget.set(target, fields);
+    }
+    let contract = fields.get(key);
+    if (!contract) {
+        contract = {constraints: [], installed: false};
+        fields.set(key, contract);
+    }
+    return contract;
 }

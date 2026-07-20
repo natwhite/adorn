@@ -3,12 +3,18 @@ import {
     getContractedClasses,
     getContracts,
     getContractsForClass,
+    getFieldContract,
+    getFieldContracts,
+    getFieldContractsForClass,
     isClassEnumerationEnabled,
+    markFieldInstalled,
     markInstalled,
+    recordFieldConstraint,
     recordParameterConstraint,
     registerContractedClass,
     resetRegistry,
     setClassEnumerationEnabled,
+    setFieldMetadata,
     setParameterMetadata,
 } from './ContractRegistry';
 import {ConstraintDescriptor, defineConstraint, JsonObject} from './Descriptor';
@@ -418,6 +424,129 @@ describe('getContractsForClass — both key bands (Q-9)', () => {
     });
 });
 
+describe('the field band (GAP-9)', () => {
+    it('records a field constraint as data', () => {
+        const target = {};
+        const constraint = min({min: 0});
+
+        recordFieldConstraint(target, 'count', constraint);
+        const contract = getFieldContract(target, 'count')!;
+
+        expect(contract.constraints).toEqual([constraint]);
+        expect(contract.installed).toBe(false);
+        expect(contract.type).toBeUndefined();
+    });
+
+    it('refuses a bare closure, exactly as the parameter band does', () => {
+        // The whole reason the band exists is so field contracts are *projectable*. Accepting a
+        // closure here would reintroduce SMELL-14 on a band that has never had it (DEC-006).
+        expect(() => recordFieldConstraint({}, 'count', (() => true) as any))
+            .toThrow(/ConstraintDescriptor/);
+    });
+
+    it('honours prepend, so an adapter can normalise __decorate ordering as it writes', () => {
+        const target = {};
+        const lower = min({min: 0});
+        const upper = maxLength({maxLength: 10});
+
+        // Decorators arrive bottom-up; prepending each lands them in declaration order (DEC-017).
+        recordFieldConstraint(target, 'count', upper, 'prepend');
+        recordFieldConstraint(target, 'count', lower, 'prepend');
+
+        expect(getFieldContract(target, 'count')!.constraints).toEqual([lower, upper]);
+    });
+
+    it('rejects an unknown position', () => {
+        expect(() => recordFieldConstraint({}, 'count', min({min: 0}), 'sideways' as any))
+            .toThrow(/position must be/);
+    });
+
+    it('keeps metadata and the installed flag independent of the constraints', () => {
+        const target = {};
+        recordFieldConstraint(target, 'count', min({min: 0}));
+
+        setFieldMetadata(target, 'count', {type: Number});
+        markFieldInstalled(target, 'count');
+
+        const contract = getFieldContract(target, 'count')!;
+        expect(contract.type).toBe(Number);
+        expect(contract.installed).toBe(true);
+        expect(contract.constraints).toHaveLength(1);
+    });
+
+    it('leaves a stored type alone when handed undefined', () => {
+        // Honest degradation: a toolchain that emits no `design:type` must not erase one that a
+        // different route already supplied.
+        const target = {};
+        setFieldMetadata(target, 'count', {type: Number});
+        setFieldMetadata(target, 'count', {type: undefined});
+
+        expect(getFieldContract(target, 'count')!.type).toBe(Number);
+    });
+
+    it('is own-scoped and does not collide with the method band', () => {
+        const base = {};
+        const derived = Object.create(base);
+
+        recordFieldConstraint(base, 'count', min({min: 0}));
+        recordParameterConstraint(base, 'count', 0, min({min: 5}));
+
+        expect(getFieldContract(base, 'count')!.constraints[0].params).toEqual({min: 0});
+        // A method and a field may share a name; the bands must not read each other.
+        expect(getContract(base, 'count')!.params[0].constraints[0].params).toEqual({min: 5});
+        expect(getFieldContract(derived, 'count')).toBeUndefined();
+    });
+
+    it('returns empty rather than undefined for an untouched target', () => {
+        expect(getFieldContracts({}).size).toBe(0);
+        expect(getFieldContract({}, 'anything')).toBeUndefined();
+    });
+});
+
+describe('getFieldContractsForClass — both key bands (GAP-9)', () => {
+    it('returns instance and static fields together, each tagged', () => {
+        class Config {
+        }
+
+        recordFieldConstraint(Config.prototype, 'count', min({min: 0}));
+        recordFieldConstraint(Config, 'limit', min({min: 1}));
+
+        const entries = getFieldContractsForClass(Config);
+
+        expect(entries.map(entry => ({key: entry.key, isStatic: entry.isStatic}))).toEqual([
+            {key: 'count', isStatic: false},
+            {key: 'limit', isStatic: true},
+        ]);
+        expect(entries[0].target).toBe(Config.prototype);
+        expect(entries[1].target).toBe(Config);
+    });
+
+    it('finds static fields even when the class has no instance fields', () => {
+        // The same silent-omission failure `getContractsForClass` exists to prevent (DEC-018): a
+        // projection walking only the prototype emits a document missing every static field, and
+        // nothing throws to say so.
+        class StaticsOnly {
+        }
+
+        recordFieldConstraint(StaticsOnly, 'limit', min({min: 0}));
+
+        const entries = getFieldContractsForClass(StaticsOnly);
+        expect(entries).toHaveLength(1);
+        expect(entries[0].isStatic).toBe(true);
+    });
+
+    it('returns an empty array for a class with no field contracts', () => {
+        class Bare {
+        }
+
+        expect(getFieldContractsForClass(Bare)).toEqual([]);
+    });
+
+    it('rejects a non-constructor', () => {
+        expect(() => getFieldContractsForClass({} as any)).toThrow(/constructor/);
+    });
+});
+
 describe('resetRegistry', () => {
     it('clears per-target contracts, enumeration, and the opt-out flag', () => {
         class Task {
@@ -432,5 +561,21 @@ describe('resetRegistry', () => {
         expect(getContracts(Task.prototype).size).toBe(0);
         expect(getContractedClasses()).toEqual([]);
         expect(isClassEnumerationEnabled()).toBe(true);
+    });
+
+    it('clears the field band too', () => {
+        class Config {
+        }
+
+        recordFieldConstraint(Config.prototype, 'count', min({min: 0}));
+
+        resetRegistry();
+
+        expect(getFieldContracts(Config.prototype).size).toBe(0);
+
+        // NOTE the consequence documented on `resetRegistry`: field enforcement reads the registry
+        // on every assignment, so a field accessor installed before this call silently stops
+        // checking. Method enforcement is planned into closures at install time and is unaffected.
+        // Any suite that resets must declare its contracted classes inside the test.
     });
 });

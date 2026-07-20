@@ -215,6 +215,17 @@ There is **no `predicate` input anywhere** in the API; derivation is the only ro
 
 ---
 
+## DEC-019 — Packaging: explicit `node16` resolution, and `rxjs` as an optional peer
+**Status:** ACCEPTED · verified empirically
+
+**Module resolution.** `moduleResolution` was implied rather than declared. Options were tested rather than assumed: explicit `node10` raises **TS5107** (deprecated) and still dies at TS 7; `moduleResolution: node16` without a matching `module` raises **TS5110**; `bundler` compiles but is the wrong semantics for a published CommonJS package. Settled on **`module: node16` + `moduleResolution: node16`** — explicit, non-deprecated, and survives a future TS 7 move. Flips `esModuleInterop` on; verified harmless.
+
+**`rxjs`.** Demoted to an **optional `peerDependency`** (plus `devDependencies` so the suite resolves it). `optionalDependencies` was explicitly rejected: npm installs those by default, which would defeat the entire purpose.
+
+**Consequence — the goal is not yet met.** Verified against an isolated consumer tree: `require('adorn')` still fails with `MODULE_NOT_FOUND: rxjs`, because `index.ts` eagerly imports `Memoize`, which eagerly requires `rxjs`. `@Time` already demonstrates the correct pattern with a guarded lazy require. Until `Memoize` adopts it, `rxjs` remains a hard runtime requirement for every consumer regardless of the manifest. Tracked as **GAP-6** — a manifest change alone was never going to be sufficient, and only an isolated-install check would have shown it.
+
+---
+
 ## DEC-013 — TypeScript ceiling is 6.x; 7.x is blocked by the toolchain
 **Status:** ACCEPTED (forced) · verified empirically
 

@@ -32,13 +32,26 @@ import {
 } from './src/Core/Configuration';
 
 // --- Registry introspection (Q-6: this surface is now semver-relevant) -----
+// Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,
+// setParameterMetadata, setFieldMetadata, markInstalled, ...) are deliberately NOT
+// exported: they would let a caller bypass the adapter that owns declaration
+// ordering (SMELL-13) and installation, and write contracts the enforcement path
+// never sees.
 import {
     getContracts, getContract, getContractedClasses, getContractsForClass,
+    getFieldContract, getFieldContracts, getFieldContractsForClass,
 } from './src/Core/ContractRegistry';
 
 // --- Projections ----------------------------------------------------------
 import {
     documentClass, documentContracts, renderMarkdown, generateMarkdown,
+} from './src/Projections/docs';
+
+// The projection's model types, so a consumer can actually type a variable holding one.
+// `ClassDoc.fields` is deliberately required, not optional: an optional band is one a future
+// projection can silently forget to populate, which is the failure this whole layer exists to avoid.
+export type {
+    ClassDoc, MethodDoc, ParameterDoc, ConstraintDoc, FieldDoc, MarkdownOptions,
 } from './src/Projections/docs';
 
 // --- Constraint descriptors, namespaced -----------------------------------
@@ -98,6 +111,7 @@ export {
 
     // Registry introspection — what the projections read
     getContracts, getContract, getContractedClasses, getContractsForClass,
+    getFieldContract, getFieldContracts, getFieldContractsForClass,
 
     // Projections: documentation generated from recorded contracts
     documentClass, documentContracts, renderMarkdown, generateMarkdown,

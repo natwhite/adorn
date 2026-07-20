@@ -1,0 +1,79 @@
+# CI for adorn (GAP-4).
+#
+# Deliberately minimal: install, lint, typecheck, build, test. There is finally a real suite
+# (444 tests across 15 suites) for this to protect, which is what made CI worth adding.
+#
+# Ordering note: the steps run cheapest-and-most-specific first, so a failure names its own
+# cause. `typecheck` covers `index.ts`, `src/`, `test/` AND `examples/` (via tsconfig.test.json),
+# whereas `build` compiles only what ships to `dist/` — they are not redundant, and a demo or
+# test that stops compiling is caught by the first while the published output is proven by the
+# second.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# A new push to the same branch cancels the previous run rather than queueing behind it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Report every failing version, not just the first — a break on one Node major is
+      # useful information even when another is already red.
+      fail-fast: false
+      matrix:
+        # 20 and 22 are Active LTS / Maintenance; 24 is the current line. The floor is 20.19
+        # rather than plain 20 because some transitive lint tooling declares that engine range.
+        node-version: ['20.19', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # `npm ci` (not `npm install`) — installs strictly from package-lock.json and fails if
+      # the lockfile and package.json have drifted, which is exactly what CI should catch.
+      - name: Install dependencies
+        run: npm ci
+
+      # rxjs is an OPTIONAL PEER dependency (P0.2), so consumers who never touch the Observable
+      # decorators do not pull it in. It stays a devDependency here, which means `npm ci` installs
+      # it and the suite can resolve it. This step asserts that arrangement still holds — if rxjs
+      # ever silently stops resolving, the Memoize/Log/@Time suites would be the ones to break,
+      # and the cause would not be obvious from their failure.
+      - name: Verify optional peer (rxjs) resolves for the test run
+        run: node -e "require.resolve('rxjs'); console.log('rxjs resolves:', require('rxjs/package.json').version)"
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # The demo is the one artifact that exercises the library end-to-end the way a consumer
+      # would: decorate a class, call it, watch enforcement fire. It asserts its own outcome
+      # (non-zero exit if a constraint violation is NOT raised), so it is a genuine smoke test
+      # of installation rather than just a script that happens to run.
+      - name: Demo smoke test (enforcement actually fires)
+        run: npm run demo

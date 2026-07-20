@@ -105,18 +105,33 @@
  * is not part of the decorator-agnostic core (DEC-012, GAP-8). It knows nothing about *which*
  * constraints exist — those arrive as descriptors.
  *
- * ## Why the store is local rather than in `ContractRegistry`
+ * ## The store now lives in `ContractRegistry` (GAP-9)
  *
- * `ContractRegistry` models a `MethodContract` — parameters, `pre`, `post`. It has no field band, and
- * `recordParameterConstraint` is the only constraint writer. The store below is deliberately shaped
- * so it can move there unchanged once a field band exists; until it does, **field contracts are
- * invisible to `src/Projections/docs.ts`**, which is a real gap under DEC-006 and is reported rather
- * than papered over. The precedent for an adapter-local store is `ParameterDecoratorFactory`'s
- * `stagedByTarget`.
+ * It used to be adapter-local, because `ContractRegistry` modelled only a `MethodContract` —
+ * parameters, `pre`, `post` — and `recordParameterConstraint` was its only constraint writer. The
+ * cost of that was stated at the time and was real: **field contracts were invisible to every
+ * projection**, so `@Enforce.positive()` was enforced at runtime and absent from any generated
+ * document. Same shape as BUG-14, same failure DEC-016 rejects — an artifact that looks complete.
+ *
+ * The registry now has a field band, and the store moved into it. What stayed here is exactly what
+ * should: the trampoline, the seed rescue, the `__decorate` ordering knowledge (`'prepend'`), and the
+ * `design:type` read. The registry learned about *fields*, not about decorators (DEC-012).
+ *
+ * `@Enforce.positive()` is consequently now visible to `getFieldContractsForClass` — though
+ * `src/Projections/docs.ts` does not yet render a Fields section, which is a wiring gap in that file
+ * rather than a gap here.
  */
 
 import {ConstraintDescriptor} from './Descriptor';
 import {DecoratorFactory} from './common';
+import {
+    FieldContract,
+    getFieldContract,
+    getFieldContracts as registryFieldContracts,
+    markFieldInstalled,
+    recordFieldConstraint as registryRecordFieldConstraint,
+    setFieldMetadata,
+} from './ContractRegistry';
 
 /** A field name. Symbols are supported because a class may declare `[sym] = value`. */
 export type FieldKey = string | symbol;
@@ -133,12 +148,18 @@ export type AdornFieldDecoratorFn = (target: object, propertyKey: FieldKey) => v
 // Storage
 // ---------------------------------------------------------------------------
 
-/**
- * Constraint descriptors per (prototype-or-constructor, field). Keyed by target, so a discarded
- * class is still collectable, and own-scoped exactly as `ContractRegistry` is: a subclass never
- * reads or mutates its parent's entry.
+/*
+ * The constraint store used to live here, as a `WeakMap<object, Map<FieldKey, ConstraintDescriptor[]>>`
+ * shaped so it could move into `ContractRegistry` unchanged once a field band existed. **GAP-9 built
+ * that band, and this is the move.** Everything below now reads and writes
+ * `ContractRegistry`'s field contracts, so `@Enforce.positive()` is data a projection can see rather
+ * than something only this module knows.
+ *
+ * The layering is unchanged by the move — DEC-012 is about the registry not learning about
+ * decorators, and it has not: `recordFieldConstraint(target, key, descriptor, position)` takes a
+ * prototype-or-constructor and a descriptor. Knowledge of `__decorate`'s back-to-front application
+ * stays here, in the `'prepend'` this module passes (DEC-015/DEC-017).
  */
-const constraintsByTarget = new WeakMap<object, Map<FieldKey, ConstraintDescriptor[]>>();
 
 /** Which `(target, key)` pairs already carry a trampoline. Makes installation idempotent. */
 const installedByTarget = new WeakMap<object, Set<FieldKey>>();
@@ -194,18 +215,9 @@ export function recordFieldConstraint(
         );
     }
 
-    let fields = constraintsByTarget.get(target);
-    if (!fields) {
-        fields = new Map<FieldKey, ConstraintDescriptor[]>();
-        constraintsByTarget.set(target, fields);
-    }
-
-    let constraints = fields.get(key);
-    if (!constraints) {
-        constraints = [];
-        fields.set(key, constraints);
-    }
-    constraints.unshift(constraint);
+    // `'prepend'` is this adapter's declaration-order normalisation; the registry itself has no
+    // opinion about `__decorate` and takes `'append'` by default.
+    registryRecordFieldConstraint(target, key, constraint, 'prepend');
 }
 
 // ---------------------------------------------------------------------------
@@ -213,25 +225,32 @@ export function recordFieldConstraint(
 // ---------------------------------------------------------------------------
 
 const NO_CONSTRAINTS: ReadonlyArray<ConstraintDescriptor> = Object.freeze([]);
-const NO_FIELDS: ReadonlyMap<FieldKey, ReadonlyArray<ConstraintDescriptor>> =
-    new Map<FieldKey, ReadonlyArray<ConstraintDescriptor>>();
 
 /**
  * Constraints recorded directly on `target[key]`, in declaration order.
  *
  * Own-scoped: a subclass prototype returns only what was declared on it. See
  * {@link installFieldContract} for what that means when a subclass redeclares a decorated field.
+ *
+ * A convenience read over the registry's `FieldContract`, kept because it is what enforcement needs
+ * on the assignment path and reads better than `getFieldContract(...)!.constraints` at four call
+ * sites. A projection should walk `getFieldContractsForClass` in the registry instead.
  */
 export function getFieldConstraints(target: object, key: FieldKey): ReadonlyArray<ConstraintDescriptor> {
-    const fields = isTarget(target) ? constraintsByTarget.get(target) : undefined;
-    const constraints = fields && fields.get(key);
-    return constraints ? constraints : NO_CONSTRAINTS;
+    if (!isTarget(target)) return NO_CONSTRAINTS;
+    const contract = getFieldContract(target, key);
+    return contract ? contract.constraints : NO_CONSTRAINTS;
 }
 
-/** Every contracted field on `target`. Empty map rather than `undefined`, so callers can iterate. */
-export function getFieldContracts(target: object): ReadonlyMap<FieldKey, ReadonlyArray<ConstraintDescriptor>> {
-    const fields = isTarget(target) ? constraintsByTarget.get(target) : undefined;
-    return fields ? fields : NO_FIELDS;
+/**
+ * Every contracted field on `target`. Empty map rather than `undefined`, so callers can iterate.
+ *
+ * Now the registry's map of `FieldContract` (constraints + reflected type + installed flag) rather
+ * than this module's old bare `ConstraintDescriptor[]`, since the store moved (GAP-9).
+ */
+export function getFieldContracts(target: object): ReadonlyMap<FieldKey, FieldContract> {
+    // The registry applies the same target guard, so a non-object simply reads back empty.
+    return registryFieldContracts(target);
 }
 
 /** Field keys carrying constraints on `target`. Complements `getFieldContracts`. */
@@ -300,6 +319,11 @@ export function installFieldContract(target: object, key: FieldKey): void {
     });
 
     markInstalled(target, key);
+    // The registry's own flag, so a projection can tell a recorded-but-unenforced field from an
+    // enforced one — the same distinction `MethodContract.installed` carries. Only set when the
+    // registry already holds the field, so installing over a field with no recorded constraints
+    // cannot conjure an empty contract into a generated document.
+    if (getFieldContract(target, key)) markFieldInstalled(target, key);
     applySeed(target, key);
 }
 
@@ -381,12 +405,39 @@ export function CreateFieldDecorator(constraint: ConstraintDescriptor): AdornFie
 
     return function (target: object, propertyKey: FieldKey): void {
         recordFieldConstraint(target, propertyKey, constraint);
+        captureFieldType(target, propertyKey);
         installFieldContract(target, propertyKey);
         // Installation is idempotent, so a second decorator on the same field does not re-run it —
         // but it *has* changed the constraint list, and a rescued static initializer must be
         // re-checked against the new one. No-op for instance fields, which never have a seed.
         applySeed(target, propertyKey);
     };
+}
+
+/**
+ * Record `design:type` for a field, when the toolchain emitted one.
+ *
+ * The field-band counterpart of the parameter path's `design:paramtypes` read, and adapter-only for
+ * the same reason (DEC-012): `Reflect.getMetadata` and the legacy `emitDecoratorMetadata` protocol
+ * stop here.
+ *
+ * Unavailable under a transpile-only toolchain — esbuild ignores `emitDecoratorMetadata` permanently
+ * (DEC-004) — and unavailable without `reflect-metadata`, which adorn does not require. In either
+ * case nothing is recorded and a generated document shows no type, rather than a type inferred from
+ * whatever value happened to be assigned first.
+ */
+function captureFieldType(target: object, key: FieldKey): void {
+    const reflect: any = typeof Reflect === 'object' ? Reflect : undefined;
+    if (!reflect || typeof reflect.getMetadata !== 'function') return;
+
+    let type: unknown;
+    try {
+        type = reflect.getMetadata('design:type', target, key);
+    } catch (error) {
+        return;
+    }
+
+    if (typeof type === 'function') setFieldMetadata(target, key, {type: type as Function});
 }
 
 // ---------------------------------------------------------------------------
@@ -489,11 +540,14 @@ function markInstalled(target: object, key: FieldKey): void {
     keys.add(key);
 }
 
-/** `Widget.count` — the subject a violation message names. */
+/**
+ * `Widget.count` — the subject a violation message names.
+ *
+ * The constructor-vs-prototype split this used to handle inline is BUG-12, and now lives in
+ * `getObjectName` where every call site gets it right rather than three of them re-deriving it.
+ */
 function describeField(target: object, key: FieldKey): string {
     const member = typeof key === 'symbol' ? key.toString() : String(key);
-    const owner = typeof target === 'function'
-        ? (target as Function).name
-        : DecoratorFactory.getObjectName(target);
+    const owner = DecoratorFactory.getObjectName(target);
     return owner ? `${owner}.${member}` : member;
 }

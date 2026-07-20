@@ -3,7 +3,21 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./",
-    "module": "commonjs",
+    // GAP-7: `moduleResolution` was previously IMPLIED. With `module: commonjs` it implied
+    // `node10`, which TypeScript 6 reports as deprecated (TS5107) whenever it is named
+    // explicitly, and which TypeScript 7 removes outright. Making it explicit as `node10`
+    // would therefore have required `ignoreDeprecations` and still died at the 7.x move.
+    //
+    // `node16` is the explicit, non-deprecated setting that survives 7.x. `module` must be
+    // set alongside it (TS5110: moduleResolution=node16 requires module=node16). Emit is
+    // unchanged in practice — package.json has no `"type": "module"`, so every file here is
+    // still CommonJS and still emits `require`. Verified: build 0, typecheck 0, 444 tests.
+    //
+    // This does NOT move the project to TypeScript 7 — DEC-013 blocks that (the TS 7 npm
+    // package ships no JS compiler API and ts-jest requires >=4.3 <7). It only removes one
+    // of the two config-level blockers DEC-013 lists.
+    "module": "node16",
+    "moduleResolution": "node16",
     "target": "es2019",
     "strict": false,
     "lib": [
@@ -27,6 +41,11 @@
     "node_modules",
     "dist",
     "test",
+    // `examples/` is demonstration code, not library code. Before P0.4 the demo lived at
+    // `src/Tests.ts` and was compiled into `dist/src/Tests.js` — the published package shipped
+    // a demo script. Excluded here so that cannot happen again; `npm run demo` runs it through
+    // ts-node, and `tsconfig.test.json` still typechecks it.
+    "examples",
     "**/*.test.ts"
   ]
 }

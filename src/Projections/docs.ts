@@ -52,22 +52,49 @@
  *
  * No JSON Schema or OpenAPI emitter, no test generation, no arbitraries. Documentation only.
  *
- * ## Status: the registry is not yet populated by real decorators
+ * ## Two contract bands: methods and fields (GAP-9)
  *
- * Registry-driven installation is **P1.3** and is not landed. Until it is, nothing writes to the
- * registry except a caller doing so explicitly through `recordParameterConstraint` /
- * `setParameterMetadata` / `registerContractedClass`. This projection is written against the
- * registry's *read* API and needs no change when P1.3 starts populating it for real — but end to
- * end, "decorate a class, get docs" does not work yet. That is a wiring gap, not a gap here.
+ * The registry records methods and fields in separate bands, and this module renders both. Until the
+ * field band existed, `@Enforce.positive()` was enforced at runtime and **absent from every generated
+ * document** — the DEC-011 failure shape exactly: an artifact that looks complete and is not.
  *
- * This is also why the renderer surfaces `installed: false` prominently: per plan §8, a class whose
- * contracts were recorded but never installed is unenforced *and* would be silently wrong in a
- * generated artifact. Silently absent from documentation is worse than unenforced at runtime,
- * because nothing ever throws to reveal it.
+ * Fields are read through `getFieldContractsForClass`, which owns the two-key-band rule its method
+ * twin does (DEC-018): a static field's contracts live on the constructor, an instance field's on the
+ * prototype, and a projection walking only one silently drops half of them.
+ *
+ * A field is deliberately **not** modelled as a degenerate method. It has no parameters, no arity and
+ * no pre/post, so {@link FieldDoc} carries a name and a constraint list rather than a `ParameterDoc[]`
+ * — and unlike a parameter, its name is never an `argN` fallback, because a field's registry key *is*
+ * its name. There is consequently no `nameRecovered` flag to carry.
+ *
+ * ## What this module does not invent
+ *
+ * Names and types reach the registry from the **real decorator path** now. `ParameterDecoratorFactory`
+ * records the same recovered names its violation messages are built from — one computation, both
+ * artifacts (BUG-14) — and the field factory records `design:type` when the toolchain emitted one.
+ *
+ * Where a toolchain supplies neither, this module renders the absence rather than a plausible guess.
+ * `emitDecoratorMetadata` is unavailable under esbuild permanently (DEC-004), so the Type column is
+ * empty rather than inferred from a first assigned value; and minification degrades recovered
+ * parameter names to single letters (SMELL-1), which now propagates into documents. That propagation
+ * is the **accepted trade, not a regression**: a document saying `s` about a check that also says `s`
+ * is honest, whereas the `arg0`-versus-`sku` disagreement it replaced was two artifacts from one
+ * declaration contradicting each other — precisely what DEC-006 exists to prevent.
+ *
+ * The renderer surfaces `installed: false` prominently for the same reason: per plan §8, a contract
+ * recorded but never installed is unenforced *and* would be silently wrong in a generated artifact.
+ * Silently absent from documentation is worse than unenforced at runtime, because nothing ever
+ * throws to reveal it.
  */
 
 import {ConstraintDescriptor, ConstraintKind, ConstraintParams} from '../Core/Descriptor';
-import {getContracts, getContractedClasses, MethodContract, MethodKey} from '../Core/ContractRegistry';
+import {
+    ClassFieldContract,
+    ClassMethodContract,
+    getContractedClasses,
+    getContractsForClass,
+    getFieldContractsForClass,
+} from '../Core/ContractRegistry';
 
 // ---------------------------------------------------------------------------
 // The model — step 1's output. Plain data, no markdown.
@@ -124,7 +151,10 @@ export interface MethodDoc {
      * an undecorated position *before* a decorated one shows as `argN`.
      */
     readonly signature: string;
-    /** Whether an installer has attached enforcement. `false` for everything until P1.3 lands. */
+    /**
+     * Whether an installer has attached an enforcement wrapper. `false` means the contract is
+     * recorded but **not enforced** — see the renderer's warning treatment.
+     */
     readonly installed: boolean;
     /** Ordered by parameter index. Only positions with a registry entry appear. */
     readonly parameters: ReadonlyArray<ParameterDoc>;
@@ -137,11 +167,37 @@ export interface MethodDoc {
     readonly post: ReadonlyArray<ConstraintDoc>;
 }
 
+/**
+ * One contracted field (GAP-9).
+ *
+ * Not a {@link MethodDoc} with one parameter: a field has no arity and no pre/post, so folding the two
+ * together would ship permanently-empty slots and force a reader to disambiguate before reading —
+ * the same reasoning that keeps the registry's two bands apart.
+ */
+export interface FieldDoc {
+    /** `String(key)` — a symbol key renders as `Symbol(name)`. */
+    readonly name: string;
+    /** Recorded against the constructor rather than the prototype. */
+    readonly isStatic: boolean;
+    /**
+     * `design:type` name, when one was recorded. **Advisory only**, exactly as
+     * {@link ParameterDoc.typeName} is, and **absent entirely** under a transpile-only toolchain.
+     * Never inferred from an assigned value — an absent type is rendered as absent.
+     */
+    readonly typeName?: string;
+    /** Whether an installer has attached the validating accessor. */
+    readonly installed: boolean;
+    /** In declaration order — the field adapter normalises `__decorate`'s reversal at record time. */
+    readonly constraints: ReadonlyArray<ConstraintDoc>;
+}
+
 /** One contracted class. */
 export interface ClassDoc {
     readonly name: string;
     /** Instance methods first, then statics; alphabetical within each group. */
     readonly methods: ReadonlyArray<MethodDoc>;
+    /** Instance fields first, then statics; alphabetical within each group. */
+    readonly fields: ReadonlyArray<FieldDoc>;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,14 +205,16 @@ export interface ClassDoc {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the documentation model for one class.
+ * Build the documentation model for one class, across **both** contract bands.
  *
- * Reads both `constructor.prototype` (instance methods) and `constructor` itself (statics), since
- * the registry keys on "a prototype or constructor" and a static method's contracts land on the
- * latter. Missing either would drop contracts from the artifact silently.
+ * The two-key-band walk — instance members on `constructor.prototype`, statics on `constructor`
+ * itself — is not done here. It lives in `getContractsForClass` / `getFieldContractsForClass`
+ * (DEC-018), which is the whole point of those APIs: a rule that four projections must each
+ * re-derive, and whose omission produces a plausible-looking document missing every static rather
+ * than an error, belongs in the registry once.
  *
- * Returns a `ClassDoc` with an empty `methods` array when nothing is recorded — callers render the
- * empty case rather than having to special-case a `null`.
+ * Returns a `ClassDoc` with empty `methods` and `fields` when nothing is recorded — callers render
+ * the empty case rather than having to special-case a `null`.
  */
 export function documentClass(constructor: Function): ClassDoc {
     if (typeof constructor !== 'function') {
@@ -164,19 +222,29 @@ export function documentClass(constructor: Function): ClassDoc {
     }
 
     const name = constructor.name || '(anonymous class)';
-    const methods = collectMethods(constructor.prototype, name, false)
-        .concat(collectMethods(constructor, name, true));
+
+    const methods = getContractsForClass(constructor)
+        .map((entry: ClassMethodContract) => toMethodDoc(name, entry));
+    const fields = getFieldContractsForClass(constructor).map(toFieldDoc);
 
     // Deterministic ordering. Decoration order is not source order — parameter decorators are
     // evaluated right-to-left and members bottom-up — so registry insertion order is arbitrary
     // enough that sorting is both more predictable for a reader and stable across runs, which
-    // keeps a regenerated document from producing spurious diffs.
-    methods.sort((a, b) => {
-        if (a.isStatic !== b.isStatic) return a.isStatic ? 1 : -1;
-        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-    });
+    // keeps a regenerated document from producing spurious diffs. Fields sort by the same rule as
+    // methods, so the two sections read alike.
+    methods.sort(byBandThenName);
+    fields.sort(byBandThenName);
 
-    return {name, methods};
+    return {name, methods, fields};
+}
+
+/** Instance members before statics, alphabetical within each band. */
+function byBandThenName(
+    a: {isStatic: boolean; name: string},
+    b: {isStatic: boolean; name: string},
+): number {
+    if (a.isStatic !== b.isStatic) return a.isStatic ? 1 : -1;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
 /**
@@ -195,34 +263,43 @@ export function documentContracts(): ClassDoc[] {
     return getContractedClasses().map(documentClass);
 }
 
-function collectMethods(target: object, className: string, isStatic: boolean): MethodDoc[] {
-    const methods: MethodDoc[] = [];
-
-    getContracts(target).forEach((contract: MethodContract, key: MethodKey) => {
-        methods.push(toMethodDoc(className, key, contract, isStatic));
-    });
-
-    return methods;
-}
-
-function toMethodDoc(
-    className: string,
-    key: MethodKey,
-    contract: MethodContract,
-    isStatic: boolean,
-): MethodDoc {
-    const name = String(key);
-    const parameters = contract.params.map(toParameterDoc);
+function toMethodDoc(className: string, entry: ClassMethodContract): MethodDoc {
+    const name = String(entry.key);
+    const parameters = entry.contract.params.map(toParameterDoc);
 
     return {
         name,
-        isStatic,
+        isStatic: entry.isStatic,
         signature: buildSignature(className, name, parameters),
-        installed: contract.installed,
+        installed: entry.contract.installed,
         parameters,
-        pre: contract.pre.map(toConstraintDoc),
-        post: contract.post.map(toConstraintDoc),
+        pre: entry.contract.pre.map(toConstraintDoc),
+        post: entry.contract.post.map(toConstraintDoc),
     };
+}
+
+/**
+ * Flatten one registry field entry.
+ *
+ * No name fallback and no `nameRecovered`: the registry key *is* the field's name, so the whole
+ * `argN` problem parameters have simply does not arise here.
+ */
+function toFieldDoc(entry: ClassFieldContract): FieldDoc {
+    const doc: FieldDoc = {
+        name: String(entry.key),
+        isStatic: entry.isStatic,
+        installed: entry.contract.installed,
+        constraints: entry.contract.constraints.map(toConstraintDoc),
+    };
+
+    // Same treatment as a parameter's `type`: a live `Function` is not serialisable, so only its
+    // name crosses into the model, and it is *absent* rather than undefined when the toolchain
+    // emitted none. Nothing here infers a type from anything else.
+    const type = entry.contract.type;
+    if (type && typeof type.name === 'string' && type.name.length > 0) {
+        return {...doc, typeName: type.name};
+    }
+    return doc;
 }
 
 function toParameterDoc(parameter: {
@@ -320,12 +397,16 @@ export function renderMarkdown(classes: ReadonlyArray<ClassDoc>, options?: Markd
     classes.forEach(classDoc => {
         lines.push(`## ${classDoc.name}`, '');
 
-        if (classDoc.methods.length === 0) {
+        // Keyed on **both** bands. Keying on `methods` alone reported a field-only class as having
+        // no contracts at all — a document that looks complete and is not, produced by the very
+        // module whose job is to prevent that (DEC-011).
+        if (classDoc.methods.length === 0 && classDoc.fields.length === 0) {
             lines.push('_No contracts recorded._', '');
             return;
         }
 
         classDoc.methods.forEach(method => renderMethod(method, lines));
+        renderFields(classDoc.fields, lines);
     });
 
     return lines.join('\n').replace(/\n+$/, '') + '\n';
@@ -369,6 +450,59 @@ function renderMethod(method: MethodDoc, lines: string[]): void {
             lines.push(
                 `| \`${escapeCell(parameter.name)}\` (${parameter.index}) ` +
                 `| ${parameter.typeName ? '`' + escapeCell(parameter.typeName) + '`' : '—'} ` +
+                `| \`${escapeCell(constraint.constraint)}\` ` +
+                `| ${escapeCell(constraint.expectation)} |`,
+            );
+        });
+    });
+
+    lines.push('');
+}
+
+/**
+ * Fields render as **one table for the class**, not a heading each.
+ *
+ * A method gets a `###` heading because it has a signature to head a section with; a field has only a
+ * name, so per-field headings would be pure noise. The table reuses the parameter table's shape and
+ * its one-row-per-constraint rule, minus the parameter index — the column that has no field analogue.
+ */
+function renderFields(fields: ReadonlyArray<FieldDoc>, lines: string[]): void {
+    if (fields.length === 0) return;
+
+    lines.push('### Fields', '');
+
+    const unenforced = fields.filter(field => !field.installed);
+    if (unenforced.length > 0) {
+        // The same loud treatment a recorded-but-uninstalled method gets, for the same reason. Named
+        // individually rather than as a blanket banner because one table can hold both enforced and
+        // unenforced fields, and a reader must be able to tell which rows describe a guarantee that
+        // does not actually hold at runtime.
+        lines.push(
+            '> **Not enforced.** Contracts are recorded for ' +
+            unenforced.map(field => `\`${escapeCell(field.name)}\``).join(', ') +
+            ' but no validating accessor is installed.',
+            '',
+        );
+    }
+
+    // A field entry can exist carrying only a reflected type — `setFieldMetadata` creates one — so
+    // the constraint-free case is reachable and gets the parameter table's treatment rather than an
+    // empty table with a header and no rows.
+    if (!fields.some(field => field.constraints.length > 0)) {
+        lines.push('_No field constraints recorded._', '');
+        return;
+    }
+
+    lines.push(
+        '| Field | Type | Constraint | Expectation |',
+        '| --- | --- | --- | --- |',
+    );
+
+    fields.forEach(field => {
+        field.constraints.forEach(constraint => {
+            lines.push(
+                `| \`${escapeCell(field.name)}\`${field.isStatic ? ' _(static)_' : ''} ` +
+                `| ${field.typeName ? '`' + escapeCell(field.typeName) + '`' : '—'} ` +
                 `| \`${escapeCell(constraint.constraint)}\` ` +
                 `| ${escapeCell(constraint.expectation)} |`,
             );
