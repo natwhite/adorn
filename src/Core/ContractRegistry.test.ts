@@ -3,6 +3,10 @@ import {
     getContractedClasses,
     getContracts,
     getContractsForClass,
+    getEffectiveContract,
+    getEffectiveContractKeys,
+    getEffectiveFieldConstraints,
+    getEffectiveParameterConstraints,
     getFieldContract,
     getFieldContracts,
     getFieldContractsForClass,
@@ -165,14 +169,159 @@ describe('own-property scoping', () => {
         // The subclass prototype is a distinct key, so it starts empty even though `send` is
         // reachable through it. This is the fix for the inheritance bug in the current factory,
         // which reads `target[propertyKey]` and walks the prototype chain into the parent.
+        //
+        // **Storage stays own-scoped under DEC-022 too** — that is what makes weakening
+        // unexpressible, since a descendant has no route to an ancestor's array. Inheritance is a
+        // property of the *read*, which is why these assertions are unchanged by that ruling.
         expect(getContracts(Sub.prototype).size).toBe(0);
         expect(getContract(Sub.prototype, 'send')).toBeUndefined();
+        // ...but the effective read already sees the parent's, before Sub declares anything at all.
+        expect(getEffectiveParameterConstraints(Sub.prototype, 'send', 0)).toHaveLength(1);
 
         recordParameterConstraint(Sub.prototype, 'send', 0, min({min: 100}));
 
         expect(getContract(Base.prototype, 'send')!.params[0].constraints).toHaveLength(1);
         expect(getContract(Base.prototype, 'send')!.params[0].constraints[0].params).toEqual({min: 0});
         expect(getContract(Sub.prototype, 'send')!.params[0].constraints[0].params).toEqual({min: 100});
+
+        // The union is base-most first, and the parent's entry is untouched by the child's.
+        const effective = getEffectiveParameterConstraints(Sub.prototype, 'send', 0);
+        expect(effective.map(c => c.params)).toEqual([{min: 0}, {min: 100}]);
+        expect(getEffectiveParameterConstraints(Base.prototype, 'send', 0)).toHaveLength(1);
+    });
+});
+
+describe('effective (inheritance-aware) method reads — DEC-022 / Q-15', () => {
+    /**
+     * The registry half of the ruling. These are deliberately plain objects and `Object.create`
+     * chains wherever the class-ness is not the point, because the union is a property of the
+     * *registry's* prototype walk, not of `class` syntax — the same thing DEC-021's field tests
+     * prove with a plain-object chain.
+     */
+
+    it('unions every declaration on the chain, base-most first', () => {
+        const base = {};
+        const middle = Object.create(base) as object;
+        const leaf = Object.create(middle) as object;
+
+        recordParameterConstraint(base, 'send', 0, min({min: 0}));
+        recordParameterConstraint(middle, 'send', 0, min({min: 10}));
+        recordParameterConstraint(leaf, 'send', 0, min({min: 100}));
+
+        expect(getEffectiveParameterConstraints(leaf, 'send', 0).map(c => c.params)).toEqual([
+            {min: 0},
+            {min: 10},
+            {min: 100},
+        ]);
+        // Each level sees only itself and its ancestors — the walk goes up, never down.
+        expect(getEffectiveParameterConstraints(middle, 'send', 0).map(c => c.params)).toEqual([
+            {min: 0},
+            {min: 10},
+        ]);
+        expect(getEffectiveParameterConstraints(base, 'send', 0).map(c => c.params)).toEqual([{min: 0}]);
+    });
+
+    it('treats "declares nothing" and "declares an empty list" identically — neither displaces a parent', () => {
+        // The crux of the undecorated-override case. A level that records *no* entry and a level
+        // that records an entry carrying no constraints are the same statement about preconditions,
+        // and neither may clear an ancestor's. Keying the union on "has constraints" rather than on
+        // "has a registry entry" is what makes a phantom entry — one conjured by metadata capture
+        // for an undecorated position — unable to masquerade as an empty precondition.
+        const base = {};
+        const declaresNothing = Object.create(base) as object;
+        const declaresEmpty = Object.create(base) as object;
+
+        recordParameterConstraint(base, 'send', 0, min({min: 5}));
+
+        // `setParameterMetadata` creates a registry entry with an empty constraint list.
+        setParameterMetadata(declaresEmpty, 'send', 0, {name: 'value'});
+        expect(getContract(declaresEmpty, 'send')).toBeDefined();
+        expect(getContract(declaresEmpty, 'send')!.params[0].constraints).toHaveLength(0);
+        expect(getContract(declaresNothing, 'send')).toBeUndefined();
+
+        // Both inherit the parent's constraint, unchanged.
+        expect(getEffectiveParameterConstraints(declaresNothing, 'send', 0).map(c => c.params)).toEqual([
+            {min: 5},
+        ]);
+        expect(getEffectiveParameterConstraints(declaresEmpty, 'send', 0).map(c => c.params)).toEqual([
+            {min: 5},
+        ]);
+    });
+
+    it('resolves each parameter position independently', () => {
+        const base = {};
+        const sub = Object.create(base) as object;
+
+        recordParameterConstraint(base, 'send', 0, min({min: 0}));
+        recordParameterConstraint(base, 'send', 1, min({min: 1}));
+        recordParameterConstraint(sub, 'send', 1, min({min: 50}));
+
+        const contract = getEffectiveContract(sub, 'send')!;
+        expect(contract.params.map(p => p.index)).toEqual([0, 1]);
+        expect(contract.params[0].constraints.map(c => c.params)).toEqual([{min: 0}]);
+        expect(contract.params[1].constraints.map(c => c.params)).toEqual([{min: 1}, {min: 50}]);
+    });
+
+    it('takes name, type and installed from the nearest declaration', () => {
+        const base = {};
+        const sub = Object.create(base) as object;
+
+        recordParameterConstraint(base, 'send', 0, min({min: 0}));
+        setParameterMetadata(base, 'send', 0, {name: 'baseName', type: Number});
+        markInstalled(base, 'send');
+
+        recordParameterConstraint(sub, 'send', 0, min({min: 5}));
+        setParameterMetadata(sub, 'send', 0, {name: 'subName'});
+
+        const contract = getEffectiveContract(sub, 'send')!;
+        expect(contract.params[0].name).toBe('subName');
+        // `type` falls through independently — Sub supplied a name but no reflected type.
+        expect(contract.params[0].type).toBe(Number);
+        // The subclass's own accessor is the one a call reaches, and it is not installed yet.
+        expect(contract.installed).toBe(false);
+    });
+
+    it('returns the stored contract itself when there is no contracted ancestor', () => {
+        const target = {};
+        recordParameterConstraint(target, 'send', 0, min({min: 0}));
+
+        // Not merely equal — the same object, so the common case allocates nothing.
+        expect(getEffectiveContract(target, 'send')).toBe(getContract(target, 'send'));
+    });
+
+    it('returns undefined / empty when nothing on the chain declares the method', () => {
+        const base = {};
+        const sub = Object.create(base) as object;
+
+        expect(getEffectiveContract(sub, 'send')).toBeUndefined();
+        expect(getEffectiveParameterConstraints(sub, 'send', 0)).toEqual([]);
+        expect(getEffectiveContractKeys(sub)).toEqual([]);
+    });
+
+    it('collects chain keys own-most first, deduplicated', () => {
+        const base = {};
+        const sub = Object.create(base) as object;
+
+        recordParameterConstraint(base, 'shared', 0, min({min: 0}));
+        recordParameterConstraint(base, 'baseOnly', 0, min({min: 0}));
+        recordParameterConstraint(sub, 'shared', 0, min({min: 1}));
+        recordParameterConstraint(sub, 'subOnly', 0, min({min: 1}));
+
+        const keys = getEffectiveContractKeys(sub);
+        expect(keys).toEqual(['shared', 'subOnly', 'baseOnly']);
+        // A redeclared method appears once — two declarations are one contract once resolved.
+        expect(keys.filter(k => k === 'shared')).toHaveLength(1);
+    });
+
+    it('does not leak across the method and field bands on a shared key', () => {
+        const base = {};
+        const sub = Object.create(base) as object;
+
+        recordParameterConstraint(base, 'value', 0, min({min: 0}));
+        recordFieldConstraint(base, 'value', min({min: 99}));
+
+        expect(getEffectiveParameterConstraints(sub, 'value', 0).map(c => c.params)).toEqual([{min: 0}]);
+        expect(getEffectiveFieldConstraints(sub, 'value').map(c => c.params)).toEqual([{min: 99}]);
     });
 });
 
@@ -396,7 +545,15 @@ describe('getContractsForClass — both key bands (Q-9)', () => {
         expect(getContractsForClass(Bare)).toEqual([]);
     });
 
-    it('is own-scoped, exactly as the per-target reads are', () => {
+    it('lists an inherited method contract a subclass never redeclares (DEC-022)', () => {
+        // This test asserted `getContractsForClass(Sub)` was `[]` — that it was "own-scoped,
+        // exactly as the per-target reads are" — until DEC-022 settled Q-15. It is **inverted
+        // deliberately**, not adjusted, and the reason is the one DEC-016 gives and BUG-16 was:
+        // `new Sub().run(-1)` throws, so a document that omits `run` from `Sub` is behind what is
+        // actually enforced — enforced-but-undocumented, which never surfaces on its own because
+        // nothing ever throws to reveal it. The per-target reads *are* still own-scoped (see the
+        // 'own-property scoping' block); it is this class-level projection read that resolves the
+        // chain, exactly as `getFieldContractsForClass` has since DEC-021.
         class Base {
             run(_n: number) {
                 /* no-op */
@@ -408,7 +565,14 @@ describe('getContractsForClass — both key bands (Q-9)', () => {
         recordParameterConstraint(Base.prototype, 'run', 0, min({min: 0}));
 
         expect(getContractsForClass(Base)).toHaveLength(1);
-        expect(getContractsForClass(Sub)).toEqual([]);
+
+        const inherited = getContractsForClass(Sub);
+        expect(inherited).toHaveLength(1);
+        expect(inherited[0].key).toBe('run');
+        expect(inherited[0].isStatic).toBe(false);
+        // Reported against the class asked about, not the one that declared it.
+        expect(inherited[0].target).toBe(Sub.prototype);
+        expect(inherited[0].contract.params[0].constraints[0].params).toEqual({min: 0});
     });
 
     it('carries the same MethodContract the per-target read returns', () => {

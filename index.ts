@@ -48,6 +48,7 @@ import {
     getContracts, getContract, getContractedClasses, getContractsForClass,
     getFieldContract, getFieldContracts, getFieldContractsForClass,
     getEffectiveFieldConstraints, getEffectiveFieldContract,
+    getEffectiveContract, getEffectiveParameterConstraints,
 } from './src/Core/ContractRegistry';
 
 // --- Projections ----------------------------------------------------------
@@ -129,12 +130,17 @@ export {
     getContracts, getContract, getContractedClasses, getContractsForClass,
     getFieldContract, getFieldContracts, getFieldContractsForClass,
 
-    // Inheritance-aware field reads (DEC-021). The prefix is the whole distinction:
-    // `getFieldContract`/`getFieldContracts` answer "what does this class *declare*",
-    // while `getEffectiveFieldContract`/`getEffectiveFieldConstraints` answer "what is
-    // *in force* here" — the union of every declaration on the prototype chain, which is
-    // what enforcement applies and what a projection should render.
+    // Inheritance-aware reads (DEC-021 fields, DEC-022 methods). The prefix is the whole
+    // distinction: the plain reads answer "what does this class *declare*", while the
+    // `getEffective*` reads answer "what is *in force* here" — the union of every
+    // declaration on the prototype chain, which is what enforcement applies and what a
+    // projection should render. Reading the plain form and assuming it describes runtime
+    // behaviour is a mistake, which is why the names disambiguate.
+    //
+    // `getEffectiveContractKeys` is deliberately NOT exported: it exists for the installer,
+    // and Q-6 makes every registry export semver-relevant.
     getEffectiveFieldConstraints, getEffectiveFieldContract,
+    getEffectiveContract, getEffectiveParameterConstraints,
 
     // Projections: documentation generated from recorded contracts
     documentClass, documentContracts, renderMarkdown, generateMarkdown,

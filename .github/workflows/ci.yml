@@ -1,7 +1,7 @@
 # CI for adorn (GAP-4).
 #
 # Deliberately minimal: install, format, lint, typecheck, build, test. There is finally a real suite
-# (444 tests across 15 suites) for this to protect, which is what made CI worth adding.
+# (524 tests across 20 suites) for this to protect, which is what made CI worth adding.
 #
 # Ordering note: the steps run cheapest-and-most-specific first, so a failure names its own
 # cause. `typecheck` covers `index.ts`, `src/`, `test/` AND `examples/` (via tsconfig.test.json),

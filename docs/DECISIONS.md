@@ -223,9 +223,82 @@ The user's framing arrives at the same place from the substitutability side: con
 - **Cost on the hot path.** Resolution is one `WeakMap` hit per prototype level on every assignment. The common case — no contracted ancestor — returns the stored array with no copy. Nothing is memoised: field enforcement reads the registry on every assignment by design (SMELL-18), and caching resolved chains would make a later `Object.setPrototypeOf` silently enforce the wrong contract.
 - **`installed` and `type` come from the nearest declaration**, not merged, because both describe the accessor a read or write actually reaches. `type` falls through to the nearest ancestor that has one, so a subclass compiled without `emitDecoratorMetadata` degrades to the parent's type rather than to none.
 
-**Scope — methods are deliberately not covered.** Whether an overridden *method*'s parameter constraints need an equivalent rule is the parallel case and is **a separate decision**, tracked as **Q-15**. It is not the same rule: a parameter constraint genuinely *is* a Meyer precondition, so classical DbC points at disjunction (weakening) rather than the conjunction adopted here. The current behaviour is nonetheless broken in a way neither reading endorses — see Q-15.
+**Scope — methods were deliberately not covered here, and are now settled separately.** Whether an overridden *method*'s parameter constraints needed an equivalent rule was tracked as **Q-15** and is resolved by **DEC-022**, which adopts the same union-down-the-chain mechanism. It arrived at the same shape but **not by the same argument**, and the difference matters: a parameter constraint genuinely *is* a Meyer precondition, so the "this is an invariant, and invariants are covariant" reasoning below is **not available** in the method band. DEC-022 is a considered departure from classical contravariance rather than an application of Meyer, and says so.
 
 **Tests changed:** both `OPEN QUESTION` tests were **inverted deliberately**, in `test/field-decorators.test.ts` and `src/Core/FieldDecoratorFactory.test.ts`, with the reasoning recorded inline at each. Added coverage: base-before-subclass reporting order, a restated-looser bound, a subclass initializer violating an inherited constraint, a three-deep hierarchy, statics, and the plain-object chain (proving the union is a registry property, not a class-syntax one).
+
+---
+
+## DEC-022 — An overridden method inherits its parent's parameter preconditions
+**Status:** ACCEPTED · source: **Q-15** · user ruling (with one labelled inference) · parallel of **DEC-021**
+
+**Context.** Overriding a contracted method was a **silent way to delete its contract**. Verified, not inferred: with `@Contract() class Base { send(@StringMinLength(5) m) {} }`, a subclass that merely overrode `send` *with no decorators at all* accepted `'ab'`. Redeclaring a weaker constraint replaced the parent's outright. An override in a subclass without `@Contract()` was unchecked too. Only the un-overridden case stayed guarded — and by accident, because the wrapper on the base prototype is still what a call reaches through the chain.
+
+The cause was own-scoping. `getContracts` is keyed by the exact object, `installOn` enumerated only own keys, and `planChecks` read only the own contract — so a subclass prototype with no entry produced no key, no wrapper, and no checks.
+
+**Decision.** **Effective constraints at a method are the union of every declaration on the prototype chain, base-most first** — exactly the shape DEC-021 gave fields. A subclass may strengthen an inherited precondition and can never weaken it.
+
+> **The user's ruling was:** *"undecorated overrides should inherit the parent's constraints."*
+
+### The decorated-override case is an inference, labelled as one
+
+The user ruled on the *undecorated* override. That a **decorated** override also unions with its parent — rather than replacing it — is **an inference drawn here, not a user ruling**, and it is recorded as such so a later reader can reopen it knowing which part carries the user's authority.
+
+The reasoning:
+
+- It is consistent with DEC-021 and with the user's stated Q-14 rationale: limits imposed on a parent *"must be there for a reason and not subverted"*.
+- The alternative is **incoherent**. If an undecorated override inherits but a decorated one replaces, then adding a single decorator to an override silently removes the parent's *other* constraints — so `@GreaterThan(0)` added to an override would delete an inherited `@LessThan(100)` that the author never mentioned and probably never read. That is a worse trap than the bug being fixed, and it is triggered by an edit that looks purely additive.
+
+### The theoretical tension, recorded honestly
+
+DEC-021 could argue that a field constraint is not really a precondition at all — it is a **class invariant**, so conjunction is plainly the right rule and Meyer agrees. **That argument is not available here.** A method parameter constraint genuinely *is* a Meyer precondition, and classical DbC permits a subclass to **weaken** preconditions contravariantly, by disjunction (`parent_pre OR child_pre`). Contravariance is safe there for a real reason: a subclass accepting a *wider* range of inputs still satisfies every client written against the parent.
+
+**This ruling forecloses that, deliberately.** It is a considered departure from classical DbC for the method band, not an application of it, and it should not be described as "what Meyer says". Two things bound the departure:
+
+- **Explicit weakening remains an additive future feature**, not a reversal. An opt-in disjunction — some `@Weakens(...)` form where a subclass states plainly that it accepts more than its parent — is compatible with everything here: it would be a *second* resolution mode requested at the declaration, and the default would stay conjunction. Nothing in this decision has to be undone to add it.
+- **No reading of DbC endorsed the old behaviour.** Even under full contravariance, an override *declaring nothing* should inherit its parent's precondition unchanged, not clear it. `icontract` and `decorator-contracts` both implement weakening as an **explicit disjunction**, and neither treats "declare nothing" as "check nothing". The bug fixed here was not a defensible reading of contravariance; it was the absence of any reading.
+
+### Mechanism — the same structural union as DEC-021
+
+Storage stays **own-scoped**: a declaration is only ever recorded against the object it was written on, and there is no write API that takes an ancestor. Resolution concatenates every list found walking the chain (`getEffectiveParameterConstraints`, `getEffectiveContract`). A subclass can therefore only add conjuncts to its own list, so the resolved set grows monotonically as you descend, and **weakening is unexpressible rather than rejected**. Comparing descriptors for relative strength was rejected for the reason DEC-021 gives: it is undecidable for arbitrary predicates, so it could only work for built-ins with comparable params and would silently pass everything else.
+
+**"Declares nothing" vs "declares an empty one"** — the crux of the undecorated case — is settled in two places, deliberately not one:
+
+1. **The union keys on *has constraints*, not on *has a registry entry*.** A level whose parameter list is empty is skipped exactly as a level with no entry is. This matters because an entry can exist without declaring anything: `setParameterMetadata` and `markInstalled` both create one. Keying on entry-presence would let such a phantom masquerade as "declares an empty precondition, therefore replaces the parent" — which is the original bug wearing a different hat.
+2. **Nothing conjures an own entry for an override that declares nothing.** Signature capture stays own-scoped and gated on an own entry already existing, and `markInstalled` was already gated the same way. So `getContracts(Sub.prototype)` remains the honest answer to *"what does this class declare?"*, while `getEffectiveContract` answers *"what is in force here?"*. This is the rule GAP-9 already set for the field band: installation must not conjure an empty contract into a document.
+
+### Installation: install on an override, not on plain inheritance
+
+`installOn` now consults the chain as well as own keys, and installs a key found only on an ancestor **when the host owns the method**. The own-ness test does work in both directions:
+
+- **Owned (an override).** The base's wrapper is shadowed and unreachable, so a wrapper must be installed here or the inherited constraints are lost. This is the fix.
+- **Not owned (plain inheritance).** The base's wrapper is still what the call reaches, so it is already enforced. Installing anyway would check every inherited constraint **twice** and conjure an own property onto a prototype that had none — changing `Object.getOwnPropertyNames` and re-attributing violation messages from the declaring class to the inheriting one. Enforcing an inherited implementation is the declaring class's job.
+
+A key that is owned but is not a plain method is skipped rather than throwing, because the recorded constraint belongs to an ancestor and the "no such method" diagnostic would blame a declaration this class's author never wrote. Own keys keep the existing throw, where the blame is correct.
+
+**Both key bands, not just the prototype.** `Object.getPrototypeOf(Sub) === Base` for `class Sub extends Base`, so the constructor band walks the same chain and static overrides are covered by the same code. Checking only the prototype would have left half the bug in place — it was verified broken for statics before the fix and verified fixed after.
+
+**Hand-written closures are included.** `CreateSimpleDecorator` checks are staged adapter-side and never reach the registry (SMELL-14), so the staging table got the same chain-walking read. Leaving it own-scoped would have kept Q-15 alive for precisely the authoring form that is already invisible to every projection — the one where it is hardest to notice.
+
+### What happens when the subclass lacks `@Contract()`
+
+**Unchanged: the override is unenforced.** This is stated as a limit rather than presented as a decision, because it is not a policy choice — it is mechanical. A `class Sub extends Base` carrying no adorn decorator of any kind runs **no adorn code at any point in its evaluation**. There is no hook at subclass definition, so there is no moment at which a wrapper could be installed, and nothing to warn from either.
+
+This is the residue of DEC-014: `@Contract()` is the installer, and forgetting it disables every contract on the class. DEC-022 narrows the hole substantially — an *annotated* subclass can no longer shed a contract by overriding — but it cannot close it.
+
+**The diagnostic remains truthful, and was checked rather than assumed.** Where the subclass decorates its override but forgets `@Contract()`, the parameter decorator does run, the pending set knows about the class, and the existing warning fires naming `Sub` and `send`; its claim that the constraints *"will never run"* is still exactly true. Where the subclass carries no decorator at all, the warning does not fire — correctly, since it is a *class*-scoped diagnostic about declarations that were made, and this class made none. Neither case produces a message that overstates what adorn did. A diagnostic that could catch the second case would have to hook class definition globally, which adorn has no mechanism for and which would fire on every class in the program.
+
+### Consequences
+
+- **Ordering is base-most first**, matching DEC-021. A violation reports the most general broken constraint first, which is how a reader scans a hierarchy top-down and makes a subclass's additions read as additions. Within a level, declaration order is unchanged (DEC-017). Note the visible consequence: a subclass violating both its own and its parent's constraint now reports the **parent's** message where it used to report the subclass's.
+- **Violation messages name the class that overrode**, not the declaring class, because the wrapper is installed on the subclass and that is the method that actually runs. Plain inheritance still names the declaring class, since no wrapper is installed on the subclass — the two differ, and correctly so.
+- **Projections report the union.** `getContractsForClass` walks the chain, exactly as `getFieldContractsForClass` has since DEC-021, and for the reason DEC-016 gives: reporting only own declarations would put a generated document *behind* what is enforced. That is the enforced-but-undocumented asymmetry BUG-16 was, and it never surfaces on its own because nothing throws to reveal it.
+- **Own-scoped reads remain, and are now load-bearing for a different question.** `getContract` / `getContracts` mean *declared here*; `getEffectiveContract` / `getEffectiveParameterConstraints` mean *in force here*. Reading the own-scoped one and assuming it describes runtime behaviour is a mistake, so the names say which is which — the naming rule DEC-021 established.
+- **`super.foo(...)` in an override double-checks the inherited constraints** — once at the override's wrapper, once at the base's. Semantically harmless (the predicates are pure and idempotent, and if the override transforms arguments before delegating, the base's check correctly applies to the transformed values), but it is a real cost and is stated rather than left to be found.
+- **Cost is at install time, not per call.** The chain walk happens once, inside `planChecks`; the compiled check list is closed over exactly as before, so a call pays nothing new. This is the opposite of the field band, which resolves on every assignment by design (SMELL-18).
+- **`pre`/`post` union on the same rule.** Both are reserved and have no writer (Q-11), so this is inert today — but conjunction is independently correct for each (a cross-parameter precondition follows this ruling; a postcondition strengthens covariantly even under classical DbC), so a future writer inherits the right behaviour rather than a placeholder.
+
+**Tests changed:** one inversion, named. `src/Core/ContractRegistry.test.ts` — *"is own-scoped, exactly as the per-target reads are"*, which asserted `getContractsForClass(Sub)` was `[]`, was **inverted deliberately** and renamed, with the reasoning recorded inline. It is the exact inverse of its field-band twin, which has asserted the union since DEC-021. Nothing else in the suite required a change: `contract-installation.test.ts`'s *"does not let a subclass corrupt its parent contract"* passes untouched, because its own-scoped registry assertions are still true and its `run(5)` case fails only the subclass's own bound. Added coverage: a 13-test `test/contract-inheritance.test.ts` (undecorated override, attempted weakening, strengthening, base-most reporting order, three-deep through a level declaring nothing, statics, hand-written closures, `@Validate()` on the override, no-double-wrap on plain inheritance, ancestor immutability, projection reporting, and both subclass-without-`@Contract()` cases), plus 8 registry-level tests for the effective reads.
 
 ---
 

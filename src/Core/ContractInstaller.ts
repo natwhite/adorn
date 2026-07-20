@@ -59,6 +59,7 @@
 import {
     getContract,
     getContracts,
+    getEffectiveContractKeys,
     markInstalled,
     MethodKey,
     registerContractedClass,
@@ -73,6 +74,7 @@ import {
 } from './Configuration';
 import {
     buildParameterEnforcement,
+    getEffectiveStagedMethodKeys,
     getStagedMethodKeys,
     markStagedInstalled,
 } from './ParameterDecoratorFactory';
@@ -208,14 +210,57 @@ function registerOwningClass(target: object): void {
  * reified `ConstraintDescriptor`s, and the adapter's staging table, which holds hand-written
  * `CreateSimpleDecorator` closures the registry cannot represent. Both must be installed or the
  * legacy authoring form would silently stop working.
+ *
+ * ## Overrides that declare nothing (DEC-022, Q-15)
+ *
+ * Own-scoped enumeration is precisely how an override used to escape enforcement. A subclass that
+ * overrides a contracted method **without decorating it** has no own entry in either source, so no
+ * key was collected, nothing was installed, and the override — which shadows the base's wrapper —
+ * ran unchecked. Overriding a contracted method was a silent way to delete its contract.
+ *
+ * So the chain is consulted as well, and a key found only on an ancestor is installed **when this
+ * host owns the method**. That own-ness test is doing real work in both directions:
+ *
+ * - **Owned (an override).** The base's wrapper is shadowed and unreachable, so a wrapper must be
+ *   installed here or the inherited constraints are lost. `planChecks` resolves them effectively,
+ *   so this class is checked against its ancestors' constraints plus any of its own.
+ * - **Not owned (plain inheritance).** The base's own wrapper is still what a call reaches through
+ *   the prototype chain, so it is already enforced. Installing anyway would double-check every
+ *   inherited constraint and — worse — conjure an own property onto a prototype that had none,
+ *   changing `Object.getOwnPropertyNames` and re-attributing violation messages from the declaring
+ *   class to the inheriting one. Enforcing an inherited implementation is the declaring class's job.
+ *
+ * A key that is owned but is not a plain method (an accessor, or a value that is not a function) is
+ * skipped rather than throwing: the recorded constraint belongs to an ancestor, so the
+ * "no such method" diagnostic below would blame a declaration the author of *this* class never
+ * wrote. Own keys keep the existing throw, because there the blame is correct.
  */
 function installOn(host: object, trust: ContractTrust): void {
-    const keys = new Set<MethodKey>();
-    getContracts(host).forEach((_contract, key) => keys.add(key));
-    getStagedMethodKeys(host).forEach(key => keys.add(key));
+    const own = new Set<MethodKey>();
+    getContracts(host).forEach((_contract, key) => own.add(key));
+    getStagedMethodKeys(host).forEach(key => own.add(key));
+
+    const keys = new Set<MethodKey>(own);
+
+    const inherited = new Set<MethodKey>();
+    getEffectiveContractKeys(host).forEach(key => inherited.add(key));
+    getEffectiveStagedMethodKeys(host).forEach(key => inherited.add(key));
+
+    inherited.forEach(key => {
+        if (own.has(key)) return;
+        if (!overridesMethod(host, key)) return;
+        keys.add(key);
+    });
+
     if (keys.size === 0) return;
 
     keys.forEach(key => installMethod(host, key, trust));
+}
+
+/** Whether `host` itself declares `key` as a plain method, shadowing anything inherited. */
+function overridesMethod(host: object, key: MethodKey): boolean {
+    const descriptor = Object.getOwnPropertyDescriptor(host, key);
+    return !!descriptor && typeof descriptor.value === 'function';
 }
 
 function installMethod(host: object, key: MethodKey, trust: ContractTrust): void {

@@ -72,6 +72,7 @@
 import {ConstraintDescriptor} from './Descriptor';
 import {
     getContract,
+    getEffectiveContract,
     MethodContract,
     MethodKey,
     recordParameterConstraint,
@@ -194,6 +195,74 @@ export function getStagedMethodKeys(target: object): MethodKey[] {
     return keys;
 }
 
+/**
+ * Method keys carrying hand-written checks anywhere on `target`'s prototype chain, own-most level
+ * first, deduplicated. Complements `getEffectiveContractKeys(target)`.
+ *
+ * DEC-022 applies to *every* authoring form, not only the one the registry can hold. A hand-written
+ * `CreateSimpleDecorator` closure is staged here rather than in the registry (SMELL-14), so leaving
+ * this band own-scoped would have left the Q-15 bug alive for exactly the authoring form that is
+ * already invisible to every projection — the one where it is hardest to notice.
+ */
+export function getEffectiveStagedMethodKeys(target: object): MethodKey[] {
+    if (!target || (typeof target !== 'object' && typeof target !== 'function')) return [];
+
+    const keys: MethodKey[] = [];
+    const seen = new Set<MethodKey>();
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const staged = stagedByTarget.get(cursor);
+        if (!staged) continue;
+        staged.forEach((_entry, key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            keys.push(key);
+        });
+    }
+
+    return keys;
+}
+
+/**
+ * Every staged check in force on `target[propertyKey]`, base-most level first — the staging table's
+ * twin of `getEffectiveParameterConstraints` (DEC-022).
+ *
+ * A level that stages *no* checks and a level that stages an *empty* list are the same statement,
+ * and neither displaces an ancestor's: the `length === 0` skip below is the staging-table half of
+ * the distinction documented on `getEffectiveParameterConstraints`.
+ */
+function getEffectiveStagedChecks(target: object, propertyKey: MethodKey): ReadonlyArray<StagedCheck> {
+    // Collected own-most first; reversed on the way out so the base-most class leads.
+    let nearest: StagedCheck[] | undefined;
+    let bands: StagedCheck[][] | undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const staged = stagedByTarget.get(cursor);
+        const entry = staged && staged.get(propertyKey);
+        if (!entry || entry.checks.length === 0) continue;
+
+        if (!nearest) {
+            nearest = entry.checks;
+        } else {
+            if (!bands) bands = [nearest];
+            bands.push(entry.checks);
+        }
+    }
+
+    if (!nearest) return NO_STAGED_CHECKS;
+    // No staged ancestor — hand back the stored array rather than copying it.
+    if (!bands) return nearest;
+
+    const merged: StagedCheck[] = [];
+    for (let level = bands.length - 1; level >= 0; level--) {
+        const band = bands[level];
+        for (let i = 0; i < band.length; i++) merged.push(band[i]);
+    }
+    return merged;
+}
+
+const NO_STAGED_CHECKS: ReadonlyArray<StagedCheck> = Object.freeze([]);
+
 /** Mark hand-written checks on `target[propertyKey]` as installed. */
 export function markStagedInstalled(target: object, propertyKey: MethodKey): void {
     const staged = stagedByTarget.get(target);
@@ -240,12 +309,16 @@ export function buildParameterEnforcement(
 type PlannedCheck = (args: any[]) => void;
 
 function planChecks(target: object, propertyKey: MethodKey, original: Function): PlannedCheck[] {
-    const contract = getContract(target, propertyKey);
-    const staged = stagedByTarget.get(target);
-    const stagedMethod = staged ? staged.get(propertyKey) : undefined;
+    // **Effective**, not own-scoped (DEC-022). `target` is the object the wrapper is being installed
+    // on, so for a subclass that overrides a contracted method this resolves the override's own
+    // constraints *and* every ancestor's — which is what makes an inherited precondition impossible
+    // to shed by overriding. An override declaring nothing has no own list, contributes no conjunct,
+    // and is therefore checked against its parent's constraints unchanged.
+    const contract = getEffectiveContract(target, propertyKey);
+    const stagedChecks = getEffectiveStagedChecks(target, propertyKey);
 
     const hasDescriptors = !!contract && contract.params.length > 0;
-    const hasStaged = !!stagedMethod && stagedMethod.checks.length > 0;
+    const hasStaged = stagedChecks.length > 0;
     if (!hasDescriptors && !hasStaged) return [];
 
     const paramNames: string[] = DecoratorFactory.getParamNames(original);
@@ -257,7 +330,17 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
     // method; record them so the registry — and therefore every projection — says the same thing.
     // Done here rather than in the decorator because *this* is the computation the messages use, so
     // there is literally one source rather than two that happen to agree today.
-    if (contract) captureSignature(target, propertyKey, contract, paramNames);
+    //
+    // Deliberately the **own** contract, not the effective one (DEC-022). Writes stay own-scoped, so
+    // capturing against an inherited entry would either write metadata onto an ancestor — the one
+    // thing a subclass must never be able to do — or conjure an own entry for a class that declares
+    // nothing, which would make "declares no precondition" indistinguishable from "declares an empty
+    // one" in `getContracts`. An override with no declarations of its own therefore stays absent from
+    // the own-scoped read, which is the honest answer to "what does this class declare?", while
+    // `getEffectiveContract` answers "what is in force here?". This mirrors the rule GAP-9 set for
+    // the field band: installation must not conjure an empty contract into a document.
+    const ownContract = getContract(target, propertyKey);
+    if (ownContract) captureSignature(target, propertyKey, ownContract, paramNames);
 
     // Built lazily and identically to the previous implementation, so every existing violation
     // message is byte-for-byte unchanged.
@@ -286,12 +369,15 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
 
     const indices = new Set<number>();
     if (contract) contract.params.forEach(param => indices.add(param.index));
-    if (stagedMethod) stagedMethod.checks.forEach(check => indices.add(check.index));
+    stagedChecks.forEach(check => indices.add(check.index));
 
     const ordered = Array.from(indices).sort((a, b) => a - b);
     const plan: PlannedCheck[] = [];
 
     for (const index of ordered) {
+        // Both sources arrive base-most first (DEC-022), so a violation reports the most general
+        // broken constraint first — matching how a reader scans a hierarchy top-down, and matching
+        // the order DEC-021 chose for fields.
         const parameter = contract && contract.params.filter(p => p.index === index)[0];
         if (parameter) {
             for (const constraint of parameter.constraints) {
@@ -299,11 +385,9 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
             }
         }
 
-        if (stagedMethod) {
-            const atIndex = stagedMethod.checks.filter(check => check.index === index);
-            for (const check of atIndex) {
-                plan.push(args => check.decorator(paramObjectFor(index, args)));
-            }
+        const atIndex = stagedChecks.filter(check => check.index === index);
+        for (const check of atIndex) {
+            plan.push(args => check.decorator(paramObjectFor(index, args)));
         }
     }
 

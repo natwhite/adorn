@@ -199,6 +199,9 @@ const EMPTY_CONTRACTS: ReadonlyMap<MethodKey, MethodContract> = new Map<MethodKe
 
 const EMPTY_FIELD_CONTRACTS: ReadonlyMap<FieldKey, FieldContract> = new Map<FieldKey, FieldContract>();
 
+/** Shared by both bands' effective reads, so neither allocates for the nothing-declared case. */
+const EMPTY_CONSTRAINTS: ReadonlyArray<ConstraintDescriptor> = Object.freeze([]);
+
 // ---------------------------------------------------------------------------
 // Reads — the public introspection surface
 // ---------------------------------------------------------------------------
@@ -240,6 +243,180 @@ export function getContractedClasses(): Function[] {
     return classes;
 }
 
+// --- effective (inheritance-aware) method reads (DEC-022, Q-15) ------------
+
+/**
+ * Every constraint in force on parameter `index` of `target[key]`, including every one inherited
+ * from a superclass.
+ *
+ * ## The union, and the one distinction it depends on (DEC-022)
+ *
+ * The method band resolves exactly as the field band does (DEC-021): a declaration is only ever
+ * recorded against the object it was written on, and resolution **concatenates** every list found
+ * walking the prototype chain, base-most first. A subclass has no write API that reaches an
+ * ancestor, so the resolved set can only grow as you descend — an override can add conjuncts and
+ * can never shed one.
+ *
+ * **The load-bearing line is the `continue` below.** A level that declares *no* constraints at this
+ * index and a level that declares an *empty* list are the same statement about preconditions —
+ * "this class demands nothing further here" — and neither may displace an ancestor's demand. That
+ * is what makes an undecorated override inherit rather than clear: it has no own list, contributes
+ * no conjuncts, and the effective set is therefore its parent's, unchanged. Keying on *declares
+ * constraints* rather than on *has a registry entry* also means a phantom entry — one conjured by
+ * {@link setParameterMetadata} or {@link markInstalled} recording metadata for an undecorated
+ * position — can never be mistaken for "declares an empty precondition, so replace the parent".
+ *
+ * ## Why this is conjunction and not Meyer's disjunction
+ *
+ * A parameter constraint genuinely *is* a Meyer precondition, and classical DbC permits a subclass
+ * to **weaken** one contravariantly. This ruling forecloses that deliberately; DEC-022 records the
+ * reasoning and the tension. Explicit weakening remains available as an **additive** future feature
+ * (an opt-in disjunction), not as a reversal of this rule.
+ *
+ * ## Ordering and cost
+ *
+ * Base-most class first, each level in its own declaration order (DEC-017), matching
+ * {@link getEffectiveFieldConstraints}. The common case — no contracted ancestor — returns the
+ * stored array itself with no copy.
+ */
+export function getEffectiveParameterConstraints(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): ReadonlyArray<ConstraintDescriptor> {
+    if (!isRegisterableTarget(target)) return EMPTY_CONSTRAINTS;
+
+    // Collected own-most first; reversed on the way out so the base-most class leads.
+    let nearest: ConstraintDescriptor[] | undefined;
+    let bands: ConstraintDescriptor[][] | undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const contracts = contractsByTarget.get(cursor);
+        const contract = contracts && contracts.get(key);
+        if (!contract) continue;
+
+        const parameter = findParameterEntry(contract, index);
+        // Declares nothing, or declares nothing *here* — see the note above. Either way this level
+        // adds no conjunct and displaces none.
+        if (!parameter || parameter.constraints.length === 0) continue;
+
+        if (!nearest) {
+            nearest = parameter.constraints;
+        } else {
+            if (!bands) bands = [nearest];
+            bands.push(parameter.constraints);
+        }
+    }
+
+    if (!nearest) return EMPTY_CONSTRAINTS;
+    // No contracted ancestor — hand back the stored array rather than copying it.
+    if (!bands) return nearest;
+
+    const merged: ConstraintDescriptor[] = [];
+    for (let level = bands.length - 1; level >= 0; level--) {
+        const band = bands[level];
+        for (let i = 0; i < band.length; i++) merged.push(band[i]);
+    }
+    return merged;
+}
+
+/**
+ * The full contract in force on `target[key]` — the inheritance-aware twin of {@link getContract},
+ * and what both enforcement and a projection should read (DEC-022).
+ *
+ * Each parameter's `constraints` is the union described on
+ * {@link getEffectiveParameterConstraints}. `name`, `type` and `installed` come from the **nearest**
+ * declaration rather than being merged, for the reason they do on
+ * {@link getEffectiveFieldContract}: they describe the member a call actually reaches, and an
+ * override's own recovered names are the ones its violation messages quote. `name` and `type` each
+ * fall through independently to the nearest ancestor that has one, so a subclass compiled without
+ * `emitDecoratorMetadata` degrades to the parent's type rather than to none.
+ *
+ * `pre` and `post` are concatenated base-most first on the same rule. Both are reserved and have no
+ * writer yet (Q-11), so this is inert today — but conjunction is the correct rule for each of them
+ * independently (a cross-parameter precondition follows this ruling; a postcondition strengthens
+ * covariantly even under classical DbC), so a future writer inherits the right behaviour rather than
+ * a placeholder.
+ *
+ * Returns `undefined` when nothing on the chain records the method.
+ */
+export function getEffectiveContract(target: ContractTarget, key: MethodKey): MethodContract | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+
+    // Own-most first, so `levels[0]` is the nearest declaration.
+    const levels: MutableMethodContract[] = [];
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const contracts = contractsByTarget.get(cursor);
+        const contract = contracts && contracts.get(key);
+        if (contract) levels.push(contract);
+    }
+
+    if (levels.length === 0) return undefined;
+    // No contracted ancestor — hand back the stored contract rather than rebuilding it.
+    if (levels.length === 1) return levels[0];
+
+    const indices: number[] = [];
+    const seenIndices = new Set<number>();
+    for (const level of levels) {
+        for (const parameter of level.params) {
+            if (seenIndices.has(parameter.index)) continue;
+            seenIndices.add(parameter.index);
+            indices.push(parameter.index);
+        }
+    }
+    indices.sort((a, b) => a - b);
+
+    const params: ParameterContract[] = indices.map(index => {
+        let name: string | undefined;
+        let type: Function | undefined;
+        // `levels` is own-most first, so the first level that supplies either wins.
+        for (const level of levels) {
+            const parameter = findParameterEntry(level, index);
+            if (!parameter) continue;
+            if (name === undefined) name = parameter.name;
+            if (type === undefined) type = parameter.type;
+        }
+        return {index, constraints: getEffectiveParameterConstraints(target, key, index), name, type};
+    });
+
+    const pre: ConstraintDescriptor[] = [];
+    const post: ConstraintDescriptor[] = [];
+    for (let level = levels.length - 1; level >= 0; level--) {
+        const band = levels[level];
+        for (let i = 0; i < band.pre.length; i++) pre.push(band.pre[i]);
+        for (let i = 0; i < band.post.length; i++) post.push(band.post[i]);
+    }
+
+    return {params, pre, post, installed: levels[0].installed};
+}
+
+/**
+ * Method keys recorded anywhere on `target`'s prototype chain, own-most level first, deduplicated.
+ *
+ * The method-band twin of {@link collectEffectiveFieldKeys}, exported because the installer needs it:
+ * a subclass overriding a contracted method has no own entry to enumerate, so own-scoped enumeration
+ * is exactly how an override used to escape enforcement (Q-15). What the installer does with a key it
+ * does not own is its own decision — see `ContractInstaller.installOn`.
+ */
+export function getEffectiveContractKeys(target: ContractTarget): MethodKey[] {
+    if (!isRegisterableTarget(target)) return [];
+
+    const keys: MethodKey[] = [];
+    const seen = new Set<MethodKey>();
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const contracts = contractsByTarget.get(cursor);
+        if (!contracts) continue;
+        contracts.forEach((_contract, key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            keys.push(key);
+        });
+    }
+
+    return keys;
+}
+
 /** One method's contract, tagged with which key band it was recorded on. */
 export interface ClassMethodContract {
     readonly key: MethodKey;
@@ -265,8 +442,18 @@ export interface ClassMethodContract {
  * That knowledge belongs here, once, rather than being re-derived by the documentation, schema,
  * arbitrary, and fuzz projections independently. This is the API they should walk.
  *
- * Ordering is deterministic — instance methods first, then statics, each in registry insertion
- * order — so a regenerated artifact does not produce spurious diffs.
+ * ## Inherited contracts are included (DEC-022)
+ *
+ * A subclass instance is checked against every constraint on its chain, so this reports every
+ * constraint on its chain — including methods the subclass never mentions, and including an
+ * ancestor's constraints on a method the subclass overrides. Reporting only own declarations would
+ * put a generated document *behind* what is enforced, which is the exact asymmetry DEC-016 rejects
+ * and BUG-16 was. This mirrors what DEC-021 did for {@link getFieldContractsForClass}. `installed`,
+ * parameter names and types come from the nearest declaration — see {@link getEffectiveContract}.
+ *
+ * Ordering is deterministic — instance methods first, then statics; within each band, methods
+ * declared on the class itself first, then inherited ones, each level in registry insertion order —
+ * so a regenerated artifact does not produce spurious diffs.
  *
  * Returns an empty array for a class with nothing recorded, so callers iterate unconditionally.
  */
@@ -281,13 +468,23 @@ export function getContractsForClass(constructor: Function): ClassMethodContract
     // function, and a class with only statics still has contracts worth reporting.
     const prototype = constructor.prototype;
     if (prototype) {
-        getContracts(prototype).forEach((contract, key) => {
-            entries.push({key, contract, isStatic: false, target: prototype});
+        getEffectiveContractKeys(prototype).forEach(key => {
+            entries.push({
+                key,
+                contract: getEffectiveContract(prototype, key)!,
+                isStatic: false,
+                target: prototype,
+            });
         });
     }
 
-    getContracts(constructor).forEach((contract, key) => {
-        entries.push({key, contract, isStatic: true, target: constructor});
+    getEffectiveContractKeys(constructor).forEach(key => {
+        entries.push({
+            key,
+            contract: getEffectiveContract(constructor, key)!,
+            isStatic: true,
+            target: constructor,
+        });
     });
 
     return entries;
@@ -324,8 +521,6 @@ export function getFieldContract(target: ContractTarget, key: FieldKey): FieldCo
 }
 
 // --- effective (inheritance-aware) field reads (DEC-021, Q-14) --------------
-
-const EMPTY_CONSTRAINTS: ReadonlyArray<ConstraintDescriptor> = Object.freeze([]);
 
 /**
  * Every constraint in force on `target[key]`, including every one inherited from a superclass.
@@ -772,6 +967,20 @@ function parameterEntry(contract: MutableMethodContract, index: number): Mutable
     contract.params.push(entry);
     contract.params.sort((a, b) => a.index - b.index);
     return entry;
+}
+
+/**
+ * The stored entry for one parameter position, or `undefined` if this contract does not describe it.
+ * A read-only counterpart to {@link parameterEntry}, which creates.
+ */
+function findParameterEntry(
+    contract: MutableMethodContract,
+    index: number,
+): MutableParameterContract | undefined {
+    for (const parameter of contract.params) {
+        if (parameter.index === index) return parameter;
+    }
+    return undefined;
 }
 
 function fieldEntry(target: ContractTarget, key: FieldKey): MutableFieldContract {
