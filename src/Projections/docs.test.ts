@@ -27,7 +27,7 @@ import {
     setFieldMetadata,
     setParameterMetadata,
 } from '../Core/ContractRegistry';
-import {GreaterThan, GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
+import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../Contracts/number';
 import {Matches, StringMinLength} from '../Contracts/string';
 import {
     ClassDoc,
@@ -78,14 +78,14 @@ describe('rendering the ported built-in constraints', () => {
             expectation: 'a number less than or equal to 100',
         },
         {
-            name: 'positive (Positive)',
-            descriptor: Positive(),
-            identity: 'positive',
+            name: 'greaterThan (GreaterThan)',
+            descriptor: GreaterThan(0),
+            identity: 'greaterThan',
             kind: 'number',
-            // P3.3 settled Q-1: `positive` is strict, so this is an *exclusive*
-            // lower bound and projects to `exclusiveMinimum` in a schema.
+            // An *exclusive* lower bound, so it projects to `exclusiveMinimum` in a
+            // schema rather than to `minimum`.
             params: {exclusiveMin: 0},
-            expectation: 'a positive number',
+            expectation: 'a number greater than 0',
         },
         {
             name: 'minLength (StringMinLength)',
@@ -127,26 +127,15 @@ describe('rendering the ported built-in constraints', () => {
         });
     });
 
-    it('keeps `positive` distinct from `min` even though they share a derivation', () => {
-        // The identity is what documentation *names* ("must be positive"); `params.min` is what a
-        // schema projection reads. Collapsing the two would lose the former — see number.ts.
-        class Task {
-            run(_a: number, _b: number) { /* no-op */ }
-        }
-
-        recordParameterConstraint(Task.prototype, 'run', 0, Positive());
-        // Pairs with GreaterThan, not GreaterThanEqual: since Q-1 was settled,
-        // `positive` shares its exclusive-bound params with `greaterThan`.
-        recordParameterConstraint(Task.prototype, 'run', 1, GreaterThan(0));
-
-        const parameters = methodNamed(documentClass(Task), 'run').parameters;
-
-        expect(parameters[0].constraints[0].constraint).toBe('positive');
-        expect(parameters[1].constraints[0].constraint).toBe('greaterThan');
-        expect(parameters[0].constraints[0].params).toEqual(parameters[1].constraints[0].params);
-        expect(parameters[0].constraints[0].expectation)
-            .not.toBe(parameters[1].constraints[0].expectation);
-    });
+    /*
+     * Removed with DEC-020: 'keeps `positive` distinct from `min` even though they share a
+     * derivation'. It pinned that two identities carrying *identical* params still project
+     * distinct prose, and `positive`/`greaterThan` were the only pair that could demonstrate
+     * it. After the removal no two built-ins share params, so the test had no subject left —
+     * rewritten mechanically it would have compared `greaterThan` to itself and asserted its
+     * expectation differed from its own. The principle it guarded (identity is what a
+     * projection prints, params are what it reads) is documented in `Contracts/number.ts`.
+     */
 });
 
 // ---------------------------------------------------------------------------
@@ -166,7 +155,7 @@ describe('a method with several parameters', () => {
         recordParameterConstraint(Task.prototype, 'send', 1, LessThanEqual(100));
         setParameterMetadata(Task.prototype, 'send', 1, {name: 'count', type: Number});
 
-        recordParameterConstraint(Task.prototype, 'send', 2, Positive());
+        recordParameterConstraint(Task.prototype, 'send', 2, GreaterThan(0));
         setParameterMetadata(Task.prototype, 'send', 2, {name: 'retries', type: Number});
     });
 
@@ -217,7 +206,7 @@ describe('a method with several parameters', () => {
             '| `message` (0) | `String` | `minLength` | a string of length greater than 10 |',
             '| `count` (1) | `Number` | `min` | a number greater than or equal to 1 |',
             '| `count` (1) | `Number` | `max` | a number less than or equal to 100 |',
-            '| `retries` (2) | `Number` | `positive` | a positive number |',
+            '| `retries` (2) | `Number` | `greaterThan` | a number greater than 0 |',
             '',
         ].join('\n'));
     });
@@ -241,7 +230,7 @@ describe('contracted fields', () => {
         class Basket {
         }
 
-        recordFieldConstraint(Basket.prototype, 'itemCount', Positive());
+        recordFieldConstraint(Basket.prototype, 'itemCount', GreaterThan(0));
         setFieldMetadata(Basket.prototype, 'itemCount', {type: Number});
         markFieldInstalled(Basket.prototype, 'itemCount');
 
@@ -251,8 +240,8 @@ describe('contracted fields', () => {
         expect(field.isStatic).toBe(false);
         expect(field.typeName).toBe('Number');
         expect(field.installed).toBe(true);
-        expect(field.constraints.map(constraint => constraint.constraint)).toEqual(['positive']);
-        expect(field.constraints[0].expectation).toBe('a positive number');
+        expect(field.constraints.map(constraint => constraint.constraint)).toEqual(['greaterThan']);
+        expect(field.constraints[0].expectation).toBe('a number greater than 0');
     });
 
     it('carries several constraints on one field, in recorded order', () => {
@@ -289,7 +278,7 @@ describe('contracted fields', () => {
         }
 
         recordFieldConstraint(Widget, 'limit', GreaterThanEqual(1));
-        recordFieldConstraint(Widget.prototype, 'count', Positive());
+        recordFieldConstraint(Widget.prototype, 'count', GreaterThan(0));
         markFieldInstalled(Widget, 'limit');
         markFieldInstalled(Widget.prototype, 'count');
 
@@ -308,8 +297,8 @@ describe('contracted fields', () => {
         class Widget {
         }
 
-        recordFieldConstraint(Widget.prototype, 'zebra', Positive());
-        recordFieldConstraint(Widget.prototype, 'alpha', Positive());
+        recordFieldConstraint(Widget.prototype, 'zebra', GreaterThan(0));
+        recordFieldConstraint(Widget.prototype, 'alpha', GreaterThan(0));
 
         expect(documentClass(Widget).fields.map(field => field.name)).toEqual(['alpha', 'zebra']);
     });
@@ -320,8 +309,8 @@ describe('contracted fields', () => {
         class Widget {
         }
 
-        recordFieldConstraint(Widget.prototype, 'unarmed', Positive());
-        recordFieldConstraint(Widget.prototype, 'armed', Positive());
+        recordFieldConstraint(Widget.prototype, 'unarmed', GreaterThan(0));
+        recordFieldConstraint(Widget.prototype, 'armed', GreaterThan(0));
         markFieldInstalled(Widget.prototype, 'armed');
 
         const markdown = renderMarkdown([documentClass(Widget)]);
@@ -340,7 +329,7 @@ describe('contracted fields', () => {
         class Basket {
         }
 
-        recordFieldConstraint(Basket.prototype, 'itemCount', Positive());
+        recordFieldConstraint(Basket.prototype, 'itemCount', GreaterThan(0));
         markFieldInstalled(Basket.prototype, 'itemCount');
 
         const [field] = documentClass(Basket).fields;
@@ -355,7 +344,7 @@ describe('contracted fields', () => {
         class Basket {
         }
 
-        recordFieldConstraint(Basket.prototype, key, Positive());
+        recordFieldConstraint(Basket.prototype, key, GreaterThan(0));
         markFieldInstalled(Basket.prototype, key);
 
         expect(documentClass(Basket).fields[0].name).toBe('Symbol(hidden)');
@@ -386,7 +375,7 @@ describe('contracted fields', () => {
         setParameterMetadata(Task.prototype, 'send', 0, {name: 'message', type: String});
         markInstalled(Task.prototype, 'send');
 
-        recordFieldConstraint(Task.prototype, 'retries', Positive());
+        recordFieldConstraint(Task.prototype, 'retries', GreaterThan(0));
         setFieldMetadata(Task.prototype, 'retries', {type: Number});
         markFieldInstalled(Task.prototype, 'retries');
 
@@ -405,7 +394,7 @@ describe('contracted fields', () => {
             '',
             '| Field | Type | Constraint | Expectation |',
             '| --- | --- | --- | --- |',
-            '| `retries` | `Number` | `positive` | a positive number |',
+            '| `retries` | `Number` | `greaterThan` | a number greater than 0 |',
             '',
         ].join('\n'));
     });
@@ -450,14 +439,14 @@ describe('the empty case', () => {
         class Basket {
         }
 
-        recordFieldConstraint(Basket.prototype, 'itemCount', Positive());
+        recordFieldConstraint(Basket.prototype, 'itemCount', GreaterThan(0));
         markFieldInstalled(Basket.prototype, 'itemCount');
 
         const markdown = renderMarkdown([documentClass(Basket)]);
 
         expect(documentClass(Basket).methods).toEqual([]);
         expect(markdown).not.toContain('_No contracts recorded._');
-        expect(markdown).toContain('`positive`');
+        expect(markdown).toContain('`greaterThan`');
     });
 
     it('renders a class with no contracts without inventing any', () => {
@@ -509,8 +498,8 @@ describe('walking the registry (DEC-011)', () => {
             run(_value: number) { /* no-op */ }
         }
 
-        recordParameterConstraint(Documented.prototype, 'run', 0, Positive());
-        recordParameterConstraint(Unregistered.prototype, 'run', 0, Positive());
+        recordParameterConstraint(Documented.prototype, 'run', 0, GreaterThan(0));
+        recordParameterConstraint(Unregistered.prototype, 'run', 0, GreaterThan(0));
         registerContractedClass(Documented);
 
         expect(documentContracts().map(classDoc => classDoc.name)).toEqual(['Documented']);
@@ -554,7 +543,7 @@ describe('degraded and unusual registry entries', () => {
             run(_value: number) { /* no-op */ }
         }
 
-        recordParameterConstraint(Task.prototype, 'run', 0, Positive());
+        recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
 
         const parameter = methodNamed(documentClass(Task), 'run').parameters[0];
 
@@ -568,7 +557,7 @@ describe('degraded and unusual registry entries', () => {
             run(_ignored: string, _value: number) { /* no-op */ }
         }
 
-        recordParameterConstraint(Task.prototype, 'run', 1, Positive());
+        recordParameterConstraint(Task.prototype, 'run', 1, GreaterThan(0));
         setParameterMetadata(Task.prototype, 'run', 1, {name: 'value'});
 
         const method = methodNamed(documentClass(Task), 'run');
@@ -586,7 +575,7 @@ describe('degraded and unusual registry entries', () => {
             run(_value: number) { /* no-op */ }
         }
 
-        recordParameterConstraint(Task.prototype, 'run', 0, Positive());
+        recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
 
         const classDoc = documentClass(Task);
 
@@ -606,7 +595,7 @@ describe('degraded and unusual registry entries', () => {
         }
 
         recordParameterConstraint(Task, 'parse', 0, StringMinLength(3));
-        recordParameterConstraint(Task.prototype, 'run', 0, Positive());
+        recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
 
         const classDoc = documentClass(Task);
 
@@ -625,8 +614,8 @@ describe('degraded and unusual registry entries', () => {
             alpha(_value: number) { /* no-op */ }
         }
 
-        recordParameterConstraint(Task.prototype, 'zebra', 0, Positive());
-        recordParameterConstraint(Task.prototype, 'alpha', 0, Positive());
+        recordParameterConstraint(Task.prototype, 'zebra', 0, GreaterThan(0));
+        recordParameterConstraint(Task.prototype, 'alpha', 0, GreaterThan(0));
 
         expect(documentClass(Task).methods.map(method => method.name)).toEqual(['alpha', 'zebra']);
     });
@@ -637,7 +626,7 @@ describe('degraded and unusual registry entries', () => {
         class Task {
         }
 
-        recordParameterConstraint(Task.prototype, key, 0, Positive());
+        recordParameterConstraint(Task.prototype, key, 0, GreaterThan(0));
 
         expect(methodNamed(documentClass(Task), 'Symbol(send)').signature)
             .toBe('Task.Symbol(send)(arg0)');
@@ -650,7 +639,7 @@ describe('degraded and unusual registry entries', () => {
             run(_value: number) { /* no-op */ }
         }
 
-        recordParameterConstraint(Task.prototype, 'run', 0, Positive());
+        recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
 
         const method = methodNamed(documentClass(Task), 'run');
 

@@ -25,8 +25,8 @@
  */
 
 import {
+    GreaterThan,
     GreaterThanEqual,
-    Positive,
     StringMinLength,
 } from '../ParameterDecorators/Constraints';
 import {ParameterDecoratorFactory} from './ParameterDecoratorFactory';
@@ -181,7 +181,7 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
         // runtime would ever contradict.
         @Contract()
         class Odd {
-            run({a, b}: {a: number, b: number}, @Positive() n: number) { return a + b + n; }
+            run({a, b}: {a: number, b: number}, @GreaterThan(0) n: number) { return a + b + n; }
         }
 
         const indices = getContract(Odd.prototype, 'run')!.params.map(p => p.index);
@@ -193,7 +193,7 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
     it('does not invent positions for a rest parameter either', () => {
         @Contract()
         class Sum {
-            add(@Positive() first: number, ...rest: number[]) { return first + rest.length; }
+            add(@GreaterThan(0) first: number, ...rest: number[]) { return first + rest.length; }
         }
 
         // `...rest` is not a fixed slot, so the parse is not treated as a signature. The decorated

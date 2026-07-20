@@ -40,39 +40,49 @@
  *   `{"minimum": 0}`, which `NaN` cannot even be expressed in, and a generator built from that
  *   range would never produce `NaN`. So the old predicate disagreed with its own params on this one
  *   input — Q-4 drift, arrived at by preservation rather than by carelessness, but drift all the same.
- * - Every alternative is worse. Leaving `NaN` accepted keeps the vocabulary self-inconsistent the
- *   moment `Negative` lands, because `NaN` would satisfy `positive` **and** `negative`.
+ * - Every alternative is worse. Leaving `NaN` accepted keeps the vocabulary self-inconsistent: `NaN`
+ *   would satisfy `GreaterThan(0)` **and** `LessThan(0)` simultaneously.
  *
  * `Infinity` is deliberately **not** rejected: `Infinity > 5` is genuinely true and the ordering is
  * coherent, so `GreaterThan(5)` accepting it is correct. (`Descriptor.normalizeParams` separately
  * refuses non-finite *params*, so no bound can be infinite.) `NaN` is excluded because it has no
  * ordering at all, not because it is exotic.
  *
- * ### 3. `positive` is now strict (ISSUES.md Q-1, DEC-001) — **user-visible break**
+ * ### 3. The named-boundary constraints are **gone** (ISSUES.md Q-1, DEC-020) — **breaking**
  *
- * `Positive()` rejected only `value < 0`, so `0` passed despite the name. That is now `> 0`.
- * Callers wanting the old behaviour use {@link NonNegative}.
+ * `Positive`, `Negative`, `NonNegative` and `NonPositive` have been removed outright. Use
+ * `GreaterThan(0)`, `LessThan(0)`, `GreaterThanEqual(0)` and `LessThanEqual(0)`.
  *
- * The forcing argument is `Negative()`, which lands in this same file. Under the lax reading, `0`
- * satisfies `positive` *and* `nonPositive`, and the pair `Positive`/`Negative` has an overlapping
- * boundary that no reader would predict. The plan recommends strictness for exactly this reason
- * (P2.2: "it matches the mathematical reading and avoids a confusing pair"), and P3.3 is the last
- * point at which the change is cheap.
+ * `Positive()` was ambiguous for the whole of this project's life: it originally admitted `0`
+ * (DEC-001), P3.3 made it strict, and Q-1 tracked the disagreement between the *name* and the
+ * *boundary* across every wave in between. Both readings were defensible, which is the tell — the
+ * question was never answerable from the constraint's own definition, because the name does not
+ * carry the boundary and the author is the only one who knows which they meant.
  *
- * The consequence in the *data* is the good part: `positive` stops being an inclusive lower bound
- * of zero and becomes an **exclusive** one, so its params change from `{min: 0}` to
- * `{exclusiveMin: 0}` and a schema projection emits `exclusiveMinimum` instead of `minimum`. The
- * boundary is visible in the artifact rather than buried in a name.
+ * So the fix is not to adjudicate it. It is to **stop encoding a boundary in a name**, and put the
+ * nuance about `0` back where the intent is knowable: on the developer. `GreaterThan(0)` and
+ * `GreaterThanEqual(0)` state exactly which boundary is meant and cannot surprise anyone. Q-1 is
+ * resolved by making the ambiguity *unexpressible* rather than by picking a side that the next
+ * reader would have to look up.
+ *
+ * The same reasoning generalises: a named constraint can only ever hard-code one arbitrary limit,
+ * so `Positive` is the special case of `GreaterThan` that happens to have a word for it. There is
+ * no word for `GreaterThan(18)`, and nobody wants one.
  *
  * ---
  *
  * ## Identity is distinct even where derivation is shared
  *
- * `positive` shares `above` with `greaterThan`; `nonNegative` shares `atLeast` with `min`;
- * `between` is literally `atLeast ∧ atMost`. Sharing the derivation is what makes them unable to
- * disagree. Keeping the *identity* separate is what lets documentation say "a positive number"
- * where a schema says `{"exclusiveMinimum": 0}` — the identity is what a projection prints, the
- * params are what it reads.
+ * `between` is literally `atLeast ∧ atMost`, and `min`/`max` share their derivations with nothing
+ * else now that the named-boundary constraints are gone. Sharing a derivation is what makes two
+ * identities unable to disagree; keeping the identity separate is what lets a projection print
+ * "a number between 1 and 10 (inclusive)" where a schema emits `{"minimum": 1, "maximum": 10}`.
+ * The identity is what a projection prints, the params are what it reads.
+ *
+ * DEC-020 deliberately spends some of that: `positive` was a distinct identity whose whole value
+ * was printing "a positive number" where `greaterThan` prints "a number greater than 0". The
+ * second reads better — it states the boundary instead of implying it — so the identity was
+ * carrying ambiguity, not information.
  *
  * ## `schema()` may under-claim, never over-claim
  *
@@ -143,19 +153,19 @@ function isNumeric(value: unknown): value is number {
 // Derivations — the single source each predicate comes from (DEC-010)
 // ---------------------------------------------------------------------------
 
-/** `min` is inclusive. Shared by `min` and `nonNegative`. */
+/** `min` is inclusive. Backs `min`, and `between` via {@link within}. */
 const atLeast = (params: Readonly<MinParams>): Predicate =>
     (value: unknown) => isNumeric(value) && value >= params.min;
 
-/** `max` is inclusive. Shared by `max` and `nonPositive`. */
+/** `max` is inclusive. Backs `max`, and `between` via {@link within}. */
 const atMost = (params: Readonly<MaxParams>): Predicate =>
     (value: unknown) => isNumeric(value) && value <= params.max;
 
-/** `exclusiveMin` is excluded. Shared by `greaterThan` and `positive`. */
+/** `exclusiveMin` is excluded. Backs `greaterThan`. */
 const above = (params: Readonly<ExclusiveMinParams>): Predicate =>
     (value: unknown) => isNumeric(value) && value > params.exclusiveMin;
 
-/** `exclusiveMax` is excluded. Shared by `lessThan` and `negative`. */
+/** `exclusiveMax` is excluded. Backs `lessThan`. */
 const below = (params: Readonly<ExclusiveMaxParams>): Predicate =>
     (value: unknown) => isNumeric(value) && value < params.exclusiveMax;
 
@@ -262,50 +272,15 @@ export const betweenConstraint = defineConstraint<RangeParams>({
     schema: params => numeric({minimum: params.min, maximum: params.max}),
 });
 
-/**
- * A distinct identity from `greaterThan`, despite sharing its derivation and params shape.
+/*
+ * `positiveConstraint`, `negativeConstraint`, `nonNegativeConstraint` and `nonPositiveConstraint`
+ * were removed by DEC-020. They were distinct identities over `above`/`below`/`atLeast`/`atMost`
+ * with their bound hard-coded to zero, existing so a document could say "a positive number".
  *
- * The identity is what a documentation projection *names* ("a positive number"), while
- * `params.exclusiveMin` is what a schema projection *reads* (`{"exclusiveMinimum": 0}`). Collapsing
- * `Positive()` into `greaterThan({exclusiveMin: 0})` would lose the former; giving it its own
- * hand-written predicate would reopen the drift risk. Sharing `above` keeps one source for the check.
- *
- * **Strict since P3.3** — `0` is rejected. See the module note on Q-1.
+ * Do not reintroduce them, under any name that implies a boundary rather than stating one. The
+ * ambiguity Q-1 tracked for three waves was not a bug in the boundary; it was a bug in naming a
+ * boundary at all.
  */
-export const positiveConstraint = defineConstraint<ExclusiveMinParams>({
-    kind: 'number',
-    constraint: 'positive',
-    derive: above,
-    describe: () => 'a positive number',
-    schema: params => numeric({exclusiveMinimum: params.exclusiveMin}),
-});
-
-/** The mirror of `positive`, and strict for the same reason. */
-export const negativeConstraint = defineConstraint<ExclusiveMaxParams>({
-    kind: 'number',
-    constraint: 'negative',
-    derive: below,
-    describe: () => 'a negative number',
-    schema: params => numeric({exclusiveMaximum: params.exclusiveMax}),
-});
-
-/** What `Positive()` used to mean. Shares `atLeast` with `min`. */
-export const nonNegativeConstraint = defineConstraint<MinParams>({
-    kind: 'number',
-    constraint: 'nonNegative',
-    derive: atLeast,
-    describe: () => 'a non-negative number',
-    schema: params => numeric({minimum: params.min}),
-});
-
-/** The mirror of `nonNegative`. Shares `atMost` with `max`. */
-export const nonPositiveConstraint = defineConstraint<MaxParams>({
-    kind: 'number',
-    constraint: 'nonPositive',
-    derive: atMost,
-    describe: () => 'a non-positive number',
-    schema: params => numeric({maximum: params.max}),
-});
 
 export const integerConstraint = defineConstraint<JsonObject>({
     kind: 'number',
@@ -397,30 +372,19 @@ export function Between(min: number, max: number) {
     return betweenConstraint({min, max});
 }
 
-/**
- * Rejects values at or below zero.
+/*
+ * `Positive()`, `Negative()`, `NonNegative()` and `NonPositive()` were removed by DEC-020.
  *
- * **BREAKING since P3.3: `0` no longer passes.** Use {@link NonNegative} for the previous
- * behaviour. See the module note on Q-1.
+ *     Positive()     ->  GreaterThan(0)
+ *     Negative()     ->  LessThan(0)
+ *     NonNegative()  ->  GreaterThanEqual(0)
+ *     NonPositive()  ->  LessThanEqual(0)
+ *
+ * No deprecated aliases are shipped. An alias would have to pick a boundary to forward to, which
+ * is the choice Q-1 could never settle, so it would preserve exactly the ambiguity the removal
+ * exists to end — with the added cost that a caller reading `Positive()` in their own source still
+ * cannot tell what it does.
  */
-export function Positive() {
-    return positiveConstraint({exclusiveMin: 0});
-}
-
-/** Rejects values at or above zero. `0` does not pass — the mirror of {@link Positive}. */
-export function Negative() {
-    return negativeConstraint({exclusiveMax: 0});
-}
-
-/** Rejects values below zero; `0` passes. This is what `Positive()` meant before P3.3. */
-export function NonNegative() {
-    return nonNegativeConstraint({min: 0});
-}
-
-/** Rejects values above zero; `0` passes. The mirror of {@link NonNegative}. */
-export function NonPositive() {
-    return nonPositiveConstraint({max: 0});
-}
 
 /** Rejects non-integers, and any non-number. `1.0` is an integer; `1.5`, `Infinity`, `NaN` are not. */
 export function Integer() {

@@ -11,10 +11,9 @@
 import {Verify} from './Verify';
 import {
     Between,
+    GreaterThan,
     GreaterThanEqual,
     LessThanEqual,
-    NonNegative,
-    Positive,
 } from '../Contracts/number';
 import {Email, NotEmpty} from '../Contracts/string';
 
@@ -36,13 +35,13 @@ describe('Verify.that — the general form', () => {
 
     it('accepts a symbol key', () => {
         const key = Symbol('count');
-        expect(() => Verify.that(Positive(), key, -1)).toThrow(/Symbol\(count\)/);
+        expect(() => Verify.that(GreaterThan(0), key, -1)).toThrow(/Symbol\(count\)/);
     });
 
     it('points the stack at the caller, not at adorn internals', () => {
         let error: Error | undefined;
         try {
-            Verify.that(Positive(), 'count', -1);
+            Verify.that(GreaterThan(0), 'count', -1);
         } catch (caught) {
             error = caught as Error;
         }
@@ -56,12 +55,16 @@ describe('Verify.that — the general form', () => {
 });
 
 describe('the named helpers', () => {
-    it('positive returns the value and rejects zero and below', () => {
-        expect(Verify.positive('count', 3)).toBe(3);
-        // P3.3 made `positive` strict. Verify inherits the break because it shares the descriptor —
-        // which is the mechanism working, not a regression.
-        expect(() => Verify.positive('count', 0)).toThrow(/expected a positive number/);
-        expect(() => Verify.positive('count', -1)).toThrow(/expected a positive number/);
+    it('no longer includes `positive` — the boundary is written by the caller (DEC-020)', () => {
+        // `Verify.positive` was pre-existing public surface and is removed rather than aliased: an
+        // alias would have to pick a side of zero, which is the choice Q-1 could never settle.
+        expect((Verify as unknown as Record<string, unknown>).positive).toBeUndefined();
+
+        // Both of the things it might have meant are one call away, and neither is ambiguous.
+        expect(Verify.that(GreaterThan(0), 'count', 3)).toBe(3);
+        expect(() => Verify.that(GreaterThan(0), 'count', 0))
+            .toThrow(/expected a number greater than 0/);
+        expect(Verify.greaterThanEqual('count', 0, 0)).toBe(0);
     });
 
     it('lessThanEqual takes (keyName, value, max) — normalised argument order', () => {
@@ -77,19 +80,20 @@ describe('the named helpers', () => {
     });
 
     it('is total — null, undefined and NaN are violations, not TypeErrors', () => {
-        expect(() => Verify.positive('count', null)).toThrow(/expected a positive number/);
-        expect(() => Verify.positive('count', undefined)).toThrow(/expected a positive number/);
-        expect(() => Verify.positive('count', NaN)).toThrow(/expected a positive number/);
-        expect(() => Verify.positive('count', '5' as any)).toThrow(/expected a positive number/);
+        const greaterThanZero = /expected a number greater than 0/;
+        expect(() => Verify.that(GreaterThan(0), 'count', null)).toThrow(greaterThanZero);
+        expect(() => Verify.that(GreaterThan(0), 'count', undefined)).toThrow(greaterThanZero);
+        expect(() => Verify.that(GreaterThan(0), 'count', NaN)).toThrow(greaterThanZero);
+        expect(() => Verify.that(GreaterThan(0), 'count', '5' as any)).toThrow(greaterThanZero);
     });
 });
 
 describe('parity with the descriptors — there is no second implementation', () => {
     const cases: Array<[string, (value: unknown) => unknown, (value: unknown) => boolean]> = [
-        ['positive', v => Verify.positive('k', v), Positive().predicate],
         ['lessThanEqual', v => Verify.lessThanEqual('k', v, 10), LessThanEqual(10).predicate],
         ['greaterThanEqual', v => Verify.greaterThanEqual('k', v, 10), GreaterThanEqual(10).predicate],
-        ['nonNegative', v => Verify.that(NonNegative(), 'k', v), NonNegative().predicate],
+        ['that(GreaterThan(0))', v => Verify.that(GreaterThan(0), 'k', v), GreaterThan(0).predicate],
+        ['that(GreaterThanEqual(0))', v => Verify.that(GreaterThanEqual(0), 'k', v), GreaterThanEqual(0).predicate],
     ];
 
     const values: unknown[] = [

@@ -29,6 +29,18 @@
  * | a thenable         | when it resolves or rejects                       |
  * | an Observable      | when the stream completes or errors                |
  *
+ * ## The Observable row is dormant interop, and adorn no longer depends on rxjs
+ *
+ * `rxjs` was removed from the package entirely — not demoted, removed; `@Memoize` went with it, and
+ * a future `@adorn/rx` module is where that functionality is expected to return (see the IDEA entry
+ * in `docs/ISSUES.md`). The Observable branch below **stays**, because deleting it would be the
+ * worse outcome for the one case it exists to prevent: without it an Observable-returning method
+ * falls into the `sync` row and is billed for the time taken to *construct* the stream, which is
+ * approximately zero and is precisely the "number that looks like an answer" this whole file is
+ * organised against. The branch is duck-typed and reaches rxjs only through a guarded lazy
+ * `require`, so with rxjs absent it degrades to `settled: false` — an honest refusal to measure —
+ * and with rxjs present in the consumer's tree (still the common case) it measures properly.
+ *
  * ## Cold Observables are not subscribed to
  *
  * The obvious way to time an Observable — subscribe and watch — is wrong twice over: it makes a cold
@@ -183,9 +195,11 @@ function isThenable(value: any): boolean {
 }
 
 /**
- * Duck-typed, never `instanceof`. rxjs must stay optional here (plan P1.7): a second copy of rxjs in
- * `node_modules` breaks `instanceof` across realms, and an interop observable from another library
- * is just as timeable. `pipe` is not required — unlike `Memoize`, nothing below calls it.
+ * Duck-typed, never `instanceof`. This is now the *only* way it could work — adorn does not depend
+ * on rxjs at all, so there is no `Observable` to be an instance of unless the consumer supplies one.
+ * It was already the right choice before that: a second copy of rxjs in `node_modules` breaks
+ * `instanceof` across realms, and an interop observable from another library is just as timeable.
+ * `subscribe` is the only member required, because it is the only one this file calls.
  */
 function isObservableLike(value: any): boolean {
     return !!value && (typeof value === 'object' || typeof value === 'function')
@@ -229,8 +243,11 @@ function timeThenable(result: any, started: number, report: Report): any {
 function timeObservable(source: any, report: Report): any {
     const ObservableCtor = loadObservable();
     if (!ObservableCtor) {
-        // rxjs is optional and absent. Reporting the time-to-return would be a number that looks
-        // like a duration and is not one, so it is flagged rather than quietly emitted.
+        // No rxjs in the consumer's tree — the expected case now that adorn does not depend on it.
+        // The source is handed back exactly as the method produced it, unwrapped and unsubscribed.
+        // Reporting the time-to-return would be a number that looks like a duration and is not one,
+        // so `settled: false` flags it rather than quietly emitting it; a sink must not compare an
+        // unsettled duration against settled ones.
         report(0, 'observable', 'returned', false);
         return source;
     }
@@ -263,22 +280,37 @@ function timeObservable(source: any, report: Report): any {
 /**
  * Load rxjs's `Observable` lazily, and only once an Observable has actually been seen.
  *
- * A static import would make rxjs a hard dependency of every consumer of `@Time`, including the ones
- * timing plain synchronous methods. GAP-6 is moving rxjs to a peer/optional dependency, so this must
- * degrade rather than fail to load.
+ * This is the seam that lets `@Time` keep an Observable branch while adorn depends on rxjs not at
+ * all. A static import would have made rxjs a hard requirement of every consumer of `@Time`,
+ * including the ones timing plain synchronous methods. The `require` is reached only from
+ * {@link timeObservable}, i.e. only after a method has actually returned something subscribable, so
+ * a consumer without rxjs never executes it.
  *
- * **SMELL-16 is real and is deliberately not worked around.** The argument is a string literal, so a
- * bundler resolves it statically no matter that the call sits inside a guarded function: webpack and
- * friends will pull rxjs into any build that imports `@Time`, including one that only times
- * synchronous methods. The lazy `require` buys nothing there — it only buys the Node/CommonJS case,
- * where it does work.
+ * **What is loaded, and why an `Observable` is needed at all.** Only to *construct the wrapper* —
+ * `timeObservable` returns a new cold Observable that starts the clock on subscribe. The source
+ * itself is consumed purely through its duck-typed `subscribe`. Building the wrapper from
+ * `source.constructor` instead was considered and rejected: for a `Subject` that is `Subject`, and
+ * `new Subject(fn)` ignores the subscribe function entirely, so the wrapper would silently never
+ * time anything.
  *
- * The two ways out are both worse than the smell. Hiding the specifier from static analysis
- * (`eval('require')('rxjs')`) breaks under a strict CSP and under ESM, and earns a bundler warning
- * rather than avoiding one. Injecting the constructor through a new `setObservableConstructor()`
- * export invents public API for a problem no consumer has yet — rxjs is still a hard dependency
- * here, so the smell has no victim until GAP-6 actually lands, and GAP-6 is a `package.json` change.
- * The right moment to fix this is when the dependency moves, and the fix belongs with that move.
+ * **SMELL-16 is still real, and removing the dependency changed its character rather than fixing
+ * it.** The argument is a string literal, so a bundler resolves it statically no matter that the
+ * call sits inside a guarded function. Previously that meant a bundler would *pull rxjs in*
+ * unnecessarily — wasteful, but harmless, and with no victim while rxjs was a hard dependency.
+ * Now that rxjs is not in the tree at all, the same static resolution instead finds **nothing**, so
+ * a bundled consumer can expect an unresolved-module diagnostic for a dependency they never asked
+ * for. That is a live cost, not a hypothetical one, and it is the direct consequence of this
+ * removal. It is unverified against a real bundler — reasoned from how static resolution works, and
+ * recorded as such rather than asserted (SMELL-16).
+ *
+ * The previously-recorded fix is now unblocked but is deliberately **not** taken here: injecting the
+ * constructor via a `setObservableConstructor()` export was rejected on the grounds that it "invents
+ * public API for a problem that has no victim while rxjs is still a hard dependency". That
+ * rejection has expired — the victim now exists — but adding a public export is a decision about
+ * adorn's API surface, and it belongs with `@adorn/rx` rather than being slipped in alongside a
+ * removal. Node/CommonJS consumers, which is who this path is for, are unaffected either way.
+ * Hiding the specifier from static analysis (`eval('require')('rxjs')`) remains rejected outright:
+ * it breaks under strict CSP and under ESM, and earns a bundler warning rather than avoiding one.
  */
 let observableCtor: any;
 let observableLookupDone = false;

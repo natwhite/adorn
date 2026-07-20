@@ -96,7 +96,7 @@ describe('parameter types reach the registry and the document', () => {
 describe('field types reach the registry too (GAP-9)', () => {
     it('records design:type for a contracted field', () => {
         class Basket {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             itemCount: number = 1;
         }
         void Basket;
@@ -105,6 +105,6 @@ describe('field types reach the registry too (GAP-9)', () => {
 
         expect(field.key).toBe('itemCount');
         expect(field.contract.type).toBe(Number);
-        expect(field.contract.constraints.map(c => c.constraint)).toEqual(['positive']);
+        expect(field.contract.constraints.map(c => c.constraint)).toEqual(['greaterThan']);
     });
 });

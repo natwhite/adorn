@@ -26,8 +26,8 @@
  * descriptor/predicate drift Q-4 names as the worst failure mode the "contracts as the single source
  * of truth" goal introduces (DEC-006, DEC-010). `Verify.positive` and `@Positive()` could silently
  * disagree, and generated documentation would describe one while the other ran. It was not
- * hypothetical: P3.3 made `positive` strict, and a hand-written `Verify.positive` would still be
- * accepting `0` today.
+ * hypothetical: P3.3 made `positive` strict, and a hand-written `Verify.positive` would still have
+ * been accepting `0` afterwards.
  *
  * **There is not one comparison operator left in this file.** Every check comes from the descriptor
  * its decorator counterpart uses, so drift is structurally impossible rather than merely unlikely,
@@ -43,11 +43,11 @@
  * Verify.that(Email(), 'contact', input.contact);
  * ```
  *
- * The three named helpers below are kept because they are the pre-existing public surface (SMELL-8
- * found two of them unused, but `Verify` is exported from `index.ts`, so they are removable API
- * rather than dead internals).
+ * The two named helpers below are kept because they are the pre-existing public surface (SMELL-8
+ * found them unused, but `Verify` is exported from `index.ts`, so they are removable API rather
+ * than dead internals).
  *
- * ## Two behavioural changes, both deliberate
+ * ## Three behavioural changes, all deliberate
  *
  * 1. **`lessThanEqual` / `greaterThanEqual` took `(key, target, constraint)`** while `positive` took
  *    `(keyName, value)` — value and bound sat in different positions in sibling methods. Normalised
@@ -56,15 +56,19 @@
  *    surface area is tiny".
  * 2. **Messages now come from the descriptor**, matching what the decorators produce and what
  *    documentation renders. `ValueError: count is expected to be a positive number, got '-1'`
- *    becomes `Value Error: count expected a positive number but received -1 instead`. Nothing
+ *    becomes `Value Error: count expected a number greater than 0 but received -1 instead`. Nothing
  *    pinned the old strings.
- *
- * `Verify.positive` also inherits P3.3's break — `0` is now rejected — because it shares the
- * descriptor. That is the mechanism working as intended.
+ * 3. **`Verify.positive` is removed** (Q-1, DEC-020), along with the `Positive` descriptor it
+ *    delegated to. It is the one helper here that was *named* for a boundary rather than given one,
+ *    and it inherited the ambiguity wholesale — its own doc comment had to explain which side of
+ *    zero it fell on. Write `Verify.that(GreaterThan(0), key, value)`, or
+ *    `Verify.greaterThanEqual(key, value, 0)` if `0` should pass. This is a removal from the
+ *    pre-existing public surface and is deliberate: keeping it would have kept exactly one place
+ *    where the vocabulary still encoded a boundary in a name.
  */
 
 import {ConstraintDescriptor} from '../Core/Descriptor';
-import {GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
+import {GreaterThanEqual, LessThanEqual} from '../Contracts/number';
 
 export class Verify {
     /**
@@ -89,14 +93,10 @@ export class Verify {
         throw error;
     }
 
-    /**
-     * Returns `value` if it is greater than zero, otherwise throws.
-     *
-     * **`0` no longer passes** (P3.3, Q-1 / DEC-001) — use `Verify.that(NonNegative(), ...)`.
+    /*
+     * `Verify.positive` was removed by DEC-020. Use `Verify.that(GreaterThan(0), key, value)` for
+     * the strict boundary, or `Verify.greaterThanEqual(key, value, 0)` if `0` should pass.
      */
-    static positive<T>(keyName: string | symbol, value: T): T {
-        return Verify.that(Positive(), keyName, value);
-    }
 
     /**
      * Returns `value` if it is not above `max`, otherwise throws. `max` itself passes.

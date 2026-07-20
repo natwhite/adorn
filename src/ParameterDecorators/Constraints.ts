@@ -20,11 +20,13 @@
  * descriptors carry every semantic, this layer carries only the `@`-syntax. Adding a constraint here
  * that is not backed by a descriptor would make it invisible to all four projections (SMELL-14).
  *
- * ## P3.3 — what changed behaviourally
+ * ## What changed behaviourally
  *
  * Three deliberate breaks, all argued in `src/Contracts/number.ts` and `src/Contracts/string.ts`:
  *
- * 1. **`@Positive()` now rejects `0`** (ISSUES.md Q-1). Use `@NonNegative()` for the old behaviour.
+ * 1. **`@Positive()`, `@Negative()`, `@NonNegative()` and `@NonPositive()` are removed**
+ *    (ISSUES.md Q-1, DEC-020). Write the boundary you mean: `@GreaterThan(0)`, `@LessThan(0)`,
+ *    `@GreaterThanEqual(0)`, `@LessThanEqual(0)`.
  * 2. **`NaN` now violates every numeric constraint** (Q-7). It previously satisfied all of them,
  *    because every comparison with `NaN` is `false`. So did `undefined`.
  * 3. **`null`/`undefined` on a string constraint now report a contract violation** naming the
@@ -53,22 +55,11 @@ const constraintDecorator = ParameterDecoratorFactory.CreateConstraintDecorator;
 // Number
 // ---------------------------------------------------------------------------
 
-/**
- * Rejects values at or below zero.
- *
- * **BREAKING (P3.3):** `0` no longer passes — `@Positive()` previously rejected only `value < 0`.
- * Use {@link NonNegative} to keep the old behaviour.
+/*
+ * `@Positive()`, `@Negative()`, `@NonNegative()` and `@NonPositive()` were removed by DEC-020 —
+ * see `src/Contracts/number.ts`. Use `@GreaterThan(0)`, `@LessThan(0)`, `@GreaterThanEqual(0)`
+ * and `@LessThanEqual(0)`, which say which boundary they mean.
  */
-const Positive = () => constraintDecorator(Numbers.Positive());
-
-/** Rejects values at or above zero. The mirror of {@link Positive}; `0` does not pass. */
-const Negative = () => constraintDecorator(Numbers.Negative());
-
-/** Rejects values below zero; `0` passes. This is what `@Positive()` meant before P3.3. */
-const NonNegative = () => constraintDecorator(Numbers.NonNegative());
-
-/** Rejects values above zero; `0` passes. The mirror of {@link NonNegative}. */
-const NonPositive = () => constraintDecorator(Numbers.NonPositive());
 
 /** Rejects values above `constraint`; `constraint` itself passes. */
 const LessThanEqual = (constraint: number) => constraintDecorator(Numbers.LessThanEqual(constraint));
@@ -132,10 +123,6 @@ const Url = (protocols?: string[]) => constraintDecorator(Strings.Url(protocols)
 
 export {
     // number
-    Positive,
-    Negative,
-    NonNegative,
-    NonPositive,
     LessThanEqual,
     GreaterThanEqual,
     LessThan,

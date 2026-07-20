@@ -10,7 +10,7 @@
 
 `adorn` has two goals:
 
-1. **Ship a set of ready-to-use decorators** for common needs — validating parameters and fields (positivity, numeric bounds, string length), memoizing method results, and logging calls.
+1. **Ship a set of ready-to-use decorators** for common needs — validating parameters and fields (numeric bounds, string length, patterns), timing method calls, and logging them.
 
 2. **Make decorators easy to author.** TypeScript's raw decorator APIs are awkward, especially *parameter* decorators, which normally can only record metadata and cannot inspect or reject argument values at call time. `adorn` provides a factory that hides that plumbing: you write a plain function that receives a friendly `ParamObject` (parameter name, value, and a formatted call signature), and the factory turns it into a working decorator.
 
@@ -56,19 +56,31 @@ Constraints are evaluated in **declaration order**: parameters left to right, st
 
 | Export | Kind | Purpose |
 | --- | --- | --- |
-| `Positive` | Parameter | Throws if the argument is negative. |
+| `GreaterThan(n)` | Parameter | Throws if the argument is `<= n`. |
 | `GreaterThanEqual(n)` | Parameter | Throws if the argument is `< n`. |
+| `LessThan(n)` | Parameter | Throws if the argument is `>= n`. |
 | `LessThanEqual(n)` | Parameter | Throws if the argument is `> n`. |
 | `StringMinLength(n)` | Parameter | Throws if the string argument is shorter than `n`. |
-| `Enforce` | Field/property | Installs a setter that validates on assignment (e.g. `Enforce.positive()`). |
-| `Verify` | Utility | Static validation helpers used by the field decorators. |
-| `Memoize()` | Method | Caches a method that returns an RxJS `Observable` (via `publishReplay` + `refCount`). |
+| `Enforce` | Field/property | Installs an accessor that validates on assignment (e.g. `Enforce.greaterThan(0)`). |
+| `Verify` | Utility | Imperative assertion, for call sites with no decoration point. |
 | `Log()` | Method | Logs each call as `Call: name(args) => result`. |
+| `Time()` | Method | Measures how long a call takes, including async and Observable returns. |
 | `Contract()` | Class | **Required.** Installs every contract recorded on the class, and registers it for documentation. |
 | `Validate()` | Method | Per-method alternative to `@Contract()`. Enforces only; does not register for documentation. |
 | `setContractDiagnosticsSink(fn)` | Utility | Routes the missing-`@Contract()` warning somewhere other than `console.warn`. |
 | `setContractDiagnosticsEnabled(bool)` | Utility | Silences the warning. Does not install anything. |
 | `flushContractDiagnostics()` | Utility | Runs the check immediately instead of on the next microtask. |
+| `getFieldContract(t, k)` | Introspection | The field contract **declared** directly on `t` — own-scoped, never a parent's. |
+| `getEffectiveFieldContract(t, k)` | Introspection | The contract **in force** on `t[k]`: its own plus every one inherited (DEC-021). |
+| `getEffectiveFieldConstraints(t, k)` | Introspection | Just the constraint list of the above, base-most class first. |
+
+> The `getField…` / `getEffectiveField…` prefix is the whole distinction, and it is load-bearing:
+> the plain names answer *"what does this class declare?"*, the `Effective` ones answer *"what will
+> actually be enforced here?"*. Since DEC-021 a field is checked against the union of every
+> declaration on its prototype chain, so the second is what enforcement applies and what a
+> projection should render.
+
+`@Positive()`, `@Negative()`, `@NonNegative()` and `@NonPositive()` were **removed** (DEC-020). Write the boundary you mean: `@GreaterThan(0)`, `@LessThan(0)`, `@GreaterThanEqual(0)`, `@LessThanEqual(0)`. `@Memoize()` and the `rxjs` dependency were **removed together** (GAP-6); `@Log` moved to `src/MethodDecorators/Log.ts` and never had anything to do with rxjs.
 
 ### The decorator factory (`src/Core`)
 
@@ -100,21 +112,23 @@ adorn/
 │   │   ├── ContractDiagnostics.ts        # Missing-@Contract() dev warning
 │   │   ├── common.ts                     # Param-name recovery, stack attribution
 │   │   ├── DecoratorConfiguration.ts     # Global configuration flags (unused)
-│   │   └── FieldDecoratorFactory.ts      # EMPTY — planned
+│   │   └── FieldDecoratorFactory.ts      # Field decorators — record + install an accessor
 │   ├── Contracts/                        # Built-in constraint descriptors (decorator-free)
 │   │   ├── number.ts
 │   │   └── string.ts
 │   ├── ParameterDecorators/
-│   │   └── Constraints.ts                # Positive / LessThanEqual / GreaterThanEqual / StringMinLength
+│   │   └── Constraints.ts                # GreaterThan / LessThanEqual / StringMinLength / ...
 │   ├── FieldDeocrators/                  # (sic) typo in directory name
-│   │   └── Enforce.ts                    # Field decorators via property setters
+│   │   └── Enforce.ts                    # Field decorators over the same descriptors
 │   ├── MethodDecorators/
-│   │   ├── queue.ts                      # Stub (only an rxjs import)
-│   │   └── promise/
-│   │       └── Memoize.ts               # Memoize() + Log()
-│   ├── Validation/
-│   │   └── Verify.ts                     # Static validation helpers
-│   └── Tests.ts                          # Manual demo / smoke script (not a real test suite)
+│   │   ├── Log.ts                        # Log()
+│   │   └── Time.ts                       # Time() + setTimingSink()
+│   ├── Projections/
+│   │   └── docs.ts                       # Markdown generated from recorded contracts
+│   └── Validation/
+│       └── Verify.ts                     # Imperative assertion helper
+├── examples/
+│   └── demo.ts                           # Manual demo / smoke script (excluded from the build)
 ├── tsconfig.json
 └── package.json
 ```
@@ -136,22 +150,15 @@ The project relies on `experimentalDecorators` and `emitDecoratorMetadata`, both
 npm install
 ```
 
-### Build & run the demo
-
-There is currently no `build` script, so compile with `tsc` directly, then run the demo:
+### Build, test & run the demo
 
 ```bash
-npx tsc            # emits to ./dist
-npm test           # runs: node dist/src/Tests.js
+npm run build      # tsc -> ./dist
+npm test           # jest
+npm run demo       # ts-node examples/demo.ts
 ```
 
-Or run the demo straight from source with the bundled `ts-node`:
-
-```bash
-npx ts-node src/Tests.ts
-```
-
-`src/Tests.ts` is a hand-written demonstration script that constructs a `Task` and calls decorated methods — it prints output but does not assert anything.
+`examples/demo.ts` is a hand-written demonstration script that constructs a `Task` and calls decorated methods. It is not part of the automated suite, but it does assert its own outcome — it exits non-zero if the deliberate constraint violation is *not* raised, which makes it a genuine smoke test of installation rather than a script that merely runs. `examples/` is excluded from the build, so the published package does not ship it.
 
 ---
 
@@ -161,34 +168,33 @@ This is a **single-commit, work-in-progress prototype**. Treat it as a proof of 
 
 ### Working
 
-- Parameter-constraint decorators (`Positive`, `GreaterThanEqual`, `LessThanEqual`, `StringMinLength`), the constraint-descriptor model behind them, and the `@Contract()` installer that enforces them. `CreateSimpleDecorator` still works for hand-written checks.
-- `Log()` method decorator.
-- `Memoize()` for `Observable`-returning methods (the runtime type check is commented out, so non-Observable returns will fail later).
+- Parameter-constraint decorators (`GreaterThan`, `GreaterThanEqual`, `LessThan`, `LessThanEqual`, `Between`, `Integer`, `MultipleOf`, `StringMinLength`, `MaxLength`, `NotEmpty`, `Matches`, `Email`, `Url`), the constraint-descriptor model behind them, and the `@Contract()` installer that enforces them. `CreateSimpleDecorator` still works for hand-written checks.
+- Field decorators (`@Enforce.*`, `CreateFieldDecorator`), including inheritance: a subclass's field is checked against the union of every declaration on its prototype chain (DEC-021).
+- `Log()` and `Time()` method decorators.
+- Markdown documentation projected from the recorded contracts (`documentClass`, `renderMarkdown`).
 
 ### Incomplete / stubbed
 
-- **`FieldDecoratorFactory.ts` is empty.** (`MethodDecoratorFactory.ts` is now implemented and is the shared installation path for `@Contract()` and `@Validate()`.)
-- **`src/MethodDecorators/queue.ts`** contains only an unused import.
 - **`DecoratorConfiguration.Configuration`** is defined but not consulted anywhere.
-- `src/Tests.ts` is a manual demo, not an automated test suite.
 
 ### Known issues / rough edges
 
 - ~~The parameter factory rewrites methods and calls `OverrideObjectDefineProperty`, a global patch to `Object.defineProperty`.~~ **Fixed** — the patch is deleted; installation goes through a class decorator that runs after `__decorate` has finished.
 - ~~Factory internals emit `console.debug`/`console.log` diagnostics on every decorated call.~~ **Fixed** — the only console output is the one-shot missing-`@Contract()` warning.
 - Wrapped methods report `length === 0` rather than their real arity. Their `.name` is now correct.
-- A `null` argument to `StringMinLength` raises a bare `TypeError` instead of a contract violation; `Positive()` accepts `0`.
+- ~~A `null` argument to `StringMinLength` raises a bare `TypeError` instead of a contract violation.~~ **Fixed** (BUG-4) — every predicate is total, so it reports a contract violation naming the parameter.
+- ~~`Positive()` accepts `0`.~~ **Resolved by removal** (DEC-020) — the named-boundary constraints are gone, and `@GreaterThan(0)` / `@GreaterThanEqual(0)` say which boundary they mean.
 - Directory name `src/FieldDeocrators/` is misspelled.
-- No published build output, no `dist` committed, and no CI.
+- No `dist` committed. CI runs lint, typecheck, build, the suite, and the demo on Node 20/22/24.
 
 ### Roadmap
 
 The comment block at the bottom of `index.ts` sketches the intended surface area:
 
 - **String** — length (min/max), regex (matches / URL / email), modifiers (default, regex-replace)
-- **Number** — constraints (positive, negative, less-than, greater-than, between, filter), modifiers (map)
+- **Number** — constraints (less-than, greater-than, between, filter), modifiers (map)
 - **Generic `T`** — map
-- **Method** — memoize, time
+- **Method** — time
 
 Most of these are not yet implemented.
 

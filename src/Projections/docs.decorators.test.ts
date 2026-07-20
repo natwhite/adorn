@@ -123,7 +123,7 @@ describe('a contracted field reaches the generated document (GAP-9)', () => {
         // runtime, reported as unenforced-and-absent. The silently-wrong artifact DEC-011 warns about,
         // emitted by the module meant to prevent it.
         class Basket {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             itemCount: number = 1;
         }
 
@@ -136,21 +136,21 @@ describe('a contracted field reaches the generated document (GAP-9)', () => {
 
     it('carries the constraint identity and the descriptor\'s own expectation', () => {
         class Basket {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             itemCount: number = 1;
         }
 
         const [row] = fieldRows(renderMarkdown([documentClass(Basket)]));
 
-        expect(unquote(row.constraint)).toBe('positive');
-        expect(row.expectation).toBe('a positive number');
+        expect(unquote(row.constraint)).toBe('greaterThan');
+        expect(row.expectation).toBe('a number greater than 0');
     });
 
     it('marks an enforced field as enforced', () => {
         // A field installs its validating accessor at decoration time, so unlike a method it needs no
         // `@Contract()` to become enforced — and the document must not warn as though it were pending.
         class Basket {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             itemCount: number = 1;
         }
 
@@ -166,7 +166,7 @@ describe('a contracted field reaches the generated document (GAP-9)', () => {
 describe('the document and the enforcement cannot drift apart', () => {
     it('names the field identically in the document and in the violation it throws', () => {
         class Basket {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             itemCount: number = 1;
         }
 
@@ -280,7 +280,7 @@ describe('methods and fields in one document', () => {
             @Enforce.notEmpty()
             reference: string = 'INIT';
 
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             parcels: number = 1;
         }
 
@@ -298,7 +298,7 @@ describe('methods and fields in one document', () => {
     it('generateMarkdown picks up a class registered by @Contract()', () => {
         @Contract()
         class Invoice {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             total: number = 1;
 
             issue(@StringMinLength(3) reference: string) {
@@ -314,18 +314,22 @@ describe('methods and fields in one document', () => {
         expect(markdown).toContain('### Fields');
     });
 
-    it('a field-only class is NOT enumerated without @Contract() — a registry-level gap', () => {
-        // Documented rather than worked around, because it is not this module's to fix. Field
-        // decorators install enforcement but never call `registerContractedClass`, so a class whose
-        // *only* contracts are fields is enforced yet invisible to `documentContracts()`. That is the
-        // exact asymmetry DEC-016 settled for methods ("installation implies enumeration") left
-        // unresolved for fields. `documentClass` on the constructor directly still reports it in full.
+    it('a field-only class IS enumerated without @Contract() (BUG-16 fixed)', () => {
+        // **Inverted deliberately.** This asserted `not.toContain('## Untracked')` and was labelled a
+        // registry-level gap: field decorators installed enforcement but never called
+        // `registerContractedClass`, so a class whose *only* contracts are fields was enforced yet
+        // invisible to `documentContracts()` / `generateMarkdown()`. `documentClass` on the
+        // constructor reported it in full, which is precisely what hid the gap — and is why the
+        // second assertion below is unchanged.
+        //
+        // BUG-16 fixed that by extending DEC-016's "installation implies enumeration" to the field
+        // band, so the class now appears in the generated document as well as being enforced.
         class Untracked {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             amount: number = 1;
         }
 
-        expect(generateMarkdown()).not.toContain('## Untracked');
+        expect(generateMarkdown()).toContain('## Untracked');
         expect(documentClass(Untracked).fields.map(field => field.name)).toEqual(['amount']);
     });
 });

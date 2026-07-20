@@ -20,9 +20,9 @@
  * ## The field band exposes exactly what the parameter band does
  *
  * Every entry below is the *same* `ConstraintDescriptor` the matching parameter decorator uses,
- * taken from `src/Contracts/`. Nothing here restates a boundary, so `@Enforce.positive()` and
- * `@Positive()` cannot disagree — the drift Q-4 exists to guard against — and each field constraint
- * carries the identity and params a projection reads (DEC-006).
+ * taken from `src/Contracts/`. Nothing here restates a boundary, so `@Enforce.greaterThan(0)` and
+ * `@GreaterThan(0)` cannot disagree — the drift Q-4 exists to guard against — and each field
+ * constraint carries the identity and params a projection reads (DEC-006).
  *
  * The set mirrors `src/ParameterDecorators/Constraints.ts` rather than being curated, so there is no
  * arbitrary "this one is available on parameters but not on fields" gap to explain. Adding a
@@ -30,12 +30,14 @@
  * Anything not listed can still be applied directly with
  * `@CreateFieldDecorator(MultipleOf(5))`.
  *
- * ## Semantics come from the descriptors, including P3.3's breaks
+ * ## Semantics come from the descriptors, including the breaks
  *
- * `positive()` is **strict** — `0` is rejected; use `nonNegative()` for the old behaviour (Q-1,
- * DEC-001). `NaN` violates every numeric constraint (Q-7), and every predicate is total, so a `null`
- * or wrong-typed assignment is a contract violation rather than a bare `TypeError` (BUG-4). None of
- * that is decided here; it is inherited, which is the point.
+ * `positive()`, `negative()`, `nonNegative()` and `nonPositive()` are **removed** (Q-1, DEC-020) —
+ * use `greaterThan(0)`, `lessThan(0)`, `greaterThanEqual(0)` and `lessThanEqual(0)`. `NaN` violates
+ * every numeric constraint (Q-7), and every predicate is total, so a `null` or wrong-typed
+ * assignment is a contract violation rather than a bare `TypeError` (BUG-4). None of that is
+ * decided here; it is inherited, which is the point — including the removal, which this file did
+ * not get a vote on.
  *
  * ## No `@Contract()` needed
  *
@@ -52,28 +54,10 @@ import * as Strings from '../Contracts/string';
 export class Enforce {
     // --- numbers ------------------------------------------------------------
 
-    /**
-     * Rejects values at or below zero.
-     *
-     * ```ts
-     * class Basket {
-     *     @Enforce.positive()
-     *     itemCount: number = 1;
-     * }
-     * ```
-     *
-     * **`0` does not pass** since P3.3 — use {@link nonNegative}.
+    /*
+     * `positive`, `negative`, `nonNegative` and `nonPositive` were removed by DEC-020. Use
+     * `greaterThan(0)`, `lessThan(0)`, `greaterThanEqual(0)` and `lessThanEqual(0)`.
      */
-    static positive = () => CreateFieldDecorator(Numbers.Positive());
-
-    /** Rejects values at or above zero. `0` does not pass. */
-    static negative = () => CreateFieldDecorator(Numbers.Negative());
-
-    /** Rejects values below zero; `0` passes. What `positive()` meant before P3.3. */
-    static nonNegative = () => CreateFieldDecorator(Numbers.NonNegative());
-
-    /** Rejects values above zero; `0` passes. */
-    static nonPositive = () => CreateFieldDecorator(Numbers.NonPositive());
 
     /** Rejects values below `min`; `min` itself passes. */
     static greaterThanEqual = (min: number) => CreateFieldDecorator(Numbers.GreaterThanEqual(min));
@@ -81,7 +65,16 @@ export class Enforce {
     /** Rejects values above `max`; `max` itself passes. */
     static lessThanEqual = (max: number) => CreateFieldDecorator(Numbers.LessThanEqual(max));
 
-    /** Rejects values at or below `bound`. */
+    /**
+     * Rejects values at or below `bound`.
+     *
+     * ```ts
+     * class Basket {
+     *     @Enforce.greaterThan(0)
+     *     itemCount: number = 1;
+     * }
+     * ```
+     */
     static greaterThan = (bound: number) => CreateFieldDecorator(Numbers.GreaterThan(bound));
 
     /** Rejects values at or above `bound`. */

@@ -29,9 +29,9 @@
 import 'reflect-metadata';
 
 import {
+    GreaterThan,
     GreaterThanEqual,
     LessThanEqual,
-    Positive,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
 import {Contract} from '../src/Core/ContractInstaller';
@@ -176,7 +176,7 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
     it('registers the class for projection enumeration on this branch', () => {
         @Contract()
         class Enumerated {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
 
         expect(getContractedClasses()).toContain(Enumerated as unknown as Function);
@@ -215,7 +215,7 @@ describe('__decorate / Object.defineProperty interaction on the Reflect.decorate
 
         @Contract()
         class Task {
-            test(@Positive() n: number, @GreaterThanEqual(1) m: number) { return n + m; }
+            test(@GreaterThan(0) n: number, @GreaterThanEqual(1) m: number) { return n + m; }
         }
         void Task;
 
@@ -225,7 +225,7 @@ describe('__decorate / Object.defineProperty interaction on the Reflect.decorate
     it('keeps Object.defineProperty usable immediately after a decorated class', () => {
         @Contract()
         class Task {
-            test(@Positive() n: number) { return n; }
+            test(@GreaterThan(0) n: number) { return n; }
         }
         void Task;
 

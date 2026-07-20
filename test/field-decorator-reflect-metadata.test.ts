@@ -40,7 +40,7 @@ describe('preconditions of this file', () => {
 
 describe('field contracts under Reflect.decorate', () => {
     class Basket {
-        @Enforce.positive()
+        @Enforce.greaterThan(0)
         itemCount: number = 1;
 
         @Enforce.greaterThanEqual(10)
@@ -60,7 +60,7 @@ describe('field contracts under Reflect.decorate', () => {
         basket.itemCount = 7;
 
         expect(basket.itemCount).toBe(7);
-        expect(() => { basket.itemCount = -1; }).toThrow(/expected a positive number/);
+        expect(() => { basket.itemCount = -1; }).toThrow(/expected a number greater than 0/);
         expect(basket.itemCount).toBe(7);
     });
 
@@ -81,12 +81,12 @@ describe('field contracts under Reflect.decorate', () => {
 
     it('rescues a static initializer on this branch too', () => {
         class Config {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             static limit: number = 10;
         }
 
         expect(Config.limit).toBe(10);
-        expect(() => { Config.limit = 0; }).toThrow(/expected a positive number/);
+        expect(() => { Config.limit = 0; }).toThrow(/expected a number greater than 0/);
     });
 
     it('leaves Object.defineProperty unpatched', () => {

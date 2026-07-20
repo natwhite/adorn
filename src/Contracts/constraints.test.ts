@@ -7,10 +7,6 @@ import {
     LessThan,
     LessThanEqual,
     MultipleOf,
-    Negative,
-    NonNegative,
-    NonPositive,
-    Positive,
 } from './number';
 import {Email, Matches, MaxLength, MinLength, NotEmpty, StringMinLength, Url} from './string';
 
@@ -23,8 +19,9 @@ import {Email, Matches, MaxLength, MinLength, NotEmpty, StringMinLength, Url} fr
 const SIGNATURE = "Task.test(message, count) parameter 'count'";
 
 const legacy = {
-    positive: (value: number) =>
-        `Value Error: ${SIGNATURE} expected a positive number but received ${value} instead`,
+    // `positive` is absent: DEC-020 removed the constraint, so there is no descriptor left to hold
+    // to the original wording. `GreaterThan(0)` says "a number greater than 0" instead, which is a
+    // *deliberate* message change and the point of the removal, not message drift.
     lessThanEqual: (constraint: number, value: number) =>
         `Value Error: ${SIGNATURE} expected a number less than or equal to ${constraint} but received ${value} instead`,
     greaterThanEqual: (constraint: number, value: number) =>
@@ -55,111 +52,88 @@ const HOSTILE: unknown[] = [
 // Number
 // ---------------------------------------------------------------------------
 
-describe('Positive', () => {
-    const descriptor = Positive();
+/**
+ * `Positive`, `Negative`, `NonNegative` and `NonPositive` were **removed** (Q-1, DEC-020) rather
+ * than having their boundary adjudicated a third time. Everything their suites pinned is pinned
+ * here against the explicit constraints that replace them, so the coverage moved rather than went
+ * away — and the one thing that genuinely changes, the wording, is asserted rather than assumed.
+ */
+describe('the zero boundary is written, not named (Q-1, DEC-020)', () => {
+    it('GreaterThan(0) is the strict boundary Positive() ended up meaning', () => {
+        const descriptor = GreaterThan(0);
 
-    it('is reified as an exclusive lower bound of zero', () => {
         expect(descriptor.kind).toBe('number');
-        expect(descriptor.constraint).toBe('positive');
+        expect(descriptor.constraint).toBe('greaterThan');
         expect(descriptor.params).toEqual({exclusiveMin: 0});
-    });
 
-    it('rejects values at or below zero', () => {
         expect(descriptor.predicate(-1)).toBe(false);
         expect(descriptor.predicate(-0.0001)).toBe(false);
-        expect(descriptor.predicate(1)).toBe(true);
+        expect(descriptor.predicate(0)).toBe(false);
+        expect(descriptor.predicate(-0)).toBe(false);
         expect(descriptor.predicate(Number.MIN_VALUE)).toBe(true);
         expect(descriptor.predicate(1e9)).toBe(true);
     });
 
-    it('CHANGED BY P3.3 (Q-1): rejects 0 — "positive" now means > 0', () => {
-        // Previously pinned as a known defect: the original rejected only `value < 0`, so 0 passed
-        // despite the name. Settled strictly because `Negative` lands in the same release, and under
-        // the lax reading 0 would satisfy `positive` AND `nonPositive`, with `Positive`/`Negative`
-        // sharing a boundary no reader would predict. `NonNegative()` is the old behaviour.
-        expect(descriptor.predicate(0)).toBe(false);
-        expect(descriptor.predicate(-0)).toBe(false);
-        expect(NonNegative().predicate(0)).toBe(true);
+    it('GreaterThanEqual(0) is the lax boundary Positive() originally meant', () => {
+        const descriptor = GreaterThanEqual(0);
+
+        expect(descriptor.constraint).toBe('min');
+        expect(descriptor.params).toEqual({min: 0});
+        expect(descriptor.predicate(0)).toBe(true);
+        expect(descriptor.predicate(-0)).toBe(true);
+        expect(descriptor.predicate(-1)).toBe(false);
     });
 
-    it('CHANGED BY P3.3 (Q-7): rejects NaN', () => {
-        // Previously pinned: `!(NaN < 0)` is `true`, so NaN satisfied every numeric constraint.
-        expect(descriptor.predicate(NaN)).toBe(false);
+    it('LessThan(0) and LessThanEqual(0) mirror them at the same boundary', () => {
+        expect(LessThan(0).params).toEqual({exclusiveMax: 0});
+        expect(LessThan(0).predicate(-1)).toBe(true);
+        expect(LessThan(0).predicate(-Number.MIN_VALUE)).toBe(true);
+        expect(LessThan(0).predicate(0)).toBe(false);
+        expect(LessThan(0).predicate(-0)).toBe(false);
+        expect(LessThan(0).predicate(1)).toBe(false);
+
+        expect(LessThanEqual(0).params).toEqual({max: 0});
+        expect(LessThanEqual(0).predicate(0)).toBe(true);
+        expect(LessThanEqual(0).predicate(1)).toBe(false);
     });
 
-    it('reproduces the original message exactly', () => {
-        expect(messageFor(descriptor, -5)).toBe(legacy.positive(-5));
+    it('states the boundary in prose instead of implying it', () => {
+        // The documentation cost of the removal, asserted rather than assumed. `positive` printed
+        // "a positive number" — which is precisely the phrase a reader had to look up to find out
+        // whether 0 was in or out. These four do not have that problem.
+        expect(GreaterThan(0).describe()).toBe('a number greater than 0');
+        expect(GreaterThanEqual(0).describe()).toBe('a number greater than or equal to 0');
+        expect(LessThan(0).describe()).toBe('a number less than 0');
+        expect(LessThanEqual(0).describe()).toBe('a number less than or equal to 0');
     });
 
-    it('describes itself for documentation without a value in hand', () => {
-        expect(descriptor.describe()).toBe('a positive number');
-    });
-
-    it('agrees with GreaterThan(0) — one derivation, two identities', () => {
-        const asExclusiveMin = GreaterThan(0);
-
-        [-2, -1, -0, 0, 0.5, 1, 2].forEach(value => {
-            expect(asExclusiveMin.predicate(value)).toBe(descriptor.predicate(value));
-        });
-        expect(asExclusiveMin.params).toEqual(descriptor.params);
-        expect(asExclusiveMin.describe()).not.toBe(descriptor.describe());
-    });
-});
-
-describe('Negative', () => {
-    const descriptor = Negative();
-
-    it('is reified as an exclusive upper bound of zero', () => {
-        expect(descriptor.kind).toBe('number');
-        expect(descriptor.constraint).toBe('negative');
-        expect(descriptor.params).toEqual({exclusiveMax: 0});
-    });
-
-    it('rejects values at or above zero', () => {
-        expect(descriptor.predicate(-1)).toBe(true);
-        expect(descriptor.predicate(-Number.MIN_VALUE)).toBe(true);
-        expect(descriptor.predicate(0)).toBe(false);
-        expect(descriptor.predicate(-0)).toBe(false);
-        expect(descriptor.predicate(1)).toBe(false);
-    });
-
-    it('is the exact mirror of Positive — nothing satisfies both, zero satisfies neither', () => {
-        const positive = Positive();
+    it('nothing satisfies both strict boundaries, and zero satisfies neither', () => {
+        const above = GreaterThan(0);
+        const below = LessThan(0);
 
         [-2, -1, -0.5, -0, 0, 0.5, 1, 2, NaN, Infinity, -Infinity].forEach(value => {
-            expect(positive.predicate(value) && descriptor.predicate(value)).toBe(false);
+            expect(above.predicate(value) && below.predicate(value)).toBe(false);
         });
-        expect(positive.predicate(0)).toBe(false);
-        expect(descriptor.predicate(0)).toBe(false);
+        expect(above.predicate(0)).toBe(false);
+        expect(below.predicate(0)).toBe(false);
     });
 
-    it('describes itself', () => {
-        expect(descriptor.describe()).toBe('a negative number');
-    });
-});
-
-describe('NonNegative / NonPositive', () => {
-    it('are reified as inclusive bounds at zero', () => {
-        expect(NonNegative().constraint).toBe('nonNegative');
-        expect(NonNegative().params).toEqual({min: 0});
-        expect(NonPositive().constraint).toBe('nonPositive');
-        expect(NonPositive().params).toEqual({max: 0});
-    });
-
-    it('include zero, and only zero satisfies both', () => {
-        expect(NonNegative().predicate(0)).toBe(true);
-        expect(NonPositive().predicate(0)).toBe(true);
-        expect(NonNegative().predicate(-1)).toBe(false);
-        expect(NonPositive().predicate(1)).toBe(false);
-    });
-
-    it('share derivations with min and max — one source, distinct identities', () => {
+    it('only zero satisfies both inclusive boundaries', () => {
         [-2, -1, 0, 1, 2].forEach(value => {
-            expect(NonNegative().predicate(value)).toBe(GreaterThanEqual(0).predicate(value));
-            expect(NonPositive().predicate(value)).toBe(LessThanEqual(0).predicate(value));
+            const both = GreaterThanEqual(0).predicate(value) && LessThanEqual(0).predicate(value);
+            expect(both).toBe(value === 0);
         });
-        expect(NonNegative().describe()).toBe('a non-negative number');
-        expect(NonPositive().describe()).toBe('a non-positive number');
+    });
+
+    it('Q-7 survives the removal: NaN violates the zero boundary in every direction', () => {
+        [GreaterThan(0), GreaterThanEqual(0), LessThan(0), LessThanEqual(0)].forEach(descriptor => {
+            expect(descriptor.predicate(NaN)).toBe(false);
+        });
+    });
+
+    it('reports a violation naming the bound', () => {
+        expect(messageFor(GreaterThan(0), -5))
+            .toBe(`Value Error: ${SIGNATURE} expected a number greater than 0 but received -5 instead`);
     });
 });
 
@@ -671,10 +645,6 @@ describe('Url', () => {
 
 /** Every built-in descriptor, exercised uniformly. */
 const ALL: ConstraintDescriptor[] = [
-    Positive(),
-    Negative(),
-    NonNegative(),
-    NonPositive(),
     GreaterThanEqual(5),
     LessThanEqual(10),
     GreaterThan(5),
@@ -729,7 +699,10 @@ describe('NaN violates every numeric constraint (ISSUES.md Q-7, settled in P3.3)
     const numeric = ALL.filter(descriptor => descriptor.kind === 'number');
 
     it('covers the whole numeric vocabulary, not just the ones that were pinned', () => {
-        expect(numeric.length).toBeGreaterThanOrEqual(11);
+        // Was 11 before DEC-020 removed `positive`/`negative`/`nonNegative`/`nonPositive`. The
+        // floor is deliberately the exact count: it is what catches a *new* numeric constraint
+        // being added without joining this sweep.
+        expect(numeric.length).toBeGreaterThanOrEqual(7);
         numeric.forEach(descriptor => expect(descriptor.predicate(NaN)).toBe(false));
     });
 
@@ -745,8 +718,8 @@ describe('NaN violates every numeric constraint (ISSUES.md Q-7, settled in P3.3)
         expect(GreaterThanEqual(5).predicate(Infinity)).toBe(true);
         expect(GreaterThan(5).predicate(Infinity)).toBe(true);
         expect(LessThanEqual(5).predicate(Infinity)).toBe(false);
-        expect(Positive().predicate(Infinity)).toBe(true);
-        expect(Negative().predicate(-Infinity)).toBe(true);
+        expect(GreaterThan(0).predicate(Infinity)).toBe(true);
+        expect(LessThan(0).predicate(-Infinity)).toBe(true);
         // ...but a range and a multiple still exclude it, which is also the ordering answer
         expect(Between(1, 10).predicate(Infinity)).toBe(false);
         expect(Integer().predicate(Infinity)).toBe(false);
@@ -847,11 +820,16 @@ describe('projection readiness', () => {
     it('is enough on its own to render a documentation line', () => {
         const lines = ALL.map(descriptor => `${descriptor.constraint}: expects ${descriptor.describe()}`);
 
+        // DEC-020 removed the four named-boundary lines that used to head this list:
+        //
+        //     positive: expects a positive number
+        //     nonNegative: expects a non-negative number
+        //
+        // What a reader gets instead is `greaterThan: expects a number greater than 0` and
+        // `min: expects a number greater than or equal to 0`. That is the whole documentation cost
+        // of the removal, and it reads *better* — the old lines named a boundary the reader then
+        // had to go and look up, while these state it.
         expect(lines).toEqual([
-            'positive: expects a positive number',
-            'negative: expects a negative number',
-            'nonNegative: expects a non-negative number',
-            'nonPositive: expects a non-positive number',
             'min: expects a number greater than or equal to 5',
             'max: expects a number less than or equal to 10',
             'greaterThan: expects a number greater than 5',

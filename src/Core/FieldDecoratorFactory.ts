@@ -117,19 +117,37 @@
  * should: the trampoline, the seed rescue, the `__decorate` ordering knowledge (`'prepend'`), and the
  * `design:type` read. The registry learned about *fields*, not about decorators (DEC-012).
  *
- * `@Enforce.positive()` is consequently now visible to `getFieldContractsForClass` — though
- * `src/Projections/docs.ts` does not yet render a Fields section, which is a wiring gap in that file
- * rather than a gap here.
+ * `@Enforce.positive()` is consequently now visible to `getFieldContractsForClass`.
+ *
+ * ## Installation enumerates the class (BUG-16 — DEC-016 extended to fields)
+ *
+ * Being *in* the registry was not sufficient. `getContractedClasses()` — what `documentContracts()`
+ * and `generateMarkdown()` walk — is fed by `registerContractedClass`, whose only callers were
+ * `@Contract()` and `@Validate()`. A class whose only contracts were fields was therefore enforced at
+ * runtime and **absent from every generated artifact**: `documentClass(Ctor)` rendered it perfectly,
+ * which is exactly what kept the gap hidden. {@link installFieldContract} now registers its owning
+ * class, so DEC-016's rule reads the same in both bands — *any installation implies enumeration*.
+ *
+ * ## A subclass may strengthen an inherited field contract, never weaken it (DEC-021 / Q-14)
+ *
+ * Enforcement resolves constraints along the **prototype chain**, not from the redeclaring class
+ * alone. Storage stays own-scoped — a declaration is only ever written to the object it was written
+ * on — so a subclass can add conjuncts to its own list and has no API by which to reach an
+ * ancestor's. Weakening is not detected and rejected; it is unexpressible. The reasoning for why this
+ * is the *opposite* of Meyer's contravariant precondition rule, and nonetheless correct, is recorded
+ * in DEC-021: a field constraint is a class invariant, not a precondition.
  */
 
 import {ConstraintDescriptor} from './Descriptor';
 import {DecoratorFactory} from './common';
 import {
     FieldContract,
+    getEffectiveFieldConstraints as registryEffectiveFieldConstraints,
     getFieldContract,
     getFieldContracts as registryFieldContracts,
     markFieldInstalled,
     recordFieldConstraint as registryRecordFieldConstraint,
+    registerContractedClass,
     setFieldMetadata,
 } from './ContractRegistry';
 
@@ -163,6 +181,29 @@ export type AdornFieldDecoratorFn = (target: object, propertyKey: FieldKey) => v
 
 /** Which `(target, key)` pairs already carry a trampoline. Makes installation idempotent. */
 const installedByTarget = new WeakMap<object, Set<FieldKey>>();
+
+/**
+ * Brand marking an accessor function as one adorn installed (BUG-17).
+ *
+ * `installFieldContract` has to tell *its own* accessor apart from a user's `get`/`set` member: the
+ * first is a value to rescue and re-wrap, the second is something it must refuse to contract. A
+ * `Symbol` on the function is used rather than matching on `fn.name`, because names are not a
+ * contract — a minifier rewrites `adornFieldGet` to a single letter, and the two cases would become
+ * indistinguishable exactly where the failure is silent.
+ */
+const ADORN_ACCESSOR = Symbol('adorn.fieldAccessor');
+
+/** Tag both halves of an accessor pair as adorn's, and return the descriptor for defining. */
+function brand<T extends {get?: Function; set?: Function}>(descriptor: T): T {
+    if (descriptor.get) (descriptor.get as any)[ADORN_ACCESSOR] = true;
+    if (descriptor.set) (descriptor.set as any)[ADORN_ACCESSOR] = true;
+    return descriptor;
+}
+
+/** Whether an existing property descriptor is an accessor pair adorn installed. */
+function isAdornAccessor(descriptor: PropertyDescriptor): boolean {
+    return typeof descriptor.get === 'function' && (descriptor.get as any)[ADORN_ACCESSOR] === true;
+}
 
 /**
  * Values that were already sitting on the target when the trampoline was installed — the **static
@@ -227,19 +268,37 @@ export function recordFieldConstraint(
 const NO_CONSTRAINTS: ReadonlyArray<ConstraintDescriptor> = Object.freeze([]);
 
 /**
- * Constraints recorded directly on `target[key]`, in declaration order.
+ * Constraints declared **directly** on `target[key]`, in declaration order.
  *
- * Own-scoped: a subclass prototype returns only what was declared on it. See
- * {@link installFieldContract} for what that means when a subclass redeclares a decorated field.
+ * Own-scoped: a subclass prototype returns only what was written on it, not what it inherits.
  *
- * A convenience read over the registry's `FieldContract`, kept because it is what enforcement needs
- * on the assignment path and reads better than `getFieldContract(...)!.constraints` at four call
- * sites. A projection should walk `getFieldContractsForClass` in the registry instead.
+ * **This is no longer what enforcement applies.** Since DEC-021 a field is checked against the union
+ * of every declaration on its prototype chain — {@link getEffectiveFieldConstraints}. This read is
+ * kept because "declared on this class" is a real and separate question (a document distinguishing
+ * a subclass's own additions from what it inherits needs exactly this), but reading it and assuming
+ * it describes runtime behaviour is now a mistake, so the two names say which is which.
  */
 export function getFieldConstraints(target: object, key: FieldKey): ReadonlyArray<ConstraintDescriptor> {
     if (!isTarget(target)) return NO_CONSTRAINTS;
     const contract = getFieldContract(target, key);
     return contract ? contract.constraints : NO_CONSTRAINTS;
+}
+
+/**
+ * Every constraint **in force** on `target[key]` — the subclass's own plus every one it inherits,
+ * base-most class first (DEC-021, Q-14).
+ *
+ * This is what {@link assertFieldValue} checks, so it is the honest answer to "what will this field
+ * reject?". The union is the whole of the strengthen-only rule: see
+ * `ContractRegistry.getEffectiveFieldConstraints` for why weakening is unexpressible rather than
+ * rejected.
+ */
+export function getEffectiveFieldConstraints(
+    target: object,
+    key: FieldKey,
+): ReadonlyArray<ConstraintDescriptor> {
+    if (!isTarget(target)) return NO_CONSTRAINTS;
+    return registryEffectiveFieldConstraints(target, key);
 }
 
 /**
@@ -269,13 +328,24 @@ export function getFieldKeys(target: object): FieldKey[] {
  * decorators on a field installs once and `@Contract()` may safely re-drive it afterwards.
  *
  * Defines an **own** property on `target`. When `target` is a subclass prototype that redeclares a
- * decorated field, the subclass accessor shadows the parent's and enforces only the subclass's own
- * constraints — matching `ContractRegistry`'s own-property scoping. Whether a subclass should instead
- * inherit or strengthen its parent's field contract is a design-by-contract question (preconditions
- * may only be weakened) that Tier 2 owns; it is not invented here.
+ * decorated field, the subclass accessor shadows the parent's — but it does **not** shadow the
+ * parent's *contract*: enforcement resolves constraints along the whole prototype chain, so the
+ * subclass adds to what it inherits and cannot drop it (DEC-021, Q-14). Shadowing the accessor is
+ * merely how the interception is wired; the contract is resolved separately, at check time.
+ *
+ * ## It enumerates the owning class (BUG-16, DEC-016 extended to fields)
+ *
+ * Installing here is exactly the moment DEC-016 calls "installation", so it is the moment the class
+ * becomes visible to `getContractedClasses()` — and with it to `documentContracts()` and every later
+ * projection. Before this, field decorators installed enforcement and registered nothing, so a class
+ * whose *only* contracts were fields was **enforced at runtime and absent from every generated
+ * artifact**. Nothing threw and the document looked complete, which DEC-016 identifies as strictly
+ * the worse of the two failure directions. `documentClass(Ctor)` reported such a class perfectly,
+ * which is what kept it hidden.
  */
 export function installFieldContract(target: object, key: FieldKey): void {
     assertTarget(target, 'installFieldContract');
+    registerOwningClass(target);
     if (isInstalled(target, key)) return;
 
     const existing = Object.getOwnPropertyDescriptor(target, key);
@@ -285,21 +355,39 @@ export function installFieldContract(target: object, key: FieldKey): void {
             'is non-configurable, so it cannot be replaced with a validating accessor.',
         );
     }
-    if (existing && (typeof existing.get === 'function' || typeof existing.set === 'function')) {
-        // A `get`/`set` member is emitted as a *method*-shaped `__decorate` call (`desc === null`),
-        // whose trailing write restores the original descriptor — so installing here would be
-        // silently undone. Fail loudly instead of pretending to contract something.
+    if (existing && isAdornAccessor(existing)) {
+        // **Adorn's own accessor, materialised here by an inherited write — BUG-17.**
+        //
+        // A subclass redeclaring a decorated `static` field hits this every time. TypeScript emits
+        // the static initializer as a plain assignment *before* the decorator call:
+        //
+        //     class Sub extends Base { @Enforce.lessThanEqual(100) static limit = 50; }
+        //     // → Sub.limit = 50;  then  __decorate([...], Sub, "limit", void 0);
+        //
+        // and `Sub.limit = 50` resolves up the constructor chain to `Base`'s accessor, whose setter
+        // gives the receiver its own slot (so a subclass assignment does not write through to the
+        // parent — see `defineInstanceSlot`). By the time the decorator runs, `Sub` therefore carries
+        // an own *accessor*, and the foreign-accessor guard below rejected it with a message about
+        // getters and setters that described nothing the author had written. A subclass strengthening
+        // an inherited static field — the static half of DEC-021 — was simply unavailable.
+        //
+        // The value is rescued through the getter and re-seeded, exactly as a plain static
+        // initializer is, so it is re-validated against the constraint list this class ends up with.
+        rememberSeed(target, key, (existing.get as () => unknown).call(target));
+    } else if (existing && (typeof existing.get === 'function' || typeof existing.set === 'function')) {
+        // A *user's* `get`/`set` member is emitted as a method-shaped `__decorate` call
+        // (`desc === null`), whose trailing write restores the original descriptor — so installing
+        // here would be silently undone. Fail loudly rather than pretend to contract something.
         throw new TypeError(
             `adorn: ${describeField(target, key)} is a getter/setter, not a field. A field decorator ` +
             'cannot contract an accessor; put the check inside the setter, or contract the backing ' +
             'field instead.',
         );
-    }
-    if (existing && 'value' in existing) {
+    } else if (existing && 'value' in existing) {
         rememberSeed(target, key, existing.value);
     }
 
-    Object.defineProperty(target, key, {
+    Object.defineProperty(target, key, brand({
         configurable: true,
         // Non-enumerable on the prototype so `for...in` over an instance does not report the field
         // before anything has been assigned to it. An undecorated field with no initializer does not
@@ -316,7 +404,7 @@ export function installFieldContract(target: object, key: FieldKey): void {
             assertFieldValue(target, key, value, adornFieldTrampolineSet);
             defineInstanceSlot(this, target, key, value);
         },
-    });
+    }));
 
     markInstalled(target, key);
     // The registry's own flag, so a projection can tell a recorded-but-unenforced field from an
@@ -370,6 +458,10 @@ export function installFieldContracts(constructor: Function): void {
     if (typeof constructor !== 'function') {
         throw new TypeError('installFieldContracts: expected a constructor function');
     }
+    // Unconditional, matching `installContracts`: a class-level install marks intent to be visible,
+    // and a class whose constraints have not been recorded yet should not vanish from documentation
+    // for it (DEC-016).
+    registerContractedClass(constructor);
     installAllOn(constructor);
     if (constructor.prototype) installAllOn(constructor.prototype);
 }
@@ -387,7 +479,7 @@ function installAllOn(host: object): void {
  *
  * ```ts
  * class Widget {
- *     @CreateFieldDecorator(Positive())
+ *     @CreateFieldDecorator(GreaterThan(0))
  *     count: number = 0;
  * }
  * ```
@@ -399,7 +491,7 @@ export function CreateFieldDecorator(constraint: ConstraintDescriptor): AdornFie
     if (!constraint || typeof constraint.predicate !== 'function') {
         throw new TypeError(
             'CreateFieldDecorator: expected a ConstraintDescriptor built by defineConstraint() — ' +
-            'e.g. Positive() from src/Contracts/number.',
+            'e.g. GreaterThan(0) from src/Contracts/number.',
         );
     }
 
@@ -463,7 +555,7 @@ function defineInstanceSlot(instance: object, owner: object, key: FieldKey, init
 
     let slot = initial;
 
-    Object.defineProperty(instance, key, {
+    Object.defineProperty(instance, key, brand({
         configurable: true,
         // Own **and enumerable** — this is what keeps JSON.stringify, Object.keys, spread and
         // Object.assign behaving exactly as they do for an undecorated field.
@@ -486,7 +578,7 @@ function defineInstanceSlot(instance: object, owner: object, key: FieldKey, init
             // receiver. Give the receiver its own slot so the two behave the same.
             defineInstanceSlot(this, owner, key, next);
         },
-    });
+    }));
 }
 
 /**
@@ -500,7 +592,11 @@ function defineInstanceSlot(instance: object, owner: object, key: FieldKey, init
  * frame-boundary technique the parameter path uses (SMELL-2), with no frame counting.
  */
 function assertFieldValue(owner: object, key: FieldKey, value: unknown, boundary: Function): void {
-    const constraints = getFieldConstraints(owner, key);
+    // **Effective**, not own-scoped (DEC-021). `owner` is the object the reached trampoline was
+    // installed on, so when a subclass redeclares a decorated field this resolves that subclass's
+    // constraints *and* every ancestor's — which is what makes an inherited constraint impossible to
+    // shed by redeclaring.
+    const constraints = getEffectiveFieldConstraints(owner, key);
 
     for (let i = 0; i < constraints.length; i++) {
         const constraint = constraints[i];
@@ -515,6 +611,33 @@ function assertFieldValue(owner: object, key: FieldKey, value: unknown, boundary
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/**
+ * Enumerate the class owning a contracted field (BUG-16).
+ *
+ * A property decorator is handed the constructor itself for a `static` field and the prototype for
+ * an instance field — the same two key bands `getFieldContractsForClass` exists to reconcile. Both
+ * resolve to the constructor, which is what `getContractedClasses()` holds.
+ *
+ * **The prototype-identity check is load-bearing.** `installFieldContract` is a public, imperative
+ * entry point, and its target is not always a class: hand it a plain `{}` — as the unit tests and any
+ * schema-driven caller do — and `target.constructor` is `Object`. Registering that would put `Object`
+ * into the enumerable registry, and every projection would then try to document it. So a non-function
+ * target enumerates only when it really is the `prototype` of the constructor it names. A detached
+ * `Object.create(proto)` target correctly registers nothing: it is an object with contracted fields,
+ * not a class.
+ */
+function registerOwningClass(target: object): void {
+    if (typeof target === 'function') {
+        registerContractedClass(target as Function);
+        return;
+    }
+
+    const constructor = (target as {constructor?: Function}).constructor;
+    if (typeof constructor === 'function' && constructor.prototype === target) {
+        registerContractedClass(constructor);
+    }
+}
 
 function isTarget(target: unknown): boolean {
     return target !== null && (typeof target === 'object' || typeof target === 'function');

@@ -40,11 +40,17 @@
  * adapter-local, which left `@Enforce.positive()` **enforced at runtime but invisible to every
  * projection** — a generated document that looks complete and is not.
  *
- * ## Own-property scoping
+ * ## Own-property scoping — and the one place it is deliberately widened
  *
- * Lookups are keyed by the exact object passed in and never walk the prototype chain. A subclass
+ * Storage is keyed by the exact object passed in and never walks the prototype chain. A subclass
  * therefore starts with an empty contract rather than finding — and mutating — its parent's, which
  * is the inheritance bug in the current parameter factory (plan P1.6).
+ *
+ * The **field band** layers an inheritance-aware *read* over that own-scoped store
+ * ({@link getEffectiveFieldConstraints}, DEC-021). Writes stay own-scoped, which is exactly what
+ * makes a subclass unable to weaken its parent: it can only ever add to its own list, and resolution
+ * is the union of every list on the chain. See DEC-021 for why a field constraint is treated as an
+ * invariant (strengthen-only) rather than a Meyer precondition (weaken-only).
  *
  * ## Semver note (ISSUES.md Q-6)
  *
@@ -292,13 +298,14 @@ export function getContractsForClass(constructor: Function): ClassMethodContract
 // --- field band reads (GAP-9) ----------------------------------------------
 
 /**
- * Field contracts recorded directly on `target`. Own-scoped exactly as {@link getContracts} is: a
- * subclass prototype returns only what was declared on it, never its parent's.
+ * Field contracts recorded **directly** on `target`. Own-scoped exactly as {@link getContracts} is:
+ * a subclass prototype returns only what was declared on it, never its parent's.
  *
- * Whether a subclass redeclaring a decorated field should *inherit*, be permitted to *strengthen*,
- * or be forbidden from *weakening* its parent's field precondition is a Design-by-Contract / Liskov
- * question (**Q-14**) and is deliberately not answered here. Own-scoping is the status quo this
- * band inherited from the adapter store it replaced, not a ruling.
+ * This is the *declared-here* view, and it is **not** what enforcement applies. Since DEC-021 a
+ * field's effective contract is the union of every declaration on its prototype chain — read
+ * {@link getEffectiveFieldConstraints} for that. Own-scoped reads remain available because "declared
+ * on this class" and "in force on this class" are genuinely different questions, and a projection
+ * rendering an inheritance hierarchy needs both.
  */
 export function getFieldContracts(target: ContractTarget): ReadonlyMap<FieldKey, FieldContract> {
     if (!isRegisterableTarget(target)) return EMPTY_FIELD_CONTRACTS;
@@ -306,11 +313,129 @@ export function getFieldContracts(target: ContractTarget): ReadonlyMap<FieldKey,
     return fields ? fields : EMPTY_FIELD_CONTRACTS;
 }
 
-/** The contract for one field on `target`, or `undefined` if it has none. */
+/**
+ * The contract declared directly on `target[key]`, or `undefined` if it declares none.
+ *
+ * Own-scoped — see {@link getFieldContracts}. For what is actually enforced, use
+ * {@link getEffectiveFieldContract}.
+ */
 export function getFieldContract(target: ContractTarget, key: FieldKey): FieldContract | undefined {
     if (!isRegisterableTarget(target)) return undefined;
     const fields = fieldsByTarget.get(target);
     return fields ? fields.get(key) : undefined;
+}
+
+// --- effective (inheritance-aware) field reads (DEC-021, Q-14) --------------
+
+const EMPTY_CONSTRAINTS: ReadonlyArray<ConstraintDescriptor> = Object.freeze([]);
+
+/**
+ * Every constraint in force on `target[key]`, including every one inherited from a superclass.
+ *
+ * ## Why the union, and why it is the *whole* mechanism (DEC-021)
+ *
+ * A subclass may **strengthen** an inherited field constraint and must never **weaken** it. That is
+ * enforced structurally rather than by inspection: a declaration is only ever recorded against the
+ * exact object it was written on, and resolution concatenates every list found walking the prototype
+ * chain. A subclass has no way to reach, replace, or remove an ancestor's array — there is no write
+ * API that takes an ancestor — so the resolved set can only ever grow as you descend. Union of
+ * predicates is logical AND, and adding a conjunct is monotonically strengthening. **Weakening is
+ * therefore not rejected; it is unexpressible.**
+ *
+ * That is deliberately not the alternative design, which would be to compare a subclass descriptor
+ * against its parent's and reject the weaker one. Relative strength of two arbitrary predicates is
+ * undecidable in general, so such a check could only ever work for the built-in constraints whose
+ * params happen to be comparable — and would silently pass everything else, which is precisely the
+ * "looks complete, is not" failure DEC-016 rejects.
+ *
+ * ## Ordering
+ *
+ * **Base-most class first**, then each subclass in turn, each level in its own declaration order.
+ * A violation therefore reports the most general broken constraint first, which matches how a reader
+ * scans a hierarchy from the top down, and it makes a subclass's additions read as additions.
+ *
+ * ## Cost
+ *
+ * This is on the assignment hot path. The walk is one `WeakMap` hit per prototype level, and the
+ * common case — a field whose declaring class has no contracted ancestor — returns the stored array
+ * itself with no copy or allocation. Nothing is memoised: field enforcement reads the registry on
+ * every assignment by design (see {@link resetRegistry}), and caching resolved chains would make a
+ * later `Object.setPrototypeOf` silently enforce the wrong contract.
+ */
+export function getEffectiveFieldConstraints(
+    target: ContractTarget,
+    key: FieldKey,
+): ReadonlyArray<ConstraintDescriptor> {
+    if (!isRegisterableTarget(target)) return EMPTY_CONSTRAINTS;
+
+    // Collected own-most first; reversed on the way out so the base-most class leads.
+    let nearest: ConstraintDescriptor[] | undefined;
+    let bands: ConstraintDescriptor[][] | undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const fields = fieldsByTarget.get(cursor);
+        const contract = fields && fields.get(key);
+        if (!contract || contract.constraints.length === 0) continue;
+
+        if (!nearest) {
+            nearest = contract.constraints;
+        } else {
+            if (!bands) bands = [nearest];
+            bands.push(contract.constraints);
+        }
+    }
+
+    if (!nearest) return EMPTY_CONSTRAINTS;
+    // No contracted ancestor — hand back the stored array rather than copying it.
+    if (!bands) return nearest;
+
+    const merged: ConstraintDescriptor[] = [];
+    for (let level = bands.length - 1; level >= 0; level--) {
+        const band = bands[level];
+        for (let i = 0; i < band.length; i++) merged.push(band[i]);
+    }
+    return merged;
+}
+
+/**
+ * The full contract in force on `target[key]` — the inheritance-aware twin of
+ * {@link getFieldContract}, and what a projection should render.
+ *
+ * `constraints` is the union described on {@link getEffectiveFieldConstraints}. `type` and
+ * `installed` come from the **nearest** declaration rather than being merged, because both describe
+ * the accessor a read or write actually reaches: a redeclaring subclass installs its own trampoline
+ * which shadows its parent's, and its own `design:type` is the one the toolchain emitted for the
+ * declaration a reader is looking at. `type` falls through to the nearest ancestor that has one, so
+ * a subclass compiled without `emitDecoratorMetadata` degrades to the parent's type rather than to
+ * none.
+ *
+ * Returns `undefined` when nothing on the chain declares the field.
+ */
+export function getEffectiveFieldContract(
+    target: ContractTarget,
+    key: FieldKey,
+): FieldContract | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+
+    let nearest: MutableFieldContract | undefined;
+    let type: Function | undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const fields = fieldsByTarget.get(cursor);
+        const contract = fields && fields.get(key);
+        if (!contract) continue;
+
+        if (!nearest) nearest = contract;
+        if (type === undefined) type = contract.type;
+    }
+
+    if (!nearest) return undefined;
+
+    return {
+        constraints: getEffectiveFieldConstraints(target, key),
+        type,
+        installed: nearest.installed,
+    };
 }
 
 /** One field's contract, tagged with which key band it was recorded on. */
@@ -324,14 +449,24 @@ export interface ClassFieldContract {
 }
 
 /**
- * Every field contract on a class, from **both** key bands — the field-band twin of
+ * Every field contract **in force** on a class, from **both** key bands — the field-band twin of
  * {@link getContractsForClass}, and for the same reason (DEC-018).
  *
  * A static field's constraints are recorded against the constructor, an instance field's against the
  * prototype, and a projection that walks only one silently emits an artifact missing half the
  * contracts. That rule lives here once.
  *
- * Ordering is deterministic — instance fields first, then statics, each in registry insertion order.
+ * ## Inherited fields are included (DEC-021)
+ *
+ * A subclass instance is enforced against every constraint on its chain, so this reports every
+ * constraint on its chain — including fields the subclass never mentions, and including an ancestor's
+ * constraints on a field the subclass redeclares. Reporting only own declarations would put a
+ * generated document *behind* what is actually enforced, which is the exact asymmetry DEC-016 rejects
+ * and BUG-16 was: enforced, and missing from an artifact that looks complete. `installed` and `type`
+ * come from the nearest declaration — see {@link getEffectiveFieldContract}.
+ *
+ * Ordering is deterministic — instance fields first, then statics; within each band, fields declared
+ * on the class itself first, then inherited ones, each level in registry insertion order.
  */
 export function getFieldContractsForClass(constructor: Function): ClassFieldContract[] {
     if (typeof constructor !== 'function') {
@@ -342,16 +477,49 @@ export function getFieldContractsForClass(constructor: Function): ClassFieldCont
 
     const prototype = constructor.prototype;
     if (prototype) {
-        getFieldContracts(prototype).forEach((contract, key) => {
-            entries.push({key, contract, isStatic: false, target: prototype});
+        collectEffectiveFieldKeys(prototype).forEach(key => {
+            entries.push({
+                key,
+                contract: getEffectiveFieldContract(prototype, key)!,
+                isStatic: false,
+                target: prototype,
+            });
         });
     }
 
-    getFieldContracts(constructor).forEach((contract, key) => {
-        entries.push({key, contract, isStatic: true, target: constructor});
+    collectEffectiveFieldKeys(constructor).forEach(key => {
+        entries.push({
+            key,
+            contract: getEffectiveFieldContract(constructor, key)!,
+            isStatic: true,
+            target: constructor,
+        });
     });
 
     return entries;
+}
+
+/**
+ * Field keys declared anywhere on `host`'s prototype chain, own-most level first, deduplicated.
+ *
+ * A subclass redeclaring an inherited field yields one entry, not two — the two declarations are one
+ * contract once resolved (DEC-021), and a document listing the field twice would misrepresent that.
+ */
+function collectEffectiveFieldKeys(host: ContractTarget): FieldKey[] {
+    const keys: FieldKey[] = [];
+    const seen = new Set<FieldKey>();
+
+    for (let cursor: object | null = host; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const fields = fieldsByTarget.get(cursor);
+        if (!fields) continue;
+        fields.forEach((_contract, key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            keys.push(key);
+        });
+    }
+
+    return keys;
 }
 
 // ---------------------------------------------------------------------------

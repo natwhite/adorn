@@ -50,10 +50,9 @@
  */
 
 import {
+    GreaterThan,
     GreaterThanEqual,
     LessThanEqual,
-    NonNegative,
-    Positive,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
 import {ParameterDecoratorFactory} from '../src/Core/ParameterDecoratorFactory';
@@ -269,11 +268,11 @@ describe('wrapper transparency', () => {
             return `${this.greeting}:${message}:${someNumber}`;
         }
 
-        returnsObject(@Positive() n: number) {
+        returnsObject(@GreaterThan(0) n: number) {
             return {n, self: this};
         }
 
-        async asyncMethod(@Positive() n: number) {
+        async asyncMethod(@GreaterThan(0) n: number) {
             return n * 2;
         }
     }
@@ -301,7 +300,7 @@ describe('wrapper transparency', () => {
         // That is a real behavioural wart (an `async` function should normally
         // reject, never throw), and P1.7's ResultAdapter work is where it would
         // be reconsidered. Pinned as-is.
-        expect(() => new Task().asyncMethod(-1)).toThrow(/expected a positive number/);
+        expect(() => new Task().asyncMethod(-1)).toThrow(/expected a number greater than 0/);
     });
 
     it('preserves the original source via toString()', () => {
@@ -409,7 +408,7 @@ describe('violation message formatting', () => {
         // this to be reconsidered there.
         @Contract()
         class Base {
-            run(@Positive() n: number) { return `base:${n}`; }
+            run(@GreaterThan(0) n: number) { return `base:${n}`; }
         }
         class Sub extends Base {}
 
@@ -482,11 +481,11 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
         const pristine = Object.defineProperty;
 
         @Contract()
-        class A { a(@Positive() n: number) { return n; } }
+        class A { a(@GreaterThan(0) n: number) { return n; } }
         @Contract()
-        class B { b(@Positive() n: number) { return n; } }
+        class B { b(@GreaterThan(0) n: number) { return n; } }
         @Contract()
-        class C { c(@Positive() n: number) { return n; } }
+        class C { c(@GreaterThan(0) n: number) { return n; } }
 
         expect(Object.defineProperty).toBe(pristine);
 
@@ -499,7 +498,7 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
     it('keeps Object.defineProperty usable immediately after a decorated class', () => {
         @Contract()
         class Task {
-            test(@Positive() n: number) { return n; }
+            test(@GreaterThan(0) n: number) { return n; }
         }
         void Task;
 
@@ -519,7 +518,7 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
 
         @Contract()
         class Task {
-            test(@Positive() n: number) { return n; }
+            test(@GreaterThan(0) n: number) { return n; }
         }
         Object.defineProperty(probe, 'first', {value: 1, configurable: true});
         Object.defineProperty(probe, 'second', {value: 2, configurable: true});
@@ -557,29 +556,33 @@ describe('known defects pinned', () => {
         expect(() => new Task().test(12345 as any)).toThrow(/parameter 'message'/);
     });
 
-    it('Q-1 SETTLED BY P3.3 — @Positive rejects zero; @NonNegative is the old behaviour', () => {
-        // FLIPPED BY P3.3, and a deliberate user-visible break. This previously
-        // pinned `expect(new Task().test(0)).toBe(0)`, because `Positive` rejected
-        // only `value < 0` and so accepted 0 despite its name (Q-1 / DEC-001).
+    it('Q-1 RESOLVED BY REMOVAL (DEC-020) — the boundary is written at the call site', () => {
+        // Q-1 asked one question — does `@Positive()` admit 0? — and was answered twice
+        // before being removed the third time. DEC-001 answered "yes": the original
+        // rejected only `value < 0`, so 0 passed despite the name. P3.3 answered "no" and
+        // this test pinned the flip. Both answers were defensible, which was the tell —
+        // the name never carried the boundary, so the question was unanswerable from the
+        // constraint's own definition and only its author knew which reading was meant.
         //
-        // Settled strictly because `@Negative()` ships in the same change: under the
-        // lax reading 0 would satisfy `positive` *and* `nonPositive`, and the
-        // Positive/Negative pair would share a boundary no reader would predict.
-        // The descriptor's params moved from {min: 0} to {exclusiveMin: 0}, so the
-        // boundary is now visible in generated artifacts rather than buried in a name.
+        // DEC-020 stopped adjudicating and deleted the constraint. What this test pins is
+        // therefore no longer a decision at all: the boundary is written where the intent
+        // is knowable, at the call site, and the two spellings below cannot be confused
+        // for each other by any reader. `exclusiveMin` vs `min` also now reaches a
+        // generated artifact instead of being buried in a word.
         @Contract()
         class Task {
-            test(@Positive() n: number) { return n; }
-            atLeastZero(@NonNegative() n: number) { return n; }
+            excludesZero(@GreaterThan(0) n: number) { return n; }
+            includesZero(@GreaterThanEqual(0) n: number) { return n; }
         }
 
-        expect(() => new Task().test(0)).toThrow(/expected a positive number/);
-        expect(new Task().test(1)).toBe(1);
-        expect(() => new Task().test(-1)).toThrow(/expected a positive number/);
+        expect(() => new Task().excludesZero(0)).toThrow(/expected a number greater than 0/);
+        expect(new Task().excludesZero(1)).toBe(1);
+        expect(() => new Task().excludesZero(-1)).toThrow(/expected a number greater than 0/);
 
-        // the migration path for callers who relied on 0 passing
-        expect(new Task().atLeastZero(0)).toBe(0);
-        expect(() => new Task().atLeastZero(-1)).toThrow(/expected a non-negative number/);
+        // The spelling a caller who relied on 0 passing migrates to.
+        expect(new Task().includesZero(0)).toBe(0);
+        expect(() => new Task().includesZero(-1))
+            .toThrow(/expected a number greater than or equal to 0/);
     });
 
     it('Q-7 SETTLED BY P3.3 — NaN violates numeric constraints instead of satisfying them', () => {

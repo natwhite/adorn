@@ -183,11 +183,16 @@ export const maxLengthConstraint = defineConstraint<MaxLengthParams>({
 });
 
 /**
- * A distinct identity from `minLength`, despite sharing its derivation and params shape — the same
- * split as `positive`/`greaterThan` in `./number.ts`.
+ * A distinct identity from `minLength`, despite sharing its derivation and params shape.
  *
  * Documentation says "a non-empty string"; a schema reads `{"minLength": 1}`. Both descend from the
  * one `atLeastLength` derivation, so `NotEmpty()` and `MinLength(1)` cannot come to disagree.
+ *
+ * This is the split DEC-020 removed from `./number.ts`, and it survives here for the reason the
+ * numeric ones did not: "non-empty" is not a *boundary* dressed up as a word — there is exactly one
+ * empty string, so `notEmpty` admits no ambiguity about where its edge falls. `positive` was
+ * removed because "positive" genuinely does not say whether `0` is in or out; nobody has ever had
+ * to ask that about "non-empty".
  */
 export const notEmptyConstraint = defineConstraint<MinLengthParams>({
     kind: 'string',

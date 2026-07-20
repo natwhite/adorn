@@ -11,6 +11,7 @@
 
 import {
     CreateFieldDecorator,
+    getEffectiveFieldConstraints,
     getFieldConstraints,
     getFieldContracts,
     getFieldKeys,
@@ -18,7 +19,7 @@ import {
     installFieldContracts,
     recordFieldConstraint,
 } from './FieldDecoratorFactory';
-import {GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
+import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../Contracts/number';
 import {StringMinLength} from '../Contracts/string';
 import {getFieldContract, getFieldContractsForClass} from './ContractRegistry';
 import {Enforce} from '../FieldDeocrators/Enforce';
@@ -33,17 +34,17 @@ describe('the constraint store', () => {
 
     it('records a constraint as data, not a closure', () => {
         const target = {};
-        recordFieldConstraint(target, 'count', Positive());
+        recordFieldConstraint(target, 'count', GreaterThan(0));
 
         const [constraint] = getFieldConstraints(target, 'count');
 
         // The point of DEC-006: identity and params are readable, so a projection can render this.
-        expect(constraint.constraint).toBe('positive');
+        expect(constraint.constraint).toBe('greaterThan');
         expect(constraint.kind).toBe('number');
         expect(constraint.params).toEqual({exclusiveMin: 0});
         expect(JSON.parse(JSON.stringify(constraint))).toEqual({
             kind: 'number',
-            constraint: 'positive',
+            constraint: 'greaterThan',
             params: {exclusiveMin: 0},
         });
     });
@@ -58,10 +59,14 @@ describe('the constraint store', () => {
     it('is own-scoped — a subclass prototype does not read its parent entry', () => {
         const base = {};
         const derived = Object.create(base);
-        recordFieldConstraint(base, 'count', Positive());
+        recordFieldConstraint(base, 'count', GreaterThan(0));
 
         expect(getFieldConstraints(base, 'count')).toHaveLength(1);
         expect(getFieldConstraints(derived, 'count')).toHaveLength(0);
+
+        // Storage stays own-scoped under DEC-021 — that is what makes weakening unexpressible, since
+        // a descendant has no route to an ancestor's array. Inheritance is a property of the *read*.
+        expect(getEffectiveFieldConstraints(derived, 'count')).toHaveLength(1);
     });
 
     it('stores stacked constraints in declaration order, not __decorate arrival order', () => {
@@ -82,7 +87,7 @@ describe('the constraint store', () => {
 describe('installation', () => {
     it('is idempotent — a second call does not re-wrap', () => {
         const target: any = {};
-        recordFieldConstraint(target, 'count', Positive());
+        recordFieldConstraint(target, 'count', GreaterThan(0));
 
         installFieldContract(target, 'count');
         const first = Object.getOwnPropertyDescriptor(target, 'count');
@@ -95,7 +100,7 @@ describe('installation', () => {
 
     it('installs a configurable, non-enumerable accessor pair on the target', () => {
         const target: any = {};
-        recordFieldConstraint(target, 'count', Positive());
+        recordFieldConstraint(target, 'count', GreaterThan(0));
         installFieldContract(target, 'count');
 
         const descriptor = Object.getOwnPropertyDescriptor(target, 'count')!;
@@ -111,7 +116,7 @@ describe('installation', () => {
     it('refuses a non-configurable property rather than failing silently', () => {
         const target: any = {};
         Object.defineProperty(target, 'count', {value: 1, configurable: false});
-        recordFieldConstraint(target, 'count', Positive());
+        recordFieldConstraint(target, 'count', GreaterThan(0));
 
         expect(() => installFieldContract(target, 'count')).toThrow(/non-configurable/);
     });
@@ -123,7 +128,7 @@ describe('installation', () => {
             get() { return 1; },
             set() { /* noop */ },
         });
-        recordFieldConstraint(target, 'count', Positive());
+        recordFieldConstraint(target, 'count', GreaterThan(0));
 
         expect(() => installFieldContract(target, 'count')).toThrow(/getter\/setter, not a field/);
     });
@@ -133,8 +138,8 @@ describe('installation', () => {
             static limit: number;
             count: number;
         }
-        recordFieldConstraint(Host, 'limit', Positive());
-        recordFieldConstraint(Host.prototype, 'count', Positive());
+        recordFieldConstraint(Host, 'limit', GreaterThan(0));
+        recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
 
         installFieldContracts(Host);
 
@@ -144,7 +149,7 @@ describe('installation', () => {
 
     it('installFieldContracts is safe to re-drive, so @Contract() could call it', () => {
         class Host { count: number; }
-        recordFieldConstraint(Host.prototype, 'count', Positive());
+        recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
 
         installFieldContracts(Host);
         const first = Object.getOwnPropertyDescriptor(Host.prototype, 'count');
@@ -156,7 +161,7 @@ describe('installation', () => {
 
 describe('the accessor — BUG-1', () => {
     class Widget {
-        @CreateFieldDecorator(Positive())
+        @CreateFieldDecorator(GreaterThan(0))
         count: number = 1;
 
         @CreateFieldDecorator(StringMinLength(3))
@@ -177,15 +182,15 @@ describe('the accessor — BUG-1', () => {
 
     it('rejects an invalid initializer at construction time', () => {
         class Bad {
-            @CreateFieldDecorator(Positive())
+            @CreateFieldDecorator(GreaterThan(0))
             count: number = -1;
         }
-        expect(() => new Bad()).toThrow(/expected a positive number/);
+        expect(() => new Bad()).toThrow(/expected a number greater than 0/);
     });
 
     it('rejects an invalid assignment', () => {
         const widget = new Widget();
-        expect(() => { widget.count = -1; }).toThrow(/Widget\.count expected a positive number/);
+        expect(() => { widget.count = -1; }).toThrow(/Widget\.count expected a number greater than 0/);
     });
 
     it('leaves the previously stored value intact when an assignment is rejected', () => {
@@ -221,7 +226,7 @@ describe('the accessor — BUG-1', () => {
 
     it('reads undefined for a contracted field that was never assigned', () => {
         class Sparse {
-            @CreateFieldDecorator(Positive())
+            @CreateFieldDecorator(GreaterThan(0))
             count: number;
         }
         expect(new Sparse().count).toBeUndefined();
@@ -236,19 +241,19 @@ describe('the accessor — BUG-1', () => {
     it('supports symbol-keyed fields', () => {
         const key = Symbol('count');
         const target: any = {};
-        recordFieldConstraint(target, key, Positive());
+        recordFieldConstraint(target, key, GreaterThan(0));
         installFieldContract(target, key);
 
         const instance = Object.create(target);
         instance[key] = 5;
         expect(instance[key]).toBe(5);
-        expect(() => { instance[key] = -1; }).toThrow(/expected a positive number/);
+        expect(() => { instance[key] = -1; }).toThrow(/expected a number greater than 0/);
     });
 });
 
 describe('observability — why the WeakMap side table was rejected', () => {
     class Model {
-        @CreateFieldDecorator(Positive())
+        @CreateFieldDecorator(GreaterThan(0))
         count: number = 1;
 
         @CreateFieldDecorator(StringMinLength(1))
@@ -278,13 +283,13 @@ describe('observability — why the WeakMap side table was rejected', () => {
 
     it('routes Object.assign *into* an instance through validation', () => {
         const model = new Model();
-        expect(() => Object.assign(model, {count: -5})).toThrow(/expected a positive number/);
+        expect(() => Object.assign(model, {count: -5})).toThrow(/expected a number greater than 0/);
         expect(model.count).toBe(1);
     });
 
     it('does not list an unassigned contracted field in for...in', () => {
         class Sparse {
-            @CreateFieldDecorator(Positive())
+            @CreateFieldDecorator(GreaterThan(0))
             count: number;
 
             assigned: number = 1;
@@ -309,10 +314,10 @@ describe('field contracts are visible to projections (GAP-9)', () => {
 
     it('exposes an @Enforce field through the registry, tagged by band', () => {
         class Basket {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             itemCount: number = 1;
 
-            @Enforce.nonNegative()
+            @Enforce.greaterThanEqual(0)
             static minimumOrder: number = 0;
         }
 
@@ -339,7 +344,7 @@ describe('field contracts are visible to projections (GAP-9)', () => {
 
     it('marks the field installed, so a projection can tell enforced from merely recorded', () => {
         class Basket {
-            @Enforce.positive()
+            @Enforce.greaterThan(0)
             itemCount: number = 1;
         }
 
@@ -348,7 +353,7 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         // Recorded but never installed stays `false` — the field-band twin of what the docs renderer
         // already flags loudly for methods.
         const recordedOnly = {};
-        recordFieldConstraint(recordedOnly, 'count', Positive());
+        recordFieldConstraint(recordedOnly, 'count', GreaterThan(0));
         expect(getFieldContract(recordedOnly, 'count')!.installed).toBe(false);
     });
 
@@ -376,28 +381,142 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         expect(getFieldContract(target, 'count')).toBeUndefined();
     });
 
-    it('OPEN QUESTION (Q-14): a subclass redeclaring a field REPLACES the base contract', () => {
-        // Unchanged by the move to the registry — the field band is own-scoped exactly as the method
-        // band is. Whether a subclass should inherit, be allowed to strengthen, or be forbidden from
-        // weakening a field precondition is a Design-by-Contract / Liskov decision and is NOT settled
-        // here; this pins the status quo so whichever way it is answered is a deliberate change.
+    /*
+     * Q-14, resolved by DEC-021. This test asserted the opposite until then — that a subclass
+     * redeclaring a field REPLACED the base contract, so `Sub` accepted `5` against a base minimum of
+     * `10`. It is **inverted deliberately**, not adjusted: the status quo it pinned was the open
+     * question, and the question is now answered.
+     */
+    it('a subclass redeclaring a field UNIONS with the base contract (DEC-021)', () => {
         class Base {
             @Enforce.greaterThanEqual(10)
             value: number = 10;
         }
 
         class Sub extends Base {
-            @Enforce.greaterThanEqual(0)
-            value: number = 0;
+            @Enforce.lessThanEqual(100)
+            value: number = 50;
         }
 
-        expect(getFieldContractsForClass(Base)[0].contract.constraints[0].params).toEqual({min: 10});
-        expect(getFieldContractsForClass(Sub)[0].contract.constraints[0].params).toEqual({min: 0});
+        // Own-scoped storage is unchanged — each declaration landed on the object it was written on.
+        expect(getFieldContract(Base.prototype, 'value')!.constraints.map(c => c.constraint))
+            .toEqual(['min']);
+        expect(getFieldContract(Sub.prototype, 'value')!.constraints.map(c => c.constraint))
+            .toEqual(['max']);
 
-        // The subclass's own accessor shadows the base's and enforces only its own constraint.
+        // What a projection reads is the union, base-most first, so a generated document describes
+        // what is actually enforced. Reporting only `Sub`'s own `max` here would recreate BUG-16's
+        // failure shape — enforced, and missing from an artifact that looks complete.
+        expect(getFieldContractsForClass(Sub)[0].contract.constraints.map(c => c.params))
+            .toEqual([{min: 10}, {max: 100}]);
+
         const sub = new Sub();
-        sub.value = 5;
-        expect(sub.value).toBe(5);
+        expect(() => { sub.value = 5; }).toThrow(/greater than or equal to 10/);
+        expect(() => { sub.value = 500; }).toThrow(/less than or equal to 100/);
+        sub.value = 42;
+        expect(sub.value).toBe(42);
+    });
+
+    it('lists an inherited field a subclass never redeclares', () => {
+        class Base {
+            @Enforce.greaterThanEqual(10)
+            value: number = 10;
+        }
+        class Sub extends Base {}
+
+        // The field is enforced on a `Sub` instance, so it must appear in `Sub`'s contracts. Walking
+        // own-scoped storage alone would return `[]` and document `Sub` as having no field contracts.
+        const entries = getFieldContractsForClass(Sub);
+        expect(entries.map(entry => entry.key)).toEqual(['value']);
+        expect(entries[0].contract.constraints.map(c => c.params)).toEqual([{min: 10}]);
+        expect(entries[0].contract.installed).toBe(true);
+
+        expect(() => { new Sub().value = 5; }).toThrow(/greater than or equal to 10/);
+    });
+
+    it('lists a redeclared field once, not twice', () => {
+        class Base {
+            @Enforce.greaterThanEqual(10)
+            value: number = 10;
+        }
+        class Sub extends Base {
+            @Enforce.lessThanEqual(100)
+            value: number = 50;
+        }
+
+        // Two declarations, one contract once resolved. A document listing `value` twice would
+        // misrepresent that.
+        expect(getFieldContractsForClass(Sub).map(entry => entry.key)).toEqual(['value']);
+    });
+
+    it('unions inherited static field contracts too', () => {
+        class Base {
+            @Enforce.greaterThanEqual(10)
+            static limit: number = 10;
+        }
+        class Sub extends Base {
+            @Enforce.lessThanEqual(100)
+            static limit: number = 50;
+        }
+
+        expect(getFieldContractsForClass(Sub)[0].isStatic).toBe(true);
+        expect(() => { Sub.limit = 5; }).toThrow(/greater than or equal to 10/);
+        expect(() => { Sub.limit = 500; }).toThrow(/less than or equal to 100/);
+
+        // BUG-17: the subclass's own static initializer survives. `Sub.limit = 50` is emitted before
+        // the decorator and lands on Base's inherited accessor, so by decoration time `Sub` carries
+        // an own accessor — which used to be rejected as "a getter/setter, not a field".
+        expect(Sub.limit).toBe(50);
+        expect(Base.limit).toBe(10);
+    });
+
+    it('rejects a subclass static initializer that violates an inherited constraint (BUG-17)', () => {
+        class Base {
+            @Enforce.greaterThanEqual(10)
+            static limit: number = 10;
+        }
+
+        // The rescued value is re-validated against the *effective* list, so a subclass cannot use a
+        // static redeclaration to slip a value past a constraint it inherits.
+        expect(() => {
+            class Sub extends Base {
+                @Enforce.lessThanEqual(100)
+                static limit: number = 5;
+            }
+            return Sub;
+        }).toThrow(/greater than or equal to 10/);
+    });
+
+    it('still refuses a real user getter/setter (BUG-17 did not widen the escape hatch)', () => {
+        const target: any = {};
+        Object.defineProperty(target, 'count', {
+            configurable: true,
+            get() { return 1; },
+            set() { /* noop */ },
+        });
+        recordFieldConstraint(target, 'count', GreaterThan(0));
+
+        // Only adorn's *own* branded accessors are rescued; anything else is still refused, because
+        // a `get`/`set` member's install would be silently undone by `__decorate`'s trailing write.
+        expect(() => installFieldContract(target, 'count')).toThrow(/getter\/setter, not a field/);
+    });
+
+    it('resolves the union through the registry directly, not only through the accessor', () => {
+        // The chain walk is a registry read, so it holds for any prototype chain — including plain
+        // objects a schema-driven adapter might use, which never go through a class at all.
+        const base = {};
+        const derived = Object.create(base);
+
+        recordFieldConstraint(base, 'count', GreaterThan(0));
+        recordFieldConstraint(derived, 'count', LessThanEqual(10));
+
+        expect(getFieldConstraints(derived, 'count').map(c => c.constraint)).toEqual(['max']);
+        expect(getEffectiveFieldConstraints(derived, 'count').map(c => c.constraint))
+            .toEqual(['greaterThan', 'max']);
+
+        // ...and the ancestor's own view is untouched by the descendant's declaration.
+        expect(getEffectiveFieldConstraints(base, 'count').map(c => c.constraint))
+            .toEqual(['greaterThan']);
     });
 });
 

@@ -1,6 +1,5 @@
 // --- Parameter decorators -------------------------------------------------
 import {
-    Positive, Negative, NonNegative, NonPositive,
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
@@ -14,7 +13,7 @@ import {CreateFieldDecorator, installFieldContracts} from './src/Core/FieldDecor
 import {Verify} from './src/Validation/Verify';
 
 // --- Method decorators ----------------------------------------------------
-import {Log, Memoize} from './src/MethodDecorators/promise/Memoize';
+import {Log} from './src/MethodDecorators/Log';
 import {Time, setTimingSink} from './src/MethodDecorators/Time';
 
 // --- Installation & diagnostics -------------------------------------------
@@ -40,6 +39,7 @@ import {
 import {
     getContracts, getContract, getContractedClasses, getContractsForClass,
     getFieldContract, getFieldContracts, getFieldContractsForClass,
+    getEffectiveFieldConstraints, getEffectiveFieldContract,
 } from './src/Core/ContractRegistry';
 
 // --- Projections ----------------------------------------------------------
@@ -55,7 +55,7 @@ export type {
 } from './src/Projections/docs';
 
 // --- Constraint descriptors, namespaced -----------------------------------
-// `src/Contracts/*` exports `Positive`, `Between`, `GreaterThanEqual`, ... under the SAME
+// `src/Contracts/*` exports `GreaterThan`, `Between`, `GreaterThanEqual`, ... under the SAME
 // names as the parameter decorators above — but those are *descriptors* (data), not
 // decorators. A flat re-export would collide, so they are namespaced. Use them wherever a
 // descriptor is wanted directly:
@@ -67,7 +67,6 @@ import * as StringContracts from './src/Contracts/string';
 
 export {
     // Parameter decorators
-    Positive, Negative, NonNegative, NonPositive,
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
@@ -81,7 +80,7 @@ export {
     Verify,
 
     // Method decorators
-    Memoize, Log, Time, setTimingSink,
+    Log, Time, setTimingSink,
 
     /**
      * BREAKING (P1.3) — required on any class using parameter constraints.
@@ -113,6 +112,13 @@ export {
     getContracts, getContract, getContractedClasses, getContractsForClass,
     getFieldContract, getFieldContracts, getFieldContractsForClass,
 
+    // Inheritance-aware field reads (DEC-021). The prefix is the whole distinction:
+    // `getFieldContract`/`getFieldContracts` answer "what does this class *declare*",
+    // while `getEffectiveFieldContract`/`getEffectiveFieldConstraints` answer "what is
+    // *in force* here" — the union of every declaration on the prototype chain, which is
+    // what enforcement applies and what a projection should render.
+    getEffectiveFieldConstraints, getEffectiveFieldContract,
+
     // Projections: documentation generated from recorded contracts
     documentClass, documentContracts, renderMarkdown, generateMarkdown,
 
@@ -136,8 +142,6 @@ export {
                 RegexReplace
         Number:
             Constraints:
-                Positive
-                Negative
                 LessThan
                 GreaterThan
                 Between
@@ -148,6 +152,5 @@ export {
             Map
 
     Method:
-        Memoize
         Time
  */

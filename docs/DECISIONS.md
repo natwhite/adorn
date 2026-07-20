@@ -9,13 +9,43 @@ Architectural and directional decisions, with the reasoning that produced them a
 ---
 
 ## DEC-001 — `positive` rejects `< 0`, not `<= 0`
-**Status:** ACCEPTED · 2026-07-19 · commit `a2ddc5f`
+**Status:** **SUPERSEDED** by DEC-020 · 2026-07-19 · commit `a2ddc5f`
+
+**Retained deliberately.** This entry is the reason DEC-020 exists — the record of the first of three attempts to answer a question that had no answer. Deleting it would hide the pattern that justifies the removal.
 
 **Context.** `Verify.positive` threw when the value *was* positive — an inverted condition contradicting its own error message. Fixing it required choosing a boundary.
 
 **Decision.** Reject `value < 0`, matching the existing sibling `Positive` parameter decorator.
 
 **Consequences.** Internal consistency is preserved, but `0` is accepted as "positive," so the name and the semantics disagree. Left unresolved and tracked as **Q-1**; whichever way it is settled must be applied across `Positive`, `Verify.positive`, and any future `Negative`.
+
+**What actually happened.** The boundary was flipped to strict (`> 0`) in Wave 3 as a user-visible break, and Q-1 stayed open anyway — because flipping it did not make the *name* say which side of zero it fell on. DEC-020 removes the constraint instead.
+
+---
+
+## DEC-020 — Constraints state their boundary; they do not name it
+**Status:** ACCEPTED · user ruling · supersedes **DEC-001** · resolves **Q-1**
+
+**Context.** `Positive()` was ambiguous about `0` for the whole of this project's life. It originally admitted `0` (DEC-001); Wave 3 made it strict, a user-visible break argued from the mirror pair `Positive`/`Negative` sharing a boundary under the lax reading; and Q-1 remained open across every wave in between. Both readings were defensible each time it was raised, and each ruling produced a name that still did not say what it did.
+
+**Decision.** Remove `Positive`, `Negative`, `NonNegative` and `NonPositive` outright — from `src/Contracts/number.ts`, `src/ParameterDecorators/Constraints.ts`, `src/FieldDeocrators/Enforce.ts`, and `src/Validation/Verify.ts` (`Verify.positive` included, despite being pre-existing public surface). `GreaterThan` / `GreaterThanEqual` / `LessThan` / `LessThanEqual` / `Between` already existed and are the replacements:
+
+    Positive()  ->  GreaterThan(0)          NonNegative()  ->  GreaterThanEqual(0)
+    Negative()  ->  LessThan(0)             NonPositive()  ->  LessThanEqual(0)
+
+**Rationale — resolution by design rather than by adjudication.** That the question was answered twice, differently, is the evidence that it is not answerable *at the constraint*. A name cannot carry a boundary, so `Positive` can only ever be a guess at what its author meant, and the reader has to go and look it up — which is precisely what a contract exists to make unnecessary. The intent is knowable in exactly one place: the call site. Putting the nuance about `0` back on the developer is not passing the buck, it is putting the decision where the information is. A developer who writes `GreaterThan(0)` or `GreaterThanEqual(0)` has stated which boundary they meant and cannot be surprised by it. Q-1 does not get settled; it becomes **unexpressible**.
+
+The argument generalises past zero. A named constraint can only hard-code one arbitrary limit, so `Positive` is just the special case of `GreaterThan` that happens to have a word in English. There is no word for `GreaterThan(18)`, and adding names for the limits that happen to have one is not a vocabulary, it is a coincidence.
+
+**No deprecation period, no aliases.** The package is `1.0.0` but is an unreleased prototype with no consumers, so the compatibility argument is hypothetical. More decisively: an alias has to forward to *some* boundary, which is the choice that could not be settled — `Positive = () => GreaterThan(0)` re-ships the ambiguity with a deprecation notice attached, and a caller reading `Positive()` in their own source still cannot tell what it does. The migration is mechanical and total; a half-removed vocabulary is worse than either end state.
+
+**Consequences.**
+- **Four constraint identities are gone from the registry.** Identity is what a documentation projection *prints*, so `positive` rendering "a positive number" is genuinely lost; that line now reads "a number greater than 0". Judged an improvement — it states the bound instead of implying it — and pinned by test in `src/Contracts/constraints.test.ts` rather than asserted here.
+- **A JSON Schema projection is unaffected.** `Positive()` already carried `{exclusiveMin: 0}` and emitted `exclusiveMinimum`, which is exactly what `GreaterThan(0)` carries and emits. The params were never the ambiguous part.
+- **`Verify.positive` is removed from the published surface.** Use `Verify.that(GreaterThan(0), key, value)`.
+- **One projection test loses its subject.** `src/Projections/docs.test.ts` pinned that `positive` stayed distinct from `min` despite sharing a derivation; with the named constraints gone, no two built-ins share params under different identities, so that test is deleted rather than repointed. The *principle* — identity is what a projection prints — still holds and is documented in `number.ts`.
+- **Q-7 and BUG-4 are untouched.** The `isNumeric` gate that makes `NaN`/`undefined` violate every numeric constraint sits in the shared derivations (`above`, `below`, `atLeast`, `atMost`), not in the removed identities, so totality survives by construction.
+- **DEC-010 is unweakened.** Nothing gained a hand-written predicate; the replacements derive from params exactly as before.
 
 ---
 
@@ -127,12 +157,24 @@ Violation routing is separate from the gate: `setViolationPolicy('throw' | 'warn
 
 ---
 
-## DEC-016 — Installation implies enumeration: `@Validate()` registers its class
-**Status:** ACCEPTED · source: **Q-12** · landed alongside P3.2
+## DEC-016 — Installation implies enumeration, in **both** bands
+**Status:** ACCEPTED · source: **Q-12** (methods), **BUG-16** (fields) · landed alongside P3.2, extended to fields afterwards
 
 **Context.** `@Contract()` called `registerContractedClass`; `@Validate()` did not. A class using only the per-method form was therefore **enforced at runtime yet absent from `getContractedClasses()`** — invisible to documentation and, later, to fuzzing. Both readings were defensible: enumeration could mean *"deliberately published"*, which made `@Validate()` a fine-grained opt-in that opted out of visibility too; or any installation could imply enumeration.
 
 **Decision.** **Any installation implies enumeration.** `@Validate()` registers its owning class, resolved from the constructor for a static member and from `target.constructor` for an instance member. `getContractedClasses()` now means *"classes adorn has installed enforcement on"*.
+
+### Extended to the field band (BUG-16)
+
+This decision was originally written about methods only, and the omission was not noticed because it produces no symptom. **Field decorators install at decoration time and called `registerContractedClass` nowhere** — its only production call sites were `ContractInstaller.ts:120,196`, i.e. `@Contract()` and `@Validate()`. A class whose *only* contracts were fields was therefore enforced at runtime and absent from `documentContracts()` / `generateMarkdown()`, which is the identical asymmetry this entry exists to reject, left standing in the other band.
+
+What kept it hidden is worth recording, because it is a general hazard for this project: **`documentClass(Ctor)` reported such a class perfectly.** Every direct test of the projection passed. Only enumeration — the path a real documentation *run* takes — was short. A gap that is invisible to the obvious test and visible only to the whole-pipeline path is exactly the shape DEC-006 makes expensive.
+
+`installFieldContract` now registers its owning class, so the rule reads the same in both bands: *any installation implies enumeration*. `installFieldContracts(ctor)` registers unconditionally, matching `installContracts`.
+
+**One guard the method path did not need.** `installFieldContract` is a public imperative entry point whose target is not always a class — hand it a plain `{}` and `target.constructor` is `Object`. Registering that would put `Object` into the enumerable registry and every projection would then try to document it. A non-function target therefore enumerates only when it genuinely is the `prototype` of the constructor it names; a detached `Object.create(proto)` correctly registers nothing, being an object with contracted fields rather than a class.
+
+**Test changed:** `src/Projections/docs.decorators.test.ts` — *"a field-only class is NOT enumerated without `@Contract()` — a registry-level gap"* pinned the bug and was **inverted**, with the reasoning recorded inline. Its second assertion (`documentClass` reports the class in full) is unchanged, since that is the half that always worked and the half that hid the gap.
 
 **Rationale.** The deciding argument is not ergonomics, it is that the two failure modes are not symmetric. An unenforced contract eventually surfaces — something gets through and the bug is found. A contract that is enforced but **missing from a generated artifact** never surfaces: nothing throws, and the artifact looks complete. The plan calls that out as strictly the worse of the two (§8), and under DEC-006 the artifacts are the product. Adorn must not guarantee something at runtime that it will not admit to in a document.
 
@@ -141,6 +183,49 @@ There is also no real use case on the other side. Nobody wants "enforced but und
 **Consequences.** A class carrying `@Validate()` on one method now appears in documentation with its *uncovered* sibling methods listed and flagged `installed: false`. That is a more useful document than one silently omitting the class, and it is exactly the recorded-but-unenforced case the docs renderer already surfaces loudly. Registration is unconditional — it does not wait for there to be something to install — matching `@Contract()`, which already enumerated a constraint-free class. The strong-reference cost of DEC-011 now extends to `@Validate()`-only classes; `setClassEnumerationEnabled(false)` remains the opt-out.
 
 **Test changed:** `test/contract-installation.test.ts` — *"does NOT register the class for projection"* asserted the opposite and was inverted, with the reasoning recorded inline. Two tests were added covering registration with no constraints yet, and the uncovered-sibling case.
+
+---
+
+## DEC-021 — A subclass may strengthen a field contract, never weaken it
+**Status:** ACCEPTED · source: **Q-14** · user ruling
+
+> **Numbering note.** This ruling was commissioned as "DEC-020", but DEC-020 was taken concurrently by the named-boundary constraint removal (Q-1) and is already referenced from `src/Contracts/number.ts`, `src/Validation/Verify.ts`, `src/ParameterDecorators/Constraints.ts` and `src/FieldDeocrators/Enforce.ts`. Renumbering that entry would have required editing four files this work did not own, so this one took the next free number instead.
+
+**Context.** A subclass redeclaring a decorated field **replaced** its parent's contract. The field store is own-scoped, matching `ContractRegistry`, so `class Sub extends Base` declaring `@Enforce.greaterThanEqual(0) value` over a base `@Enforce.greaterThanEqual(10) value` enforced only `>= 0`. A test labelled `OPEN QUESTION` pinned that in each of two files. Whether a subclass should inherit, strengthen, or be forbidden from weakening was left explicitly undecided rather than invented by the implementer.
+
+**Decision.** **A subclass may strengthen (add) constraints on an inherited field, and can never weaken them.** Inherited constraints always continue to apply; a subclass's declarations are **additive**.
+
+The authoring convention that goes with the ruling — a contract-driven superclass should impose constraints *only where genuinely needed*, leaving inheritors room to set their own limits — is **guidance for documentation, not something adorn enforces**. There is no way to detect "constrained more than necessary", and a warning that fires on correct code is worse than none.
+
+### The mechanism is structural: union, not comparison
+
+Constraints are resolved by walking the prototype chain and **concatenating** every declaration found (`getEffectiveFieldConstraints`). Storage stays own-scoped: a declaration is only ever written to the object it was written on, and there is no write API that takes an ancestor. So a subclass can only ever add conjuncts to its own list, and the resolved set can only grow as you descend. Union of predicates is logical AND, and adding a conjunct is monotonically strengthening.
+
+**Weakening is therefore not detected and rejected — it is unexpressible.** That is the whole point of choosing this shape. The alternative was to compare a subclass's descriptor against its parent's and reject the weaker, which fails for a reason that is not fixable: **relative strength of two arbitrary predicates is undecidable in general.** Such a check could only work for built-in constraints whose params happen to be comparable (`min: 10` vs `min: 0`), and would have to silently pass everything else — a guard that is thorough on easy cases and silent on hard ones, which is the "looks complete, is not" failure DEC-016 rejects.
+
+A consequence worth stating plainly: an attempt to weaken does not produce a diagnostic. `@Enforce.greaterThanEqual(0)` over an inherited `>= 10` is simply redundant — the effective contract stays `>= 10`. If the subclass's *initializer* violates the inherited bound, that surfaces at class-evaluation time, which is the earliest moment it can be known.
+
+### Why this is the opposite of Meyer, and still correct
+
+Classical Design by Contract says a subclass may **weaken** preconditions (contravariance) and **strengthen** postconditions and invariants. This ruling is the opposite for fields, and a future reader will be tempted to "fix" it back. They should not.
+
+**A field constraint is a class invariant, not a precondition.** The distinction is what the constraint is *about*, and it is visible in when the check runs. A precondition guards *one call* and is a demand the supplier makes of its client — so a subclass accepting a wider range of inputs still satisfies every client written against the parent, which is exactly why contravariance is safe. A field constraint guards *every assignment for the whole life of the object*; it is a statement about which states the object may be in, and it is re-checked on every write with no call boundary involved. That is Meyer's own definition of a class invariant: "a consistency constraint that holds for every instance across its observable lifetime… characteriz[ing] the class as a whole rather than its individual routines" (`contract-driven-development.md` §2.4, §2.5).
+
+And invariants are **covariant** in classical DbC — a subclass must preserve them and may strengthen them. So this ruling does not contradict Meyer; it applies the correct one of his three rules. The apparent contradiction comes from adorn's implementation (a field constraint is enforced by a *setter*, which looks like a precondition on an assignment) rather than from its semantics. §2.5 of the reference document lists behavioural subtyping as something ad-hoc guard clauses get wrong; this is the field half of getting it right.
+
+The user's framing arrives at the same place from the substitutability side: constraints imposed on a parent are there for a reason and must not be subvertible. If `Base` guarantees `count > 0`, code holding a `Base` reference is entitled to rely on it, and handing that code a `Sub` that permits `-1` breaks the guarantee — which is the Liskov violation, whatever the constraint is called.
+
+### Consequences
+
+- **Ordering is base-most first.** A violation reports the most general broken constraint first, matching how a reader scans a hierarchy top-down and making a subclass's additions read as additions. Within a level, declaration order is unchanged (DEC-017).
+- **Projections report the union.** `getFieldContractsForClass` walks the chain and includes inherited fields — including fields a subclass never mentions, and an ancestor's constraints on a field it redeclares. Reporting only own declarations would put a generated document *behind* what is enforced, recreating BUG-16 in the same change that fixed it. A redeclared field is listed **once**, since two declarations are one contract once resolved.
+- **Own-scoped reads remain**, renamed in intent rather than removed: `getFieldConstraints` / `getFieldContract` mean *declared here*, `getEffectiveFieldConstraints` / `getEffectiveFieldContract` mean *in force here*. Both questions are real — a document distinguishing a subclass's own additions from what it inherits needs the first — but reading the own-scoped one and assuming it describes runtime behaviour is now a mistake, so the names say which is which.
+- **Cost on the hot path.** Resolution is one `WeakMap` hit per prototype level on every assignment. The common case — no contracted ancestor — returns the stored array with no copy. Nothing is memoised: field enforcement reads the registry on every assignment by design (SMELL-18), and caching resolved chains would make a later `Object.setPrototypeOf` silently enforce the wrong contract.
+- **`installed` and `type` come from the nearest declaration**, not merged, because both describe the accessor a read or write actually reaches. `type` falls through to the nearest ancestor that has one, so a subclass compiled without `emitDecoratorMetadata` degrades to the parent's type rather than to none.
+
+**Scope — methods are deliberately not covered.** Whether an overridden *method*'s parameter constraints need an equivalent rule is the parallel case and is **a separate decision**, tracked as **Q-15**. It is not the same rule: a parameter constraint genuinely *is* a Meyer precondition, so classical DbC points at disjunction (weakening) rather than the conjunction adopted here. The current behaviour is nonetheless broken in a way neither reading endorses — see Q-15.
+
+**Tests changed:** both `OPEN QUESTION` tests were **inverted deliberately**, in `test/field-decorators.test.ts` and `src/Core/FieldDecoratorFactory.test.ts`, with the reasoning recorded inline at each. Added coverage: base-before-subclass reporting order, a restated-looser bound, a subclass initializer violating an inherited constraint, a three-deep hierarchy, statics, and the plain-object chain (proving the union is a registry property, not a class-syntax one).
 
 ---
 

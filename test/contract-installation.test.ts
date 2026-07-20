@@ -21,9 +21,9 @@ import {
     setContractDiagnosticsSink,
 } from '../src/Core/ContractDiagnostics';
 import {
+    GreaterThan,
     GreaterThanEqual,
     LessThanEqual,
-    Positive,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
 import {ParameterDecoratorFactory} from '../src/Core/ParameterDecoratorFactory';
@@ -51,7 +51,7 @@ describe('the missing-@Contract() diagnostic (mandatory, plan top risk 1)', () =
     it('warns, naming the class and the affected methods, when @Contract() is missing', () => {
         class Forgotten {
             send(@StringMinLength(10) message: string) { return message; }
-            count(@Positive() n: number) { return n; }
+            count(@GreaterThan(0) n: number) { return n; }
         }
         void Forgotten;
 
@@ -109,7 +109,7 @@ describe('the missing-@Contract() diagnostic (mandatory, plan top risk 1)', () =
 
     it('warns only once per class', () => {
         class WarnOnce {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
         void WarnOnce;
 
@@ -125,7 +125,7 @@ describe('the missing-@Contract() diagnostic (mandatory, plan top risk 1)', () =
         // it run on first call — an uninstalled method has no wrapper to hook.
         // Deferring by one microtask is what makes the answer knowable.
         class Deferred {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
         void Deferred;
 
@@ -139,7 +139,7 @@ describe('the missing-@Contract() diagnostic (mandatory, plan top risk 1)', () =
         process.env.NODE_ENV = 'production';
         try {
             class ProdClass {
-                run(@Positive() n: number) { return n; }
+                run(@GreaterThan(0) n: number) { return n; }
             }
             void ProdClass;
             flushContractDiagnostics();
@@ -153,7 +153,7 @@ describe('the missing-@Contract() diagnostic (mandatory, plan top risk 1)', () =
         setContractDiagnosticsEnabled(false);
 
         class Silenced {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
 
         flushContractDiagnostics();
@@ -184,7 +184,7 @@ describe('@Contract() installation', () => {
     it('leaves methods without contracts completely untouched', () => {
         @Contract()
         class Task {
-            contracted(@Positive() n: number) { return n; }
+            contracted(@GreaterThan(0) n: number) { return n; }
             plain(n: number) { return n; }
         }
 
@@ -196,7 +196,7 @@ describe('@Contract() installation', () => {
     it('registers the class for projection enumeration (DEC-011)', () => {
         @Contract()
         class Enumerable {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
 
         expect(getContractedClasses()).toContain(Enumerable as unknown as Function);
@@ -253,19 +253,19 @@ describe('@Contract() installation', () => {
     it('is idempotent — installing twice does not double-wrap', () => {
         @Contract()
         class Task {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
 
         const installed = Task.prototype.run;
         installContracts(Task);
         expect(Task.prototype.run).toBe(installed);
-        expect(() => new Task().run(-1)).toThrow(/positive/);
+        expect(() => new Task().run(-1)).toThrow(/greater than 0/);
     });
 
     it('marks the contract installed in the registry', () => {
         @Contract()
         class Task {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
         void Task;
 
@@ -324,17 +324,17 @@ describe('@Validate() per-method opt-in (plan P1.3, option A2)', () => {
     it('enforces the method it is written on', () => {
         class Task {
             @Validate()
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
 
         expect(new Task().run(1)).toBe(1);
-        expect(() => new Task().run(-1)).toThrow(/positive/);
+        expect(() => new Task().run(-1)).toThrow(/greater than 0/);
     });
 
     it('satisfies the diagnostic for the method it covers', () => {
         class Task {
             @Validate()
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
         void Task;
 
@@ -345,9 +345,9 @@ describe('@Validate() per-method opt-in (plan P1.3, option A2)', () => {
     it('still warns for a sibling method it does not cover', () => {
         class Partial {
             @Validate()
-            covered(@Positive() n: number) { return n; }
+            covered(@GreaterThan(0) n: number) { return n; }
 
-            uncovered(@Positive() n: number) { return n; }
+            uncovered(@GreaterThan(0) n: number) { return n; }
         }
         void Partial;
 
@@ -367,7 +367,7 @@ describe('@Validate() per-method opt-in (plan P1.3, option A2)', () => {
         // it (plan §8). Settled as: anything adorn installs, it also enumerates.
         class ValidatedOnly {
             @Validate()
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
         void ValidatedOnly;
 
@@ -393,9 +393,9 @@ describe('@Validate() per-method opt-in (plan P1.3, option A2)', () => {
         // enforced rather than vanishing with the whole class.
         class Mixed {
             @Validate()
-            covered(@Positive() n: number) { return n; }
+            covered(@GreaterThan(0) n: number) { return n; }
 
-            uncovered(@Positive() n: number) { return n; }
+            uncovered(@GreaterThan(0) n: number) { return n; }
         }
         void Mixed;
 
@@ -408,7 +408,7 @@ describe('@Validate() per-method opt-in (plan P1.3, option A2)', () => {
         @Contract()
         class Both {
             @Validate()
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
 
         let thrown = 0;
@@ -441,38 +441,38 @@ describe('production toggling by trust (P3.2 / DEC-008)', () => {
         // about survives production — the safe direction to be wrong in.
         @Contract()
         class Boundary {
-            handle(@Positive() n: number) { return n; }
+            handle(@GreaterThan(0) n: number) { return n; }
         }
 
         @Contract({trust: 'assert'})
         class Internal {
-            check(@Positive() n: number) { return n; }
+            check(@GreaterThan(0) n: number) { return n; }
         }
 
         setEnforcementMode('production');
 
-        expect(() => new Boundary().handle(-1)).toThrow(/positive/);
+        expect(() => new Boundary().handle(-1)).toThrow(/greater than 0/);
         expect(new Internal().check(-1)).toBe(-1); // stripped
 
         setEnforcementMode('development');
 
-        expect(() => new Boundary().handle(-1)).toThrow(/positive/);
-        expect(() => new Internal().check(-1)).toThrow(/positive/);
+        expect(() => new Boundary().handle(-1)).toThrow(/greater than 0/);
+        expect(() => new Internal().check(-1)).toThrow(/greater than 0/);
     });
 
     it('applies trust per method through @Validate()', () => {
         class Mixed {
             @Validate()
-            boundary(@Positive() n: number) { return n; }
+            boundary(@GreaterThan(0) n: number) { return n; }
 
             @Validate({trust: 'assert'})
-            internal(@Positive() n: number) { return n; }
+            internal(@GreaterThan(0) n: number) { return n; }
         }
 
         setEnforcementMode('production');
 
         const mixed = new Mixed();
-        expect(() => mixed.boundary(-1)).toThrow(/positive/);
+        expect(() => mixed.boundary(-1)).toThrow(/greater than 0/);
         expect(mixed.internal(-1)).toBe(-1);
     });
 
@@ -481,22 +481,22 @@ describe('production toggling by trust (P3.2 / DEC-008)', () => {
         // the gate is evaluated on the hot path, not baked into the wrapper.
         @Contract({trust: 'assert'})
         class Internal {
-            check(@Positive() n: number) { return n; }
+            check(@GreaterThan(0) n: number) { return n; }
         }
 
-        expect(() => new Internal().check(-1)).toThrow(/positive/);
+        expect(() => new Internal().check(-1)).toThrow(/greater than 0/);
 
         setAssertEnforcement(false);
         expect(new Internal().check(-1)).toBe(-1);
 
         setAssertEnforcement(true);
-        expect(() => new Internal().check(-1)).toThrow(/positive/);
+        expect(() => new Internal().check(-1)).toThrow(/greater than 0/);
     });
 
     it("routes violations without throwing under onViolation: 'warn', and still runs the method", () => {
         @Contract()
         class Task {
-            run(@Positive() n: number) { return `ran:${n}`; }
+            run(@GreaterThan(0) n: number) { return `ran:${n}`; }
         }
 
         const seen: string[] = [];
@@ -506,13 +506,13 @@ describe('production toggling by trust (P3.2 / DEC-008)', () => {
         // new contract over live traffic before letting it reject anything.
         expect(new Task().run(-1)).toBe('ran:-1');
         expect(seen).toHaveLength(1);
-        expect(seen[0]).toMatch(/positive/);
+        expect(seen[0]).toMatch(/greater than 0/);
     });
 
     it('tells a custom handler which class, method, and trust level violated', () => {
         @Contract({trust: 'assert'})
         class Task {
-            run(@Positive() n: number) { return n; }
+            run(@GreaterThan(0) n: number) { return n; }
         }
 
         const sites: Array<{owner: string; member: string; trust: string}> = [];
@@ -529,7 +529,7 @@ describe('production toggling by trust (P3.2 / DEC-008)', () => {
         // are being suppressed.
         @Contract()
         class Task {
-            run(@Positive() n: number): number { throw new Error(`method blew up on ${n}`); }
+            run(@GreaterThan(0) n: number): number { throw new Error(`method blew up on ${n}`); }
         }
 
         setViolationPolicy(() => undefined);

@@ -14,12 +14,11 @@
  *   2. A *passing* call, satisfying every constraint.
  *   3. A *violating* call, so you can see the thrown contract error and its message.
  *
- * Note the rxjs import: `@Log` pulls rxjs in, which is why rxjs remains a devDependency here
- * even though it is now an optional peer for consumers (P0.2).
+ * Nothing here depends on rxjs: `@Memoize` and the rxjs dependency were removed together (GAP-6),
+ * and `@Log` — which never had anything to do with rxjs — now lives in `src/MethodDecorators/Log`.
  */
-import { from } from 'rxjs';
-import {Positive, StringMinLength, GreaterThanEqual, LessThanEqual} from '../src/ParameterDecorators/Constraints';
-import { Log, Memoize } from '../src/MethodDecorators/promise/Memoize';
+import {StringMinLength, GreaterThanEqual, LessThanEqual} from '../src/ParameterDecorators/Constraints';
+import { Log } from '../src/MethodDecorators/Log';
 import { Contract } from '../src/Core/ContractInstaller';
 
 // P1.3 (BREAKING): parameter decorators now only RECORD their constraints; `@Contract()` is what
@@ -33,7 +32,6 @@ class Task {
 
     // We imagine that by invoking decorators that there will be no other side effects other that those explicitly desired.
     // For this reason, decorators should be decorated using Functional Programming paradigms
-    // @Memoize()
     test(@StringMinLength(10) message: string, @GreaterThanEqual(100) @LessThanEqual(1000) someNumber: number) {
         console.log(message + this.testing);
         // await new Promise<void>(resolve => setTimeout(() => resolve(console.log('inbetween')), 1000));
@@ -46,10 +44,9 @@ class Task {
         return "input is " + str + " and number is " + num + "";
     }
 
-    // @Memoize()
     async test3(waitTime: number = 1000) {
         const prom = new Promise<string>(resolve => setTimeout(() => resolve('after'), waitTime));
-        return from(prom);
+        return prom;
     }
 }
 

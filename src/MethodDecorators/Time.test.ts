@@ -8,10 +8,92 @@
  *
  * The second thing under test is coldness: timing an Observable must not subscribe to it, or a cold
  * producer runs twice and its side effects double.
+ *
+ * ## Why the Observables below are hand-rolled
+ *
+ * adorn no longer depends on rxjs — it was removed outright along with `@Memoize`, so there is no
+ * `rxjs` in `node_modules` to import here. `@Time` keeps its Observable branch as dormant interop
+ * (it reaches rxjs only through a guarded lazy `require`), and that branch still needs covering, so
+ * the suite supplies its own `Observable` through a **virtual** module mock.
+ *
+ * **The fidelity this trades, stated plainly.** These tests previously ran against real rxjs 6.5.3
+ * and therefore verified genuine interop; they now verify only the contract `@Time` actually relies
+ * on — `new Ctor(subscribeFn)`, a subscriber with `next`/`error`/`complete`, and a returned
+ * teardown. That contract is small, and `MockObservable` implements it exactly, but a change in
+ * rxjs's own behaviour would no longer be caught here. That is a real reduction and is the price of
+ * having no rxjs to test against; it is recorded rather than papered over.
+ *
+ * The genuinely-absent case — no rxjs, no mock — is covered in `Time.rxjs-absent.test.ts`, which
+ * cannot live in this file because `loadObservable()` caches its lookup for the module's lifetime.
  */
 
-import {Observable, Subject} from 'rxjs';
 import {Time, setTimingSink, TimingRecord} from './Time';
+
+/** The subscriber `@Time` is handed. Terminal events are once-only, as in any Observable. */
+class MockSubscriber<T = any> {
+    private closed = false;
+
+    constructor(private readonly sink: any) {}
+
+    next(value: T): void {
+        if (!this.closed && this.sink.next) this.sink.next(value);
+    }
+
+    error(err: any): void {
+        if (this.closed) return;
+        this.closed = true;
+        if (this.sink.error) this.sink.error(err);
+    }
+
+    complete(): void {
+        if (this.closed) return;
+        this.closed = true;
+        if (this.sink.complete) this.sink.complete();
+    }
+}
+
+/**
+ * The smallest thing satisfying what `@Time` asks of an Observable: cold (the subscribe function
+ * runs per subscription, never at construction) and tearing down through the returned function.
+ */
+class MockObservable<T = any> {
+    constructor(private readonly onSubscribe: (subscriber: MockSubscriber<T>) => (() => void) | void) {}
+
+    subscribe(observerOrNext?: any): {unsubscribe: () => void} {
+        const sink = typeof observerOrNext === 'function' ? {next: observerOrNext} : (observerOrNext || {});
+        const teardown = this.onSubscribe(new MockSubscriber<T>(sink));
+        return {
+            unsubscribe: () => {
+                if (typeof teardown === 'function') teardown();
+            },
+        };
+    }
+}
+
+/** A hot, never-completing source with a `next` of its own — enough to stand in for a `Subject`. */
+class MockSubject {
+    private readonly sinks: any[] = [];
+
+    subscribe(observerOrNext?: any): {unsubscribe: () => void} {
+        const sink = typeof observerOrNext === 'function' ? {next: observerOrNext} : (observerOrNext || {});
+        this.sinks.push(sink);
+        return {
+            unsubscribe: () => {
+                const at = this.sinks.indexOf(sink);
+                if (at >= 0) this.sinks.splice(at, 1);
+            },
+        };
+    }
+
+    next(value: any): void {
+        this.sinks.slice().forEach(sink => sink.next && sink.next(value));
+    }
+}
+
+// `virtual: true` is what makes this possible at all: it mocks a specifier that does not resolve.
+// `@Time` reaches rxjs through `require('rxjs')` inside `loadObservable()`, so this is the module it
+// finds. The factory is lazy — it runs on first require, long after the classes above initialise.
+jest.mock('rxjs', () => ({Observable: MockObservable}), {virtual: true});
 
 let records: TimingRecord[];
 
@@ -226,7 +308,7 @@ describe('Observable-returning methods', () => {
         class Task {
             @Time()
             work() {
-                return new Observable<number>(subscriber => {
+                return new MockObservable<number>(subscriber => {
                     producerRuns++;
                     subscriber.next(1);
                     subscriber.complete();
@@ -249,7 +331,7 @@ describe('Observable-returning methods', () => {
         class Task {
             @Time()
             work() {
-                return new Observable<string>(subscriber => {
+                return new MockObservable<string>(subscriber => {
                     setTimeout(() => {
                         subscriber.next('value');
                         subscriber.complete();
@@ -278,7 +360,7 @@ describe('Observable-returning methods', () => {
         class Task {
             @Time()
             work() {
-                return new Observable<never>(subscriber => {
+                return new MockObservable<never>(subscriber => {
                     setTimeout(() => subscriber.error(boom), 20);
                 });
             }
@@ -299,7 +381,7 @@ describe('Observable-returning methods', () => {
         class Task {
             @Time()
             work() {
-                return new Observable<number>(subscriber => {
+                return new MockObservable<number>(subscriber => {
                     subscriber.next(1);
                     subscriber.complete();
                 });
@@ -317,7 +399,7 @@ describe('Observable-returning methods', () => {
     });
 
     it('reports nothing for a stream that never terminates', () => {
-        const subject = new Subject<number>();
+        const subject = new MockSubject();
 
         class Task {
             @Time()
@@ -325,8 +407,13 @@ describe('Observable-returning methods', () => {
         }
 
         // Note the wrapper is a plain Observable, so the *returned* value is not a
-        // Subject any more — `next` has to be driven through the original.
-        new Task().work().subscribe();
+        // Subject any more — `next` has to be driven through the original. That is the
+        // documented normalisation (SMELL-15); pinned here rather than only asserted in prose.
+        const returned: any = new Task().work();
+        expect(returned).not.toBe(subject);
+        expect(typeof returned.next).toBe('undefined');
+
+        returned.subscribe();
         subject.next(1);
 
         // Not finished, so there is no duration to report. Stated as a property
@@ -338,7 +425,7 @@ describe('Observable-returning methods', () => {
         class Task {
             @Time()
             work() {
-                return new Observable<number>(subscriber => {
+                return new MockObservable<number>(subscriber => {
                     const handle = setTimeout(() => subscriber.complete(), 1000);
                     return () => clearTimeout(handle);
                 });

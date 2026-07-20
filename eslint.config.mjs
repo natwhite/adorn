@@ -70,9 +70,12 @@ export default tseslint.config(
 
             /**
              * `src/MethodDecorators/Time.ts` loads rxjs via a guarded, lazy `require()` on
-             * purpose — that is what keeps rxjs an *optional* peer (P0.2) rather than a hard
-             * dependency of every `@Time` consumer. A static import would defeat it. Off rather
-             * than warn, because the one place it fires is the place it is deliberately correct.
+             * purpose. GAP-6 removed rxjs from the package outright — not demoted to an optional
+             * peer, *removed* — so `@Time` keeps its Observable branch as dormant interop that
+             * reaches rxjs only if the consumer happens to have it. A static import would make
+             * rxjs a hard requirement of every `@Time` consumer, which is precisely what it must
+             * not be. Off rather than warn, because the one place it fires is the place it is
+             * deliberately correct.
              *
              * See SMELL-16: this lazy require is not bundler-proof, which is a real open issue —
              * but it is an issue with bundlers, not one this rule would help with.
@@ -97,8 +100,11 @@ export default tseslint.config(
              * rather than worked around at the call sites.
              *
              * `no-this-alias` — a wrapper must capture the calling instance before handing
-             * control to a closure (`Memoize` keys its per-instance cache on exactly that).
-             * There is no way to write it that the rule would accept.
+             * control to a closure, and there is no way to write that the rule would accept.
+             * It currently fires **nowhere**: the occurrence it was relaxed for was `@Memoize`
+             * keying its per-instance cache, and GAP-6 deleted that decorator. Kept `off`
+             * because the idiom is intrinsic to wrapper construction and the next wrapper will
+             * reach for it again — not because anything relies on it today.
              *
              * `prefer-rest-params` — forwarding `arguments` verbatim is how a wrapper passes a
              * call through untouched. Rest parameters would be equivalent here, so this is
