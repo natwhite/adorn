@@ -443,7 +443,18 @@ Because DEC-004 makes ts-jest binding — itself forced by esbuild's permanent r
 ---
 
 ## DEC-023 — Sensitive-flow analysis: iterative single-hop, report-by-default
-**Status:** **PARTIALLY REJECTED** by the spike · point 1 fails; points 2–4 survive · see `sensitive-flow-spike.md` and DEC-024
+**Status:** **REJECTED (point 1), twice, under both threat models** · points 2–4 survive · see `sensitive-flow-spike.md` §14 and proposed DEC-026
+
+> **Re-evaluated under DEC-025's narrowed threat model, and point 1 fails again.** The narrowing rescues *a* design, but not the one this entry proposed:
+>
+> - **Iterated propagation stays rejected** — 64% of annotations inert, still stalls at hop 1 on `TS1206`, and rescues **zero** blind spots.
+> - **A one-pass, report-only, source→adorn-sink detector is viable**, and is better than anything in the original plan. The credit for the improvement belongs to *not propagating*, not to the narrowing.
+>
+> **The `TS1206` crux resolved elegantly, and structurally.** Across 18 syntactic positions, **7 can host an adorn emitter, and in 0 of those is `@Sensitive()` illegal — the sets are identical.** Not luck: `@Log`, `@Enforce` and `@Sensitive` are all legacy decorators, which TypeScript admits only on a class declaration's concrete members. **An adorn emitter cannot be declared anywhere `@Sensitive()` cannot be written**, so `TS1206` can never bite *at a sink*. It bites only on propagation, because every intermediate hop is a free function.
+>
+> **Blind spots got proportionally worse, not better.** Only 3 of 25 leaking cases leave scope; of the 22 remaining, **17 are still silent (77%, up from 68%)**. Every one severs the value on the *source* side (`const copy = s.ssn`, `` `${s.ssn}` ``), and moving the sink cannot repair source-side blindness. Template interpolation into an `@Log` argument is **in scope and invisible**.
+
+
 
 > **Spike outcome (discharges point 4).** Point 1 — iterative single-hop — is **rejected on evidence**, for a reason that is structural rather than fixable:
 >
@@ -470,4 +481,24 @@ Because DEC-004 makes ts-jest binding — itself forced by esbuild's permanent r
 4. **A feasibility spike precedes any implementation.**
 
 **Consequences.** The analysis is a *supplement*, never load-bearing — the redaction plan's central principle is that every emitting path must be safe without consulting any annotation. The danger to guard is a **silent** blind spot: a tool that cannot see a flow and does not say so produces exactly the false confidence the redaction plan calls worse than no design. A related hazard is that "silent because converged" and "silent because never re-run" look identical, which must be designed against.
+
+
+---
+
+## DEC-025 — Trust boundary: adorn secures its own emissions, not the application's
+**Status:** ACCEPTED · user ruling · governs `pii-redaction-plan.md`, `observability-plan.md`, DEC-023/024
+
+**Context.** "Prevent PII from leaking" is unbounded and therefore unachievable — it would require adorn to reason about every line of a consumer's code. Without a stated boundary, every design in this area either over-promises or is judged against a standard nothing could meet. The sensitive-flow spike failed in part because it had no closed set of sinks to aim at.
+
+**Decision.** adorn's obligation is to make **its own emissions** safe: `@Log`, violation messages, the observation/telemetry sink, and generated artifacts. A developer writing a raw ``console.log(`${user.ssn}`)`` is **out of scope** — adorn was never in that call path, and no library can intercept it.
+
+In the user's words: *"we're not protecting against bad developers, we're protecting our own output — so as long as they stay within the framework and aren't malicious with logging they should be fine."*
+
+This is the same boundary an OpenTelemetry instrumentation library draws: it secures the attributes *it* emits, not the application's `printf`.
+
+**Consequences.**
+- **The sink set becomes closed and enumerable**, which is what makes any analysis tractable at all. The spike's decisive failure — converging by propagating the marking onto every receiver including the loggers — depended on the sink set being open.
+- **It does not weaken safe-by-default.** Adorn's own paths still emit no values without an explicit opt-in; the boundary narrows *what adorn is responsible for*, not *how carefully adorn behaves inside it*.
+- **It bounds the "alert on exposure" projection** to adorn sinks, which is the half that was ever computable from the registry.
+- **New risk, and it must be stated rather than implied:** a developer may believe adorn covers them when the leak path simply exits the framework. The redaction plan holds that a design letting someone believe they are covered when they are not is worse than no design — so this boundary belongs in user-facing documentation in plain words, not buried in a decision log. Do not let "adorn protects your PII" become the shorthand.
 

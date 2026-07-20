@@ -9,6 +9,12 @@
 > **How to read the claims.** Every number in this document was produced by running code in this repo on this machine (Node v22.11.0, TypeScript 6.0.3, ESLint 9.39.5, typescript-eslint 8.64.0). Where I could not measure something I say so, in §10. §1 is the verdict; §2–§8 are the measurements; §9–§11 are the recommendation.
 >
 > **This builds on `docs/pii-redaction-plan.md` §5.4, §5.5, §9 and §13 (DEC-PII-1, DEC-PII-5) and does not restate them.** That document establishes the primitive-parameter gap and the never-load-bearing principle. This one answers the question it left open: *can the gap be closed at build time instead?*
+>
+> ---
+>
+> ### ⚠ A re-evaluation under a NARROWED threat model was added as §14 on 2026-07-20.
+>
+> **§1–§13 are unchanged and are not superseded.** The user has since ruled that adorn's obligation is to make **adorn's own emissions** safe, not to police a developer's raw `console.log`. That makes the sink set closed and enumerable, which is precisely the thing §4.3 found the design to lack. **§14 re-measures every number under that model and returns a different verdict on a different design.** The record below of *why the original design failed under the broader model* is exactly what justifies the narrowing, so it is preserved verbatim rather than rewritten. Read §1 first, then §14.1.
 
 ---
 
@@ -455,6 +461,8 @@ It is also **strictly more work** — it is interprocedural reachability, which 
 - **Multi-round `eslint --fix` behaviour with stale type information.** ESLint re-lints up to 10 times per file within one `--fix` invocation; whether typescript-eslint rebuilds the `Program` between those passes (and therefore whether `isMarked` reads current or stale text) was not determined. It did not matter here because the decorator writer produced parse errors on pass 2 regardless — but it would matter for a JSDoc-writing ESLint fixer, and it should be checked before anyone builds one.
 - **Terser `mangle.properties`.** Same caveat `pii-redaction-plan.md` §12 already records; unchanged by this spike.
 
+> **Extended by §14.9**, which lists what the *re-evaluation* could not measure. Everything above still stands.
+
 ---
 
 ## 11. Proposed decision entry
@@ -527,3 +535,285 @@ A fourth, smaller: I went in assuming the ESLint-versus-CLI question would come 
 - [typescript-eslint — type-aware linting](https://typescript-eslint.io/getting-started/typed-linting/) · `ESLintUtils.getParserServices` supplies `ts.Program` and `esTreeNodeToTSNodeMap`
 - [ESLint — fixable rules](https://eslint.org/docs/latest/extend/custom-rules#applying-fixes) · fixes are ranges into the linted source, so cross-file fixing is not expressible
 - Lombok `@ToString.Exclude` and `RetentionPolicy.SOURCE` — the source-only-retention comparison in §5.2; see `pii-redaction-plan.md` §3.2 for the primary sources
+
+---
+---
+
+# 14. RE-EVALUATION under a narrowed threat model
+
+*Added 2026-07-20, after §1–§13. Same machine, same toolchain (Node v22.11.0, TypeScript 6.0.3). New spike code in `spike/sinks.js`, `spike/reeval.js`, `spike/reverify.js`, `spike/sink-legality.js`, `spike/anomalies.js` and four new fixtures; the original apparatus was reused rather than rebuilt — `classifySource`, `isMarked`, `classifyHost`, `applyFixes`, `build` and `makeWorkTree` are imported from `core.js` and `run.js` unchanged.*
+
+> **§1–§13 are not superseded and were not edited.** They record why the design failed under the broader model, which is the evidence that justifies narrowing it. This section returns a **different verdict on a different design**, and says plainly where the narrowing does *not* help.
+
+## 14.1 What changed, and the fresh verdict
+
+The user's ruling, now ratified as **DEC-025 — *Trust boundary: adorn secures its own emissions, not the application's*** (written into `DECISIONS.md` concurrently with this re-evaluation, not by it):
+
+> *"I don't consider this an issue since we're not protecting against bad developers, we're protecting our own output — so as long as they stay within the framework and aren't malicious with logging they should be fine."*
+
+So a developer writing a raw ``console.log(`${user.ssn}`)`` is **out of scope** — adorn was never in that call path. This is the boundary an OpenTelemetry instrumentation library draws: it secures its own attribute emission, not the application's `printf`.
+
+**DEC-025 already names the risk this section has to quantify.** Its consequences state: *"a developer may believe adorn covers them when the leak path simply exits the framework… do not let 'adorn protects your PII' become the shorthand."* §14.6 measures that population rather than restating the warning.
+
+**The verdict, in one sentence: the narrowing rescues a design DEC-023 did not propose, and rejects again the one it did.**
+
+| | Outcome under the narrowed model |
+|---|---|
+| **DEC-023 point 1 — iterated single-hop propagation, materialized in source** | **STILL REJECTED.** The narrowing does not rescue it. Its annotations remain **64% inert** (§14.5), it still stalls on `TS1206` at every free-function intermediate (§14.3), and it rescues **zero** of the 17 blind spots (§14.4). |
+| **A one-pass, report-only, direct-source-to-adorn-sink detector** — *not what DEC-023 proposed* | **VIABLE, and materially better than anything in §1–§13.** Its annotation target is **provably always decorator-legal** (§14.3), its inert rate is **0%** (§14.5), it needs no iteration, no fixpoint and no `--fix` loop, and it terminates in a **leak report** rather than a marking. |
+
+**Confidence.**
+
+- **HIGH** on the legality result (§14.3) — 18 compiler probes, zero counter-examples, and the coincidence has a *reason* rather than being empirical luck.
+- **HIGH** on "the fixpoint now carries signal" (§14.2) and on the 0% inert rate (§14.5) — the latter is structural, not a fixture artifact: if annotations can only land at sinks, an inert one is not expressible.
+- **MEDIUM-HIGH** on the blind-spot count of 17 (§14.4). Fixture-dependent, exactly as §10 records. The robust claim underneath it is not the number: it is that **severing is a property of the source-side expression, so moving the sink changes nothing**, and that claim does not depend on my fixtures.
+- **MEDIUM** on the *size* of the new false-confidence surface (§14.6). Its **existence** is structural; the "2 of 6" figure is from a fixture I wrote to contain it.
+
+## 14.2 Question 1 — does the killer finding dissolve? **Yes, in JSDoc mode. No, in decorator mode.**
+
+First, the sink set, **determined from the codebase** (`spike/sinks.js` header records the file and line for each):
+
+| # | Emitter | Where | What reaches the emission | Is it a flow sink? |
+|---|---|---|---|---|
+| **S1** | `@Log()` | `src/MethodDecorators/Log.ts:92` — `context.args.map(arg => safeStringify(arg))` | **every argument**, and the return value | **YES** — every parameter of the method |
+| **S2** | violation message, parameter path | `src/Core/Descriptor.ts:314` `formatMessage` → `:323` `formatReceived`, reached from `ParameterDecoratorFactory.ts:407` | the received value of the **constrained** parameter | **YES** — that parameter only |
+| **S3** | `@Telemetry.value()` | `observability-plan.md` §5.3 — **proposed, not implemented** | the opted-in parameter | **YES**, by construction |
+| S4 | violation message, field path | `FieldDecoratorFactory.ts:609` | the **field's** value | No — a field is already covered by `@Sensitive` on the field (`pii-redaction-plan.md` §5.1). No parameter analysis needed. |
+| S5 | `@Time()` | `src/MethodDecorators/Time.ts:126` | `record.label` and `record.durationMs` **only** | **No.** A decorator is not automatically an emitter. |
+| S6 | diagnostics | `ContractDiagnostics.ts:167`, `Configuration.ts:311` | structural messages, no runtime values | No |
+| S7 | docs projection | `src/Projections/docs.ts` | `constraint`, `params`, `describe()` | No — never a runtime value |
+
+**S5 is the one worth dwelling on.** `@Time` is decorated, adorn-owned, and writes to `console.log` — and it is *not* a sink, because it emits no argument value. A design that treated "has an adorn decorator" as "is an emitter" would re-inflate exactly the false-positive rate the narrowing exists to reduce. The fixture pins this: `Metrics.emitTiming(label)` receives `customer.ssn` and must not be reported.
+
+### The 5-hop chain, re-run
+
+`spike/fixtures/chain-sink.ts` is structurally identical to `chain.ts` — same 5 hops, same branch at 3, same merge at 4, two terminal sinks — with one change: the terminal functions are now `@Log()`-decorated **methods** instead of free functions that happen to call `console.log`.
+
+**JSDoc `--fix` mode** (`node spike/reeval.js`):
+
+```
+round  1  findings=3  written=3   hop=2 leak=1
+      [LEAK via @Log] Customer.ssn -> AuditService.writeAuditLog(entry)   <- the DIRECT case
+round  2  findings=2  written=1   hop=1 leak-covered=1
+round  3  findings=3  written=2   hop=2 leak-covered=1        BRANCH
+round  4  findings=3  written=1   hop=2 leak-covered=1        MERGE, deduped
+round  5  findings=3  written=1   leak-covered=2 leak=1
+      [LEAK via @Log] audit(subject) -> Metrics.emitMetric(label)         <- the CHAINED case
+round  6  findings=3  written=0   leak-covered=3               CONVERGED
+```
+
+`CONVERGED=true` · 8 annotations · 769 ms · **fixed tree compiles: YES**.
+
+**Where the terminal annotations landed — this is the question §4.3 asked and answered badly:**
+
+| | Count |
+|---|---|
+| On an **adorn sink** parameter — *load-bearing; this is what the emitter reads to redact* | **2** — `writeAuditLog(entry)`, `emitMetric(label)` |
+| On an intermediate non-sink parameter — bookkeeping only | 6 |
+| **Leaks reported** — source → sink → emitter, named | **2** |
+
+**The killer finding does dissolve, and precisely as predicted.** §4.3's complaint was that the tool "walked the value from the field to the log statement and on arrival wrote `@sensitive` onto the parameter of the function that logs it, and reported success." It still writes the annotation there — but that is now **the correct and useful outcome**, because `writeAuditLog` is an `@Log`-decorated method and `entry` is a position adorn itself is about to render. The annotation is not decoration of the crime scene; it is the instruction the emitter needs.
+
+And the terminal state is no longer uninformative. The run distinguishes three states that were previously one: *converged having found 2 leaks*, *converged clean*, and *not run*. The output is a leak report with a named source, a named sink and a named emitter, not merely a marking set.
+
+### But decorator mode still stalls, and this is not a footnote
+
+```
+round  1  findings=3  written=2  unfixable=1
+      [hop]  Customer.ssn -> validate(taxId)   {free-function, deco-ILLEGAL}
+      [LEAK via @Log] Customer.ssn -> AuditService.writeAuditLog(entry)  {class-method, deco-LEGAL}
+round  2  findings=2  written=0  unfixable=1   CONVERGED=true
+```
+
+`CONVERGED=true` with **one permanently unfixable finding**, 2 annotations, and — decisively — **the chained leak at `emitMetric` was never discovered at all.** The iteration is stuck at hop 1 forever because `validate` is a free function, exactly as §5.1 measured. The direct leak is found and annotated legally; the 5-hop leak is invisible.
+
+So: **the fixpoint carries signal only in the notation that has no runtime existence.** §5.2's two-vocabulary problem is untouched by the narrowing — a JSDoc `@sensitive` on `writeAuditLog(entry)` is erased by the compiler and `@Log` cannot read it at runtime.
+
+## 14.3 Question 2 — is chain propagation necessary? **No for the direct case, yes for the chained one — and that bifurcation is the whole result.**
+
+### The crux: `TS1206` is moot at a sink, and it is not a coincidence
+
+`spike/sink-legality.js` compiles three probes per syntactic position: can `@Sensitive()` go on the parameter; can `@Log()` (a `MethodDecorator`) decorate this function; can `@Enforce.minLength()` (a `ParameterDecorator`) go on the parameter.
+
+| Position | `@Sensitive()` | `@Log()` host | `@Enforce` param | Can be a sink? |
+|---|---|---|---|---|
+| class method parameter | LEGAL | LEGAL | LEGAL | **YES** |
+| class constructor parameter | LEGAL | *n/a* | LEGAL | **YES** |
+| class static method parameter | LEGAL | LEGAL | LEGAL | **YES** |
+| class accessor parameter | LEGAL | LEGAL | LEGAL | **YES** |
+| destructured class-method parameter | LEGAL | LEGAL | LEGAL | **YES** |
+| optional class-method parameter | LEGAL | LEGAL | LEGAL | **YES** |
+| rest class-method parameter `@S() ...v` | LEGAL | LEGAL | LEGAL | **YES** |
+| free function declaration | TS1206 | TS1206 | TS1206 | no |
+| exported free function | TS1206 | TS1206 | TS1206 | no |
+| function expression | TS1206 | TS1109 | TS1206 | no |
+| arrow function | TS1109 | TS1005 | TS1109 | no |
+| object literal method | TS1206 | TS1136 | TS1206 | no |
+| interface method signature | TS1206 | TS1131 | TS1206 | no |
+| function type node | TS1110 | TS1110 | TS1110 | no |
+| class method overload signature | TS1206 | TS1249 | TS1206 | no |
+| abstract class method | TS1206 | TS1249 | TS1206 | no |
+| `declare function` | TS1206 | TS1206 | TS1206 | no |
+| **class *expression* method parameter** | **TS1206** | TS1206 | TS1206 | no |
+
+> **Positions that can host an adorn emitter: 7 of 18. Of those, positions where `@Sensitive()` is illegal: 0. No counter-example.**
+
+**The two legal sets are identical, and there is a reason rather than a coincidence** — which matters, because a coincidence could be broken by a future TypeScript release and a reason cannot. `@Log`, `@Enforce.*`, `@Telemetry.value()` and `@Sensitive` are *all legacy decorators*, and TypeScript admits a legacy decorator only on a class declaration's concrete members. An adorn emitter therefore **cannot be declared** anywhere that `@Sensitive()` cannot be written. A free function can never be an `@Log` method; an interface method signature can never be one; an arrow function can never be one.
+
+**So `TS1206` — the blocker that independently killed `--fix` in §5 — cannot bite at a sink.** Verified end-to-end rather than argued: `spike/reeval.js` writes a real `@Sensitive()` **decorator** at every leak target on the chain fixture and compiles the result — 1 annotation writable, 0 skipped as illegal, **fixed tree compiles: YES**, and a second pass reports `leaks=0 covered=1`. A single report → annotate → confirm cycle closes the direct case.
+
+### The catch, stated plainly
+
+`TS1206` is moot **only if you do not propagate**. The moment the design walks a chain, every intermediate hop is a free function, and §5's table applies to those intermediates with full force — which is exactly what §14.2's decorator-mode run shows. The blocker is not repealed; its *scope* shrinks to the intermediates, and the intermediates are only needed by the design that is still rejected.
+
+**Answer to question 2, precisely:**
+
+- Propagation is **not necessary** to catch a `@Sensitive` value handed straight to an adorn emitter. One pass, no fixpoint, decorator-legal, compiles.
+- Propagation **is** necessary to catch a value that reaches an emitter through intermediate frames — and it cannot be made to work, for the same reason as before.
+- The design does therefore collapse to *"detect, report, developer annotates at the sink"* — but it collapses to a **strictly smaller** design than the chained one, not to an equivalent one. What is given up is measured in §14.4 and it is most of the coverage.
+
+**Cost, for the record.** One pass on this 15k-LOC repo is one round: **~907 ms**, 61.6 ms/kLOC (`spike/bench.js`, re-run). Against the chained design's 6 rounds ≈ 5.5 s, that is a 6× reduction — and, more importantly, §8.3's maddening developer-driven loop disappears entirely, because there is no loop.
+
+## 14.4 Question 3 — re-partitioned blind spots. **17 of 22 in-scope cases are still genuine silent misses.**
+
+`spike/fixtures/blindspots-sink.ts` re-points each of the 25 shapes at an `@Log()`-decorated method **wherever the shape realistically permits**, leaving as out-of-scope only those that genuinely exit the framework. Ground truth is tagged `SCOPE-IN` / `SCOPE-OUT` in the fixture and read back by `spike/reverify.js`.
+
+**Only 3 of 25 become out of scope:**
+
+| Case | Why out of scope |
+|---|---|
+| `bs8_direct` — ``console.log(`user ${s.ssn}`)`` | Raw `console.log`. adorn is not in this call path. *(This was §6.2's "most dangerous blind spot".)* |
+| `bs16_directSink` — `console.log(s.ssn)` | Same. *(This was one of the few **detected** cases.)* |
+| `bs5_hof` — receiver is a function-typed parameter | A function type node **can never host `@Log`** (§14.3), so this receiver cannot be an adorn emitter. *(This was §6.3's "detected, and the fix target is a parse error" case — the unfixable-position problem dissolves.)* |
+
+**The remaining 22 are in scope, and 17 of them are still silently missed:**
+
+| Result | Count |
+|---|---|
+| Out of scope under the narrowed model | **3** |
+| In scope — **SEEN** | **5** — `bs0_control`, `bs4_jsonBoundary`, `bs9_assign`, `bs13_rest`, `bs15_cast` |
+| In scope — **STILL A GENUINE SILENT MISS** | **17** |
+| Rescued by adding propagation | **0** |
+
+> **The real number is 17.** That is **77% of in-scope cases**, against 68% of the original inventory. The rate got *worse*, because the narrowing removed from the denominator two cases that were previously counted and one that was previously detected.
+
+**Why the narrowing does not help here, and this is the most important sentence in §14.4:** every one of these shapes severs the chain on the **source side** — `const copy = s.ssn`, `` `user ${s.ssn}` ``, `{ssn} = s`, `{...s}`, `s[key]`, `s.ssn.slice(-4)`, `bs10_read(s)`. Whether the value's eventual destination is `console.log` or an `@Log`-decorated method is irrelevant to whether the analyser can see the argument expression at all. **Moving the sink cannot repair a source-side blindness.**
+
+And note the category the brief warned against waving away, measured rather than assumed: **`bs8_template` — `SINK.emit(\`user ${s.ssn}\`)`, template interpolation into an `@Log` argument — is `SCOPE-IN` and is a silent miss.** The most common leak shape in JavaScript is squarely adorn's problem under the narrowed model and remains invisible. Only the raw-`console.log` twin left scope.
+
+### A new blind spot the narrowing *creates*: interface dispatch
+
+`bs17_iface` was recorded in §3 as one of the spike's two positive surprises — *"interface dispatch resolves."* Under the narrowed model it inverts into a miss, and `spike/anomalies.js` verifies it:
+
+```
+call site: r.report(s.ssn)
+resolves to: Reporter.report  (MethodSignature)
+classifySink on the resolved parameter: sink=false
+>>> the CONCRETE @Log implementation (LoggingReporter.report) is NEVER consulted
+for reference, LoggingReporter.report(v) is a sink: true via @Log
+```
+
+`getResolvedSignature` resolves to the **interface's** method signature. An interface method signature can never carry `@Log` (§14.3), so the concrete `@Log`-decorated implementation is never examined and the sink is invisible. Under the broad model this did not matter — the receiver's identity was irrelevant, because any receiver was annotated. Under the narrowed model the receiver's identity **is the entire question**, so resolving to the abstract declaration defeats it.
+
+**This is not a corner case.** Calling a logging or audit service through an injected interface is the ordinary shape in dependency-injected TypeScript, and it is precisely where an `@Log`-decorated method lives. A sink-aware analysis must resolve to implementations, which means class-hierarchy analysis — more work than the single hop, and work the original design never had to do.
+
+## 14.5 Question 4 — false positives. **63% → 0%, but only by dropping propagation.**
+
+`spike/fixtures/realistic-sink.ts` is the same payments service, re-pointed at adorn emitters, with a four-valued ground truth: `ADORN-SINK` (the annotation is load-bearing), `REACHES` (bookkeeping), `INERT`, and `ESCAPES` (a real leak the narrowed model declares out of scope).
+
+| Design | Annotations | Load-bearing | Bookkeeping | Inert | **Inert rate** |
+|---|---|---|---|---|---|
+| §8.5 original, broad model | 8 | — | 3 reach a sink | 5 | **63%** |
+| **One pass, report at sink** | **1** | **1** | 0 | **0** | **0%** |
+| Propagate to fixpoint | 11 | 2 | 2 | 7 | **64%** |
+
+**The improvement is real and total — and it is not attributable to the narrowed threat model.** It is attributable to *not propagating*. Under the one-pass design an inert annotation is **not expressible**: an annotation can only be written at a position that is already an adorn emission position, so by construction it affects an emitter. That is the DEC-021 move — make the wrong thing unexpressible rather than merely rare — arrived at here for free.
+
+The propagating variant is **64% inert, essentially identical to the original 63%**, and it is worse in a way the raw rate hides: **82% of its annotations are non-load-bearing** (inert *plus* bookkeeping). It also annotates `emitTiming(label)`, a `@Time`-decorated method that emits no argument value — a false positive created by decoration, which is the failure mode S5 was built to catch.
+
+## 14.6 Question 5 — what is still genuinely lost, and the new false-confidence risk
+
+**Yes, the narrowing creates a new false-confidence risk, and it is a different and in one respect worse shape than the original's.** Stating it plainly, because `pii-redaction-plan.md` §11.2 holds that a design letting someone believe they are covered when they are not is worse than no design.
+
+**Measured.** On `realistic-sink.ts`, the one-pass analysis classifies **6 findings as out of scope. Two of them are genuine leaks** — `debugDump(pan)` and `dumpEmail(address)`, a PAN and an email address interpolated into raw `console.log`. Under the broad model these were findings. Under the narrowed model they are silently reclassified as *not adorn's problem* and never appear in any output.
+
+The structural point:
+
+- The original design's silence was **uniform**. It was silent about everything, which is bad but at least not misleading about its own shape.
+- The narrowed design **actively partitions real leaks into two classes** — reported and permanently unreported — and **emits no signal for the second class**. A developer sees a clean report and cannot distinguish "no sensitive data reaches a log" from "sensitive data reaches several logs, but by a route we declined to analyse."
+
+This is survivable, but only on a condition, and the condition is not optional:
+
+> **A one-pass sink detector must print its own scope on every run, not merely its findings.** Something of the form: *"Analysed N adorn emission positions (`@Log` methods, `@Enforce` parameters). Observed M `@Sensitive` values flowing to non-adorn receivers; these were NOT analysed and may leak."* The out-of-scope count is already computed — it is the `out-of-scope` finding class in `spike/sinks.js` — so this costs nothing and converts a misleading silence into an honest boundary. Without it the tool fails `pii-redaction-plan.md` §11.2 and should not ship.
+
+**Also genuinely lost, and each should be said out loud rather than discovered:**
+
+1. **17 in-scope shapes, silently.** §14.4. Including template interpolation into an `@Log` argument. This is the largest loss and the narrowing does nothing about it.
+2. **Interface-dispatched sinks.** §14.4. The ordinary DI shape defeats the analysis.
+3. **The annotation covers the last hop only.** Marking `writeAuditLog(entry)` tells `@Log` to redact. It says nothing about the four intermediate frames the value already sat in. That is *correct* for an emission obligation and must not be oversold as flow coverage — the value was copied five times before adorn saw it.
+4. **The runtime-retention problem is untouched.** §14.2: the fixpoint carries signal only in JSDoc mode, and a JSDoc tag is erased. If the annotation is to be read by `@Log` at runtime it must be a real decorator — which §14.3 shows is legal at a sink, so the one-pass design escapes this, but the propagating design does not.
+5. **`@Time` proves "adorn-owned" ≠ "emits values".** The sink set must be maintained per-emitter and re-derived whenever an emitter is added. A future `@Telemetry.value()` (S3) enlarges it; a future decorator that renders arguments and is not added to the set becomes a silent hole. This is a maintenance obligation the design creates and does not discharge.
+
+## 14.7 What I would build now, revised
+
+§9.3 recommended (1) a report-only direct-sink ESLint rule and (2) a whole-program reachability report. **The narrowing changes the priority and improves item (1) substantially.**
+
+**(1) A report-only, one-pass, adorn-sink ESLint rule — now clearly worth building.** It is no longer the thin `console.log(s.ssn)` special case §9.3 described. It answers a question adorn is uniquely positioned to answer and no logging library can: *is a `@Sensitive` value reaching a position adorn itself is about to render?* Zero false positives (§14.5), one pass (§14.3), and — because the target is provably decorator-legal — it *could* carry a fixer without the `TS1206` problem. **It still should not.** §7.2's cross-file constraint is unchanged: the fix target is the callee's parameter, usually in another module, and an ESLint fix cannot cross files. Report-only, permanently, for the reason §7.4 gives.
+
+**(2) The reachability report is still the thing with real value**, and §14.4 is why: 17 of 22 in-scope shapes need it, and no amount of sink-awareness substitutes for it. It also now has a better output, because the sink set is closed — it can name the *emitter*, not just the log statement: *"`Customer.ssn` reaches `@Log AuditService.writeAuditLog` via `start → validate → route → accept → audit`."*
+
+**(3) New, and cheap:** the intersection projection of `pii-redaction-plan.md` §8.1 gets sharper under the narrowed model, because "every adorn emission position" is now an *enumerable registry read* rather than an analysis. `@Log`-decorated methods and `@Enforce`-constrained parameters are already in `ContractRegistry`. A report listing every emission position and whether it carries a `@Sensitive` marking needs **no flow analysis at all** — it is a pure registry read, in the shape DEC-007 and `docs.ts` already established. It will not tell you what *reaches* those positions, and it must say so; but "here are the N places adorn will render a value, and here is which of them you have marked" is a genuine privacy-review artifact that costs almost nothing and has no false-confidence failure mode, because it makes no claim about flows.
+
+## 14.8 Proposed amendment to DEC-023 / DEC-024
+
+> **A proposal, in this document.** `DECISIONS.md` was **not** edited by this re-evaluation.
+>
+> **Numbering note — DEC-021's warning fired during this work.** While §14 was being measured, `DECISIONS.md` gained **DEC-025 — *Trust boundary: adorn secures its own emissions, not the application's*** (status ACCEPTED, user ruling), written concurrently by another hand. That entry **is** the narrowed threat model this section re-evaluates against, and it is the governing decision — §14 is the *evidence* for what follows from it, not a competing statement of it. The proposal below is therefore renumbered **DEC-026**. Anyone transferring it should re-check the highest allocated identifier first; this is the second time this repo has had two agents reach for the same number.
+
+### DEC-026 — the sensitive-flow sink set is closed; a one-pass report-at-sink detector is admitted, propagation stays rejected
+**Status:** PROPOSED · **source:** the §14 re-evaluation · **follows from:** DEC-025 (the trust boundary) · **amends:** DEC-024 (which amends DEC-023) · **relates to:** DEC-PII-1, DEC-PII-5, DEC-OBS-2, DEC-016, DEC-021
+
+**Context.** DEC-024 rejected DEC-023's iterated single-hop propagation on three measured findings, the decisive one being that the analysis has *no notion of a sink* and therefore converges by propagating the marking onto every logger. **DEC-025 has since drawn the trust boundary**: adorn is responsible for its own emissions, not for application code's `console.log`. DEC-025's own consequences section anticipates the key point — *"the sink set becomes closed and enumerable, which is what makes any analysis tractable at all"* — and this entry supplies the measurement of exactly how much that buys, which is more than nothing and much less than the design DEC-023 proposed.
+
+**Decision.**
+
+1. **The sink set is closed, enumerable, and normative.** It is: a parameter of an `@Log()`-decorated method; a parameter carrying an `@Enforce.*` constraint (the violation-message path); and the proposed `@Telemetry.value()` opt-in. **`@Time()` is explicitly not a sink** — it emits a label and a duration, never an argument value. Adding an emitter to adorn is a change to this set and must be treated as one.
+2. **DEC-023 point 1 remains REJECTED.** Re-measured under the narrowed model: annotations still **64% inert** (82% non-load-bearing), still stalled at hop 1 by `TS1206` on free-function intermediates, and rescuing **zero** blind spots. The narrowing does not rescue propagation.
+3. **A one-pass, report-only, direct-source-to-adorn-sink detector is ADMITTED** as the successor to IDEA-10(a). One pass, no fixpoint, no `--fix`. Measured: **0% inert annotations**, annotation target **provably always decorator-legal**, ~907 ms on this repo.
+4. **It must print its scope, not only its findings, on every run.** A run must state how many adorn emission positions were analysed **and how many `@Sensitive` values were observed flowing to non-adorn receivers and therefore not analysed.** This is a **condition of shipping**, not a nicety: the narrowed model partitions real leaks into reported and permanently unreported, and a clean report that does not disclose the second class is the false-confidence failure `pii-redaction-plan.md` §11.2 calls worse than no design.
+5. **`@Sensitive` remains never load-bearing** (DEC-PII-1 unchanged). The detector supplements deny-by-default emission (DEC-OBS-2); it does not become the thing that makes emission safe.
+
+**Rationale — what the re-evaluation established that DEC-024 could not.**
+
+- **`TS1206` cannot bite at a sink, for a structural reason.** Measured across 18 syntactic positions: 7 can host an adorn emitter, and in **0** of those is `@Sensitive()` illegal. The sets are identical because `@Log`, `@Enforce`, `@Telemetry` and `@Sensitive` are all legacy decorators, which TypeScript admits only on a class declaration's concrete members. **An adorn emitter cannot be declared where `@Sensitive()` cannot be written.** DEC-024's finding 2 is therefore *scoped*, not repealed: it applies to intermediate hops, which only the rejected design needs.
+- **DEC-024's finding 1 — the uninformative fixpoint — genuinely dissolves.** With a terminal sink the run reports *"`Customer.ssn` reaches `@Log AuditService.writeAuditLog(entry)`"* and distinguishes converged-with-findings from converged-clean from never-run. The annotation lands on the emitter's parameter, which is what the emitter needs to redact.
+- **DEC-024's finding 3 — the blind spots — does NOT dissolve, and this is the reason propagation is not merely unnecessary but insufficient.** Only 3 of 25 cases leave scope. **17 of the 22 in-scope cases remain silent misses (77%)**, unchanged by propagation, because every one severs the chain on the **source side** and moving the sink cannot repair source-side blindness. Template interpolation into an `@Log` argument is in scope and invisible.
+- **A new blind spot appears that the broad model did not have:** interface dispatch. `getResolvedSignature` resolves to the interface's `MethodSignature`, which can never carry `@Log`, so the concrete decorated implementation is never consulted. Verified. This is the ordinary dependency-injected shape.
+
+**Consequences.**
+
+- **IDEA-10(a) is superseded** by the one-pass adorn-sink detector, which is strictly better scoped and better motivated. **IDEA-10(b), the reachability report, is unchanged and is still the item with real value** — §14.4 quantifies exactly how much is left on the table without it (17 of 22 shapes).
+- **A third, near-free artifact is admitted:** an emission-position report — every `@Log` method and `@Enforce` parameter, and whether each carries a `@Sensitive` marking. It is a **pure registry read**, needs no flow analysis, follows `docs.ts`'s extract/render shape, and has no false-confidence mode because it makes no claim about flows. It inherits DEC-007's enumeration caveat and must print its basis.
+- **DEC-PII-5 still stands unweakened.** The primitive gap is still closed only by a hand-written `@Sensitive()`. What changed is that the tool can now reliably tell you *where one is missing at an emission position* — and still cannot tell you where one is missing anywhere else.
+- **The sink set is a maintenance obligation.** A new value-rendering decorator that is not added to it becomes a silent hole. This should be pinned by a test that fails when a method decorator renders arguments without being declared a sink.
+
+## 14.9 What the re-evaluation could not measure
+
+Everything in §10 still stands. Additionally:
+
+- **`@Telemetry.value()` (S3) does not exist.** It is in the sink set on the strength of `observability-plan.md` §5.3 and `pii-redaction-plan.md` §6.2, not measurement. If its shape changes, the set changes.
+- **The out-of-scope population size is fixture-controlled.** The "2 genuine leaks silently reclassified out of scope" figure comes from a fixture I wrote to contain exactly that. The risk's *existence* is structural; its *frequency in real code* is unmeasured and is the single most decision-relevant unknown in §14.6.
+- **Class-hierarchy resolution was not attempted.** §14.4 identifies interface dispatch as a miss but did not build the implementation-resolving analysis that would fix it, so its cost and precision are unknown.
+- **`@Enforce`-path sinks (S2) were exercised only structurally.** `AuditTrail.checkPan(@Enforce.minLength(12) pan)` is classified correctly by `classifySink`, but no fixture drives a *flow* into a constraint-decorated parameter, so S2's detection is verified by construction rather than by a leak case.
+- **The 0% inert rate is a property of one fixture and one design.** It is structurally guaranteed for annotations *at sinks*; it says nothing about how often a real codebase has a `@Sensitive` value reaching a sink directly rather than through the 17 severing shapes. **That ratio — direct versus severed, in real code — is what actually determines whether the one-pass detector is useful or merely correct**, and it is not measured here.
+- **Nothing was measured against the real `@Log`.** The fixtures use inert stand-ins in `spike/fixtures/adorn-markers.ts` that mirror the real decorators' *shapes* (`MethodDecorator`, `ParameterDecorator`). Runtime behaviour is irrelevant to a static analyser, but the stand-ins are not `src/`'s decorators and a divergence in decorator *shape* would invalidate the legality result.
+
+## 14.10 What changed my mind during the re-evaluation
+
+**1. I expected the blind spots to improve and they did not — at all.** Going in, the plausible story was that a closed sink set would let the analysis stop caring about long chains, converting many misses into out-of-scope non-problems. It converts **three**. The reason is obvious in hindsight and I did not see it until the table printed: these shapes sever the value on the **source side**, and the sink's identity is downstream of the severing. This is the finding that keeps the overall verdict modest — the design that survives is *precise*, not *capable*.
+
+**2. The legality result was better than I expected, and for a reason I had not anticipated.** I expected to measure "the sink positions happen to be a subset of the legal positions" and report a fortunate overlap. What the probes actually show is that the sets are **identical**, and that this follows from both being legacy decorators under the same TypeScript rule. That upgrades the finding from an empirical coincidence to a structural guarantee — which matters, because a coincidence would need re-measuring on every TypeScript upgrade and a structural guarantee does not.
+
+**3. Interface dispatch flipped from the spike's best surprise to a real hole.** §12.3 recorded barrels-and-interfaces resolving as the one place the design was *stronger* than assumed. Under the narrowed model, resolving to the interface signature is precisely the wrong answer, because the whole question is now "what is the receiver, and is it decorated?" The same compiler behaviour, unchanged, is a positive under one threat model and a defect under the other. That is worth recording as a general caution: **a capability finding is only meaningful relative to the question being asked of it.**
+
+**4. I set out to test whether the narrowing rescues the design and found it rescues a different one.** The honest framing is not "DEC-023 point 1 works after all under a narrower model" — it does not, and §14.5's 64% is the evidence. It is that the narrowing makes a *simpler* design viable that nobody had proposed, because under the broad model a one-pass detector would have been obviously useless (there is no enumerable sink set to point it at). The narrowing did not repair the iteration; it removed the need for it, in the one case it can serve.
