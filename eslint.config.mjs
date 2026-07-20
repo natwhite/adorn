@@ -37,7 +37,9 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
     {
         // Build output, dependencies, and coverage are never linted.
-        ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
+        // `spike/**` is throwaway feasibility-spike code (docs/sensitive-flow-spike.md), kept
+        // out of the build by tsconfig `exclude` and out of the linter here.
+        ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'spike/**'],
     },
 
     js.configs.recommended,

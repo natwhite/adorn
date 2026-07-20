@@ -3,6 +3,10 @@ node_modules/
 coverage/
 package-lock.json
 
+# Throwaway feasibility-spike code — see docs/sensitive-flow-spike.md. Excluded from the
+# build (tsconfig) and the linter (eslint.config.mjs) for the same reason.
+spike/
+
 # Markdown is hand-maintained and deliberately outside Prettier's reach.
 #
 # These documents carry information in their layout that Prettier would flatten:

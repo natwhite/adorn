@@ -443,7 +443,17 @@ Because DEC-004 makes ts-jest binding — itself forced by esbuild's permanent r
 ---
 
 ## DEC-023 — Sensitive-flow analysis: iterative single-hop, report-by-default
-**Status:** ACCEPTED (governs the spike) · user ruling · feasibility **unproven** — see `sensitive-flow-spike.md`
+**Status:** **PARTIALLY REJECTED** by the spike · point 1 fails; points 2–4 survive · see `sensitive-flow-spike.md` and DEC-024
+
+> **Spike outcome (discharges point 4).** Point 1 — iterative single-hop — is **rejected on evidence**, for a reason that is structural rather than fixable:
+>
+> **The design has sources and receivers but no notion of a *sink*, so it converges by propagating the marking onto every sink.** On the 5-hop fixture the terminal annotations landed on `writeAuditLog(entry)` and `emitMetric(label)` — precisely the two functions that call `console.log`. It walks the value to the log statement and then marks the log statement as sensitive. It converges exactly when it has finished decorating the crime scene. That is not a defect in the implementation; it is what "no new flows appear" *means* when every receiver is treated as a source.
+>
+> **Second, independent blocker: `--fix` cannot write what the design requires.** A legacy parameter decorator is syntactically legal in only **7 of 18** positions — parameters of concrete class members. Free functions, arrow functions, function expressions, interface and abstract methods, overload signatures and function types all reject it (`TS1206`), three of them as *parse* errors. On a fixture of five ordinary exported functions `--fix` wrote **zero** annotations and stalled at hop 1 permanently. Most code that receives a primitive is a free function, not a class method.
+>
+> **Measured:** termination *is* proven (monotone map over a finite lattice; self-, 2- and 3-cycles all converge) — the one intuition that held. But 17 of 25 genuinely-leaking cases were **silently** missed (68%), and of 8 annotations written only 3 reached a sink (63% inert), uncorrelated with risk in either direction.
+>
+> **Points 2 (report-by-default), 3 (rule + CLI) and 4 (spike first) survive** and carry into DEC-024.
 
 **Context.** `@Sensitive` can propagate through object-typed parameters by resolving markings from the runtime prototype, but **cannot** propagate through primitives — `(ssn: string)` severs the link, and value-tainting was rejected on measured grounds (see `pii-redaction-plan.md`). The proposal is to close that gap at build time with static flow analysis.
 

@@ -34,6 +34,9 @@
     "node_modules",
     "dist",
     "test",
+    // `spike/` is throwaway feasibility-spike code (docs/sensitive-flow-spike.md). It must
+    // never reach `dist/` — the same rule `examples/` is excluded under, for the same reason.
+    "spike",
     // `examples/` is demonstration code, not library code. Before P0.4 the demo lived at
     // `src/Tests.ts` and was compiled into `dist/src/Tests.js` — the published package shipped
     // a demo script. Excluded here so that cannot happen again; `npm run demo` runs it through
