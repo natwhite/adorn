@@ -54,18 +54,22 @@ describe('parameter types reach the registry and the document', () => {
         const [method] = documentClass(Order).methods;
 
         expect(method.signature).toBe('Order.place(sku, quantity)');
-        expect(method.parameters[0]).toEqual(expect.objectContaining({
-            index: 0,
-            name: 'sku',
-            nameRecovered: true,
-            typeName: 'String',
-        }));
+        expect(method.parameters[0]).toEqual(
+            expect.objectContaining({
+                index: 0,
+                name: 'sku',
+                nameRecovered: true,
+                typeName: 'String',
+            }),
+        );
     });
 
     it('types an UNDECORATED position it named (Q-10)', () => {
         @Contract()
         class Report {
-            render(format: string, @GreaterThanEqual(1) pageSize: number) { return `${format}${pageSize}`; }
+            render(format: string, @GreaterThanEqual(1) pageSize: number) {
+                return `${format}${pageSize}`;
+            }
         }
 
         const contract = getContract(Report.prototype, 'render')!;
@@ -77,11 +81,15 @@ describe('parameter types reach the registry and the document', () => {
     });
 
     it('records the erased Object for a type the emitter cannot represent', () => {
-        interface Options { verbose: boolean }
+        interface Options {
+            verbose: boolean;
+        }
 
         @Contract()
         class Runner {
-            run(@GreaterThanEqual(0) attempts: number, options: Options) { return attempts + (options ? 1 : 0); }
+            run(@GreaterThanEqual(0) attempts: number, options: Options) {
+                return attempts + (options ? 1 : 0);
+            }
         }
 
         // NOT a defect and NOT hidden: the emitter erases interfaces, unions, and generics to

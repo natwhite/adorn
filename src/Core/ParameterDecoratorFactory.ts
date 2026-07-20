@@ -86,11 +86,11 @@ import {InvocationContext} from './MethodDecoratorFactory';
  * authoring surface and the fields are load-bearing for existing error messages.
  */
 export interface ParamObject<T> {
-    objectName: string,
-    funcName: string,
-    paramName: string,
-    value: T
-    signature: string
+    objectName: string;
+    funcName: string;
+    paramName: string;
+    value: T;
+    signature: string;
 }
 
 /** A hand-written parameter check. Throws to signal a violation. */
@@ -133,7 +133,6 @@ const stagedByTarget = new WeakMap<object, Map<MethodKey, StagedMethod>>();
  * documented entry point and is referenced from README, tests, and user code.
  */
 export class ParameterDecoratorFactory {
-
     /**
      * Build a parameter decorator from a hand-written check.
      *
@@ -167,7 +166,7 @@ export class ParameterDecoratorFactory {
         if (!constraint || typeof constraint.predicate !== 'function') {
             throw new TypeError(
                 'CreateConstraintDecorator: expected a ConstraintDescriptor built by defineConstraint(). ' +
-                'Use CreateSimpleDecorator for a hand-written closure.',
+                    'Use CreateSimpleDecorator for a hand-written closure.',
             );
         }
 
@@ -216,7 +215,6 @@ export function buildParameterEnforcement(
     propertyKey: MethodKey,
     original: Function,
 ): ((context: InvocationContext) => void) | undefined {
-
     const checks = planChecks(target, propertyKey, original);
     if (checks.length === 0) return undefined;
 
@@ -321,11 +319,13 @@ function descriptorCheck(
     return function (args: any[]) {
         const value = args[index];
         if (constraint.predicate(value)) return;
-        throw new Error(constraint.message({
-            value,
-            signature: signatureFor(index),
-            paramName: paramNames[index],
-        }));
+        throw new Error(
+            constraint.message({
+                value,
+                signature: signatureFor(index),
+                paramName: paramNames[index],
+            }),
+        );
     };
 }
 
@@ -454,7 +454,9 @@ function stageCheck(target: object, propertyKey: MethodKey, index: number, decor
         throw new TypeError('CreateSimpleDecorator: target must be a prototype or constructor');
     }
     if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
-        throw new TypeError(`CreateSimpleDecorator: parameter index must be a non-negative integer, received ${String(index)}`);
+        throw new TypeError(
+            `CreateSimpleDecorator: parameter index must be a non-negative integer, received ${String(index)}`,
+        );
     }
 
     let staged = stagedByTarget.get(target);

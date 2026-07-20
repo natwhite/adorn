@@ -1,13 +1,5 @@
 import {constraintFromJSON, ConstraintDescriptor} from '../Core/Descriptor';
-import {
-    Between,
-    GreaterThan,
-    GreaterThanEqual,
-    Integer,
-    LessThan,
-    LessThanEqual,
-    MultipleOf,
-} from './number';
+import {Between, GreaterThan, GreaterThanEqual, Integer, LessThan, LessThanEqual, MultipleOf} from './number';
 import {Email, Matches, MaxLength, MinLength, NotEmpty, StringMinLength, Url} from './string';
 
 /**
@@ -34,19 +26,7 @@ const messageFor = (descriptor: ConstraintDescriptor, value: unknown) =>
     descriptor.message({value, signature: SIGNATURE});
 
 /** Everything a predicate must survive without throwing, and reject. */
-const HOSTILE: unknown[] = [
-    null,
-    undefined,
-    NaN,
-    '',
-    'abc',
-    {},
-    [],
-    () => 0,
-    true,
-    false,
-    Symbol('s'),
-];
+const HOSTILE: unknown[] = [null, undefined, NaN, '', 'abc', {}, [], () => 0, true, false, Symbol('s')];
 
 // ---------------------------------------------------------------------------
 // Number
@@ -132,8 +112,9 @@ describe('the zero boundary is written, not named (Q-1, DEC-020)', () => {
     });
 
     it('reports a violation naming the bound', () => {
-        expect(messageFor(GreaterThan(0), -5))
-            .toBe(`Value Error: ${SIGNATURE} expected a number greater than 0 but received -5 instead`);
+        expect(messageFor(GreaterThan(0), -5)).toBe(
+            `Value Error: ${SIGNATURE} expected a number greater than 0 but received -5 instead`,
+        );
     });
 });
 
@@ -288,7 +269,8 @@ describe('Integer', () => {
 
     it('rejects fractions and non-finite values', () => {
         [1.5, -0.1, 1e-7, Infinity, -Infinity, NaN].forEach(value =>
-            expect(descriptor.predicate(value)).toBe(false));
+            expect(descriptor.predicate(value)).toBe(false),
+        );
     });
 
     it('treats 1.0 as an integer — JavaScript has one number type and the constraint follows it', () => {
@@ -560,8 +542,8 @@ describe('Email', () => {
             'no-at-sign.com',
             '@example.com',
             'user@',
-            'user@example',        // no dot in the domain
-            'user @example.com',   // whitespace
+            'user@example', // no dot in the domain
+            'user @example.com', // whitespace
             'user@exa mple.com',
             'a@b@c.com',
         ].forEach(value => expect(descriptor.predicate(value)).toBe(false));
@@ -572,8 +554,8 @@ describe('Email', () => {
         // rejects valid addresses. This asserts the limit rather than pretending it is absent —
         // the only way to know an address is deliverable is to send to it.
         expect(descriptor.predicate('not really@an.address')).toBe(false); // whitespace still fails
-        expect(descriptor.predicate('a@b.c')).toBe(true);                  // no TLD check
-        expect(descriptor.predicate('..@..x')).toBe(true);                 // no structural check
+        expect(descriptor.predicate('a@b.c')).toBe(true); // no TLD check
+        expect(descriptor.predicate('..@..x')).toBe(true); // no structural check
     });
 
     it('shares its derivation with Matches', () => {
@@ -745,9 +727,29 @@ describe('projection readiness', () => {
 
     it('rehydrates every built-in into an identically-enforcing descriptor', () => {
         const probes: unknown[] = [
-            -10, -1, -0, 0, 0.5, 1, 3, 5, 9, 10, 11, Infinity, NaN,
-            '', 'a', 'aaa', 'aaaaaaaaaaaa', 'user@example.com', 'https://example.com',
-            null, undefined, {}, [],
+            -10,
+            -1,
+            -0,
+            0,
+            0.5,
+            1,
+            3,
+            5,
+            9,
+            10,
+            11,
+            Infinity,
+            NaN,
+            '',
+            'a',
+            'aaa',
+            'aaaaaaaaaaaa',
+            'user@example.com',
+            'https://example.com',
+            null,
+            undefined,
+            {},
+            [],
         ];
 
         ALL.forEach(descriptor => {
@@ -779,9 +781,12 @@ describe('projection readiness', () => {
     it('declares a schema type consistent with its own kind', () => {
         ALL.forEach(descriptor => {
             const fragment = descriptor.schema!();
-            const expected = descriptor.kind === 'string'
-                ? 'string'
-                : descriptor.constraint === 'integer' ? 'integer' : 'number';
+            const expected =
+                descriptor.kind === 'string'
+                    ? 'string'
+                    : descriptor.constraint === 'integer'
+                      ? 'integer'
+                      : 'number';
 
             expect(fragment.type).toBe(expected);
         });

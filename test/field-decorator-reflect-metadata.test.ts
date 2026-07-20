@@ -60,7 +60,9 @@ describe('field contracts under Reflect.decorate', () => {
         basket.itemCount = 7;
 
         expect(basket.itemCount).toBe(7);
-        expect(() => { basket.itemCount = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            basket.itemCount = -1;
+        }).toThrow(/expected a number greater than 0/);
         expect(basket.itemCount).toBe(7);
     });
 
@@ -74,9 +76,13 @@ describe('field contracts under Reflect.decorate', () => {
     });
 
     it('records stacked constraints in declaration order on this branch too', () => {
-        expect(getFieldConstraints(Basket.prototype, 'weight').map(c => c.constraint))
-            .toEqual(['min', 'max']);
-        expect(() => { new Basket().weight = 5; }).toThrow(/greater than or equal to 10/);
+        expect(getFieldConstraints(Basket.prototype, 'weight').map(c => c.constraint)).toEqual([
+            'min',
+            'max',
+        ]);
+        expect(() => {
+            new Basket().weight = 5;
+        }).toThrow(/greater than or equal to 10/);
     });
 
     it('rescues a static initializer on this branch too', () => {
@@ -86,11 +92,12 @@ describe('field contracts under Reflect.decorate', () => {
         }
 
         expect(Config.limit).toBe(10);
-        expect(() => { Config.limit = 0; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            Config.limit = 0;
+        }).toThrow(/expected a number greater than 0/);
     });
 
     it('leaves Object.defineProperty unpatched', () => {
-        expect(Object.defineProperty)
-            .toBe(Object.getOwnPropertyDescriptor(Object, 'defineProperty')!.value);
+        expect(Object.defineProperty).toBe(Object.getOwnPropertyDescriptor(Object, 'defineProperty')!.value);
     });
 });

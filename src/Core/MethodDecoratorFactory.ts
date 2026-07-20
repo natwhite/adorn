@@ -109,9 +109,9 @@ export function CreateMethodDecorator(behavior: MethodBehavior): MethodDecorator
         if (!descriptor || typeof descriptor.value !== 'function') {
             throw new TypeError(
                 `adorn: a method decorator was applied to ${describeMember(target, propertyKey)}, which is ` +
-                'not a method. Arrow-function class properties are instance fields and carry no ' +
-                'prototype descriptor at decoration time; they are not supported as decoration ' +
-                'targets (plan P1.6 / Tier 2).',
+                    'not a method. Arrow-function class properties are instance fields and carry no ' +
+                    'prototype descriptor at decoration time; they are not supported as decoration ' +
+                    'targets (plan P1.6 / Tier 2).',
             );
         }
 
@@ -131,7 +131,9 @@ export function wrapMethod(
     behavior: MethodBehavior,
 ): Function {
     if (typeof original !== 'function') {
-        throw new TypeError(`adorn: cannot wrap ${describeMember(target, propertyKey)} — it is not a function`);
+        throw new TypeError(
+            `adorn: cannot wrap ${describeMember(target, propertyKey)} — it is not a function`,
+        );
     }
     assertBehavior(behavior, 'wrapMethod');
 
@@ -187,9 +189,9 @@ export function installMethodWrapper(
     if (!found) {
         throw new TypeError(
             `adorn: cannot install a contract on ${describeMember(target, propertyKey)} — no such method ` +
-            'was found on the prototype chain. If this is an arrow-function class property ' +
-            '(`foo = (x) => ...`) it is an instance field, absent from the prototype when the class ' +
-            'decorator runs, and is not supported as a decoration target (plan P1.6 / Tier 2).',
+                'was found on the prototype chain. If this is an arrow-function class property ' +
+                '(`foo = (x) => ...`) it is an instance field, absent from the prototype when the class ' +
+                'decorator runs, and is not supported as a decoration target (plan P1.6 / Tier 2).',
         );
     }
 
@@ -197,7 +199,7 @@ export function installMethodWrapper(
     if (own && own.configurable === false) {
         throw new TypeError(
             `adorn: cannot install a contract on ${describeMember(target, propertyKey)} — the property is ` +
-            'non-configurable and cannot be replaced.',
+                'non-configurable and cannot be replaced.',
         );
     }
 
@@ -264,8 +266,9 @@ const RESERVED_FUNCTION_PROPERTIES = ['length', 'name', 'prototype', 'arguments'
  * non-enumerable and symbol-keyed properties survive instead of being quietly dropped.
  */
 function adoptIdentity(wrapper: Function, original: Function): void {
-    const keys: Array<string | symbol> = (Object.getOwnPropertyNames(original) as Array<string | symbol>)
-        .concat(Object.getOwnPropertySymbols(original));
+    const keys: Array<string | symbol> = (
+        Object.getOwnPropertyNames(original) as Array<string | symbol>
+    ).concat(Object.getOwnPropertySymbols(original));
 
     for (const key of keys) {
         if (typeof key === 'string' && RESERVED_FUNCTION_PROPERTIES.indexOf(key) !== -1) continue;
@@ -284,7 +287,9 @@ function adoptIdentity(wrapper: Function, original: Function): void {
     // recovered by parsing `Function.prototype.toString` (SMELL-1), so a wrapper that reported its
     // own source would degrade every later message to the wrapper's signature.
     Object.defineProperty(wrapper, 'toString', {
-        value: function () { return original.toString(); },
+        value: function () {
+            return original.toString();
+        },
         writable: true,
         enumerable: false,
         configurable: true,

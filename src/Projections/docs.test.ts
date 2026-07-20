@@ -29,13 +29,7 @@ import {
 } from '../Core/ContractRegistry';
 import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../Contracts/number';
 import {Matches, StringMinLength} from '../Contracts/string';
-import {
-    ClassDoc,
-    documentClass,
-    documentContracts,
-    generateMarkdown,
-    renderMarkdown,
-} from './docs';
+import {ClassDoc, documentClass, documentContracts, generateMarkdown, renderMarkdown} from './docs';
 
 beforeEach(resetRegistry);
 
@@ -100,7 +94,9 @@ describe('rendering the ported built-in constraints', () => {
     cases.forEach(testCase => {
         it(`models ${testCase.name}`, () => {
             class Task {
-                run(_value: unknown) { /* no-op */ }
+                run(_value: unknown) {
+                    /* no-op */
+                }
             }
 
             recordParameterConstraint(Task.prototype, 'run', 0, testCase.descriptor);
@@ -115,7 +111,9 @@ describe('rendering the ported built-in constraints', () => {
 
         it(`renders ${testCase.name} into markdown`, () => {
             class Task {
-                run(_value: unknown) { /* no-op */ }
+                run(_value: unknown) {
+                    /* no-op */
+                }
             }
 
             recordParameterConstraint(Task.prototype, 'run', 0, testCase.descriptor);
@@ -144,7 +142,9 @@ describe('rendering the ported built-in constraints', () => {
 
 describe('a method with several parameters', () => {
     class Task {
-        send(_message: string, _count: number, _retries: number) { /* no-op */ }
+        send(_message: string, _count: number, _retries: number) {
+            /* no-op */
+        }
     }
 
     beforeEach(() => {
@@ -164,13 +164,14 @@ describe('a method with several parameters', () => {
 
         expect(method.parameters.map(parameter => parameter.index)).toEqual([0, 1, 2]);
         expect(method.parameters.map(parameter => parameter.name)).toEqual(['message', 'count', 'retries']);
-        expect(method.parameters[1].constraints.map(constraint => constraint.constraint))
-            .toEqual(['min', 'max']);
+        expect(method.parameters[1].constraints.map(constraint => constraint.constraint)).toEqual([
+            'min',
+            'max',
+        ]);
     });
 
     it('builds a signature from the recovered names', () => {
-        expect(methodNamed(documentClass(Task), 'send').signature)
-            .toBe('Task.send(message, count, retries)');
+        expect(methodNamed(documentClass(Task), 'send').signature).toBe('Task.send(message, count, retries)');
     });
 
     it('surfaces the reflected type name, flagged as advisory by being name-only', () => {
@@ -194,21 +195,23 @@ describe('a method with several parameters', () => {
     it('renders the whole class as a stable markdown document', () => {
         markInstalled(Task.prototype, 'send');
 
-        expect(renderMarkdown([documentClass(Task)])).toBe([
-            '# Contracts',
-            '',
-            '## Task',
-            '',
-            '### Task.send(message, count, retries)',
-            '',
-            '| Parameter | Type | Constraint | Expectation |',
-            '| --- | --- | --- | --- |',
-            '| `message` (0) | `String` | `minLength` | a string of length greater than 10 |',
-            '| `count` (1) | `Number` | `min` | a number greater than or equal to 1 |',
-            '| `count` (1) | `Number` | `max` | a number less than or equal to 100 |',
-            '| `retries` (2) | `Number` | `greaterThan` | a number greater than 0 |',
-            '',
-        ].join('\n'));
+        expect(renderMarkdown([documentClass(Task)])).toBe(
+            [
+                '# Contracts',
+                '',
+                '## Task',
+                '',
+                '### Task.send(message, count, retries)',
+                '',
+                '| Parameter | Type | Constraint | Expectation |',
+                '| --- | --- | --- | --- |',
+                '| `message` (0) | `String` | `minLength` | a string of length greater than 10 |',
+                '| `count` (1) | `Number` | `min` | a number greater than or equal to 1 |',
+                '| `count` (1) | `Number` | `max` | a number less than or equal to 100 |',
+                '| `retries` (2) | `Number` | `greaterThan` | a number greater than 0 |',
+                '',
+            ].join('\n'),
+        );
     });
 });
 
@@ -222,13 +225,11 @@ describe('contracted fields', () => {
         const lines = markdown.split('\n');
         const start = lines.indexOf('### Fields');
         if (start < 0) return [];
-        return lines.slice(start + 1)
-            .filter(line => /^\| `/.test(line));
+        return lines.slice(start + 1).filter(line => /^\| `/.test(line));
     }
 
     it('models a field with its constraints, type, and installed flag', () => {
-        class Basket {
-        }
+        class Basket {}
 
         recordFieldConstraint(Basket.prototype, 'itemCount', GreaterThan(0));
         setFieldMetadata(Basket.prototype, 'itemCount', {type: Number});
@@ -245,8 +246,7 @@ describe('contracted fields', () => {
     });
 
     it('carries several constraints on one field, in recorded order', () => {
-        class Basket {
-        }
+        class Basket {}
 
         recordFieldConstraint(Basket.prototype, 'capacity', GreaterThanEqual(1));
         recordFieldConstraint(Basket.prototype, 'capacity', LessThanEqual(100));
@@ -257,8 +257,7 @@ describe('contracted fields', () => {
     });
 
     it('emits one table row per constraint, not per field', () => {
-        class Basket {
-        }
+        class Basket {}
 
         recordFieldConstraint(Basket.prototype, 'capacity', GreaterThanEqual(1));
         recordFieldConstraint(Basket.prototype, 'capacity', LessThanEqual(100));
@@ -274,8 +273,7 @@ describe('contracted fields', () => {
     it('documents static fields, which are recorded against the constructor', () => {
         // The other key band. A projection walking only the prototype would drop this row entirely
         // and nothing would throw to reveal it — which is why the walk lives in the registry (DEC-018).
-        class Widget {
-        }
+        class Widget {}
 
         recordFieldConstraint(Widget, 'limit', GreaterThanEqual(1));
         recordFieldConstraint(Widget.prototype, 'count', GreaterThan(0));
@@ -284,18 +282,18 @@ describe('contracted fields', () => {
 
         const classDoc = documentClass(Widget);
 
-        expect(classDoc.fields.map(field => ({name: field.name, isStatic: field.isStatic})))
-            .toEqual([
-                {name: 'count', isStatic: false},
-                {name: 'limit', isStatic: true},
-            ]);
-        expect(fieldRows(renderMarkdown([classDoc])).map(row => row.split('|')[1].trim()))
-            .toEqual(['`count`', '`limit` _(static)_']);
+        expect(classDoc.fields.map(field => ({name: field.name, isStatic: field.isStatic}))).toEqual([
+            {name: 'count', isStatic: false},
+            {name: 'limit', isStatic: true},
+        ]);
+        expect(fieldRows(renderMarkdown([classDoc])).map(row => row.split('|')[1].trim())).toEqual([
+            '`count`',
+            '`limit` _(static)_',
+        ]);
     });
 
     it('orders fields deterministically regardless of decoration order', () => {
-        class Widget {
-        }
+        class Widget {}
 
         recordFieldConstraint(Widget.prototype, 'zebra', GreaterThan(0));
         recordFieldConstraint(Widget.prototype, 'alpha', GreaterThan(0));
@@ -306,8 +304,7 @@ describe('contracted fields', () => {
     it('marks a field whose contracts are recorded but not installed, naming it', () => {
         // Same reasoning as the method warning: a document describing an unenforced guarantee is
         // worse than no document. Named individually because one table can hold both kinds.
-        class Widget {
-        }
+        class Widget {}
 
         recordFieldConstraint(Widget.prototype, 'unarmed', GreaterThan(0));
         recordFieldConstraint(Widget.prototype, 'armed', GreaterThan(0));
@@ -326,8 +323,7 @@ describe('contracted fields', () => {
         // `emitDecoratorMetadata` is unavailable under a transpile-only toolchain (DEC-004) and this
         // file runs without `reflect-metadata` at all, so there is genuinely no type to report. The
         // document must say so instead of inferring one from an assigned value.
-        class Basket {
-        }
+        class Basket {}
 
         recordFieldConstraint(Basket.prototype, 'itemCount', GreaterThan(0));
         markFieldInstalled(Basket.prototype, 'itemCount');
@@ -341,8 +337,7 @@ describe('contracted fields', () => {
     it('renders a symbol field key', () => {
         const key = Symbol('hidden');
 
-        class Basket {
-        }
+        class Basket {}
 
         recordFieldConstraint(Basket.prototype, key, GreaterThan(0));
         markFieldInstalled(Basket.prototype, key);
@@ -354,8 +349,7 @@ describe('contracted fields', () => {
     it('handles a field recorded with metadata but no constraints', () => {
         // Reachable via `setFieldMetadata` alone. An empty table with a header and no rows would be
         // a worse artifact than saying plainly that nothing is constrained.
-        class Basket {
-        }
+        class Basket {}
 
         setFieldMetadata(Basket.prototype, 'itemCount', {type: Number});
 
@@ -368,7 +362,9 @@ describe('contracted fields', () => {
 
     it('renders both bands for a class carrying methods and fields', () => {
         class Task {
-            send(_message: string) { /* no-op */ }
+            send(_message: string) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'send', 0, StringMinLength(10));
@@ -379,29 +375,30 @@ describe('contracted fields', () => {
         setFieldMetadata(Task.prototype, 'retries', {type: Number});
         markFieldInstalled(Task.prototype, 'retries');
 
-        expect(renderMarkdown([documentClass(Task)])).toBe([
-            '# Contracts',
-            '',
-            '## Task',
-            '',
-            '### Task.send(message)',
-            '',
-            '| Parameter | Type | Constraint | Expectation |',
-            '| --- | --- | --- | --- |',
-            '| `message` (0) | `String` | `minLength` | a string of length greater than 10 |',
-            '',
-            '### Fields',
-            '',
-            '| Field | Type | Constraint | Expectation |',
-            '| --- | --- | --- | --- |',
-            '| `retries` | `Number` | `greaterThan` | a number greater than 0 |',
-            '',
-        ].join('\n'));
+        expect(renderMarkdown([documentClass(Task)])).toBe(
+            [
+                '# Contracts',
+                '',
+                '## Task',
+                '',
+                '### Task.send(message)',
+                '',
+                '| Parameter | Type | Constraint | Expectation |',
+                '| --- | --- | --- | --- |',
+                '| `message` (0) | `String` | `minLength` | a string of length greater than 10 |',
+                '',
+                '### Fields',
+                '',
+                '| Field | Type | Constraint | Expectation |',
+                '| --- | --- | --- | --- |',
+                '| `retries` | `Number` | `greaterThan` | a number greater than 0 |',
+                '',
+            ].join('\n'),
+        );
     });
 
     it('escapes a pipe in a field expectation so it cannot split a row', () => {
-        class Basket {
-        }
+        class Basket {}
 
         recordFieldConstraint(Basket.prototype, 'code', Matches('^a|b$'));
         markFieldInstalled(Basket.prototype, 'code');
@@ -422,7 +419,9 @@ describe('contracted fields', () => {
 describe('the empty case', () => {
     it('models a class with no contracts as empty method AND field lists, not a failure', () => {
         class Plain {
-            run() { /* no-op */ }
+            run() {
+                /* no-op */
+            }
         }
 
         const classDoc = documentClass(Plain);
@@ -436,8 +435,7 @@ describe('the empty case', () => {
         // The regression guard for this task. `_No contracts recorded._` keyed on `methods.length`
         // alone, so a class contracted purely through fields was enforced at runtime and reported as
         // having nothing — a document that looks complete and is not (DEC-011).
-        class Basket {
-        }
+        class Basket {}
 
         recordFieldConstraint(Basket.prototype, 'itemCount', GreaterThan(0));
         markFieldInstalled(Basket.prototype, 'itemCount');
@@ -451,7 +449,9 @@ describe('the empty case', () => {
 
     it('renders a class with no contracts without inventing any', () => {
         class Plain {
-            run() { /* no-op */ }
+            run() {
+                /* no-op */
+            }
         }
 
         const markdown = renderMarkdown([documentClass(Plain)]);
@@ -472,7 +472,9 @@ describe('the empty case', () => {
 
     it('handles a parameter recorded with metadata but no constraints', () => {
         class Task {
-            run(_value: unknown) { /* no-op */ }
+            run(_value: unknown) {
+                /* no-op */
+            }
         }
 
         setParameterMetadata(Task.prototype, 'run', 0, {name: 'value', type: String});
@@ -491,11 +493,15 @@ describe('the empty case', () => {
 describe('walking the registry (DEC-011)', () => {
     it('documents exactly the classes registered for enumeration', () => {
         class Documented {
-            run(_value: number) { /* no-op */ }
+            run(_value: number) {
+                /* no-op */
+            }
         }
 
         class Unregistered {
-            run(_value: number) { /* no-op */ }
+            run(_value: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Documented.prototype, 'run', 0, GreaterThan(0));
@@ -507,7 +513,9 @@ describe('walking the registry (DEC-011)', () => {
 
     it('generateMarkdown walks the registry in one call', () => {
         class Task {
-            send(_message: string) { /* no-op */ }
+            send(_message: string) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'send', 0, StringMinLength(10));
@@ -540,7 +548,9 @@ describe('degraded and unusual registry entries', () => {
         // there is no other runtime source (plan §1.4). The fallback must be visible in the model,
         // not silently indistinguishable from a real name.
         class Task {
-            run(_value: number) { /* no-op */ }
+            run(_value: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
@@ -554,7 +564,9 @@ describe('degraded and unusual registry entries', () => {
 
     it('fills undecorated leading positions in the signature', () => {
         class Task {
-            run(_ignored: string, _value: number) { /* no-op */ }
+            run(_ignored: string, _value: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'run', 1, GreaterThan(0));
@@ -572,7 +584,9 @@ describe('degraded and unusual registry entries', () => {
         // Until P1.3 lands nothing installs, so this is currently the norm. It must be loud: a
         // document describing an unenforced guarantee is worse than no document.
         class Task {
-            run(_value: number) { /* no-op */ }
+            run(_value: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
@@ -589,9 +603,13 @@ describe('degraded and unusual registry entries', () => {
 
     it('documents static methods, which are recorded against the constructor', () => {
         class Task {
-            static parse(_input: string) { /* no-op */ }
+            static parse(_input: string) {
+                /* no-op */
+            }
 
-            run(_value: number) { /* no-op */ }
+            run(_value: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task, 'parse', 0, StringMinLength(3));
@@ -599,19 +617,22 @@ describe('degraded and unusual registry entries', () => {
 
         const classDoc = documentClass(Task);
 
-        expect(classDoc.methods.map(method => ({name: method.name, isStatic: method.isStatic})))
-            .toEqual([
-                {name: 'run', isStatic: false},
-                {name: 'parse', isStatic: true},
-            ]);
+        expect(classDoc.methods.map(method => ({name: method.name, isStatic: method.isStatic}))).toEqual([
+            {name: 'run', isStatic: false},
+            {name: 'parse', isStatic: true},
+        ]);
         expect(renderMarkdown([classDoc])).toContain('### Task.parse(arg0) _(static)_');
     });
 
     it('orders methods deterministically regardless of decoration order', () => {
         class Task {
-            zebra(_value: number) { /* no-op */ }
+            zebra(_value: number) {
+                /* no-op */
+            }
 
-            alpha(_value: number) { /* no-op */ }
+            alpha(_value: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'zebra', 0, GreaterThan(0));
@@ -623,20 +644,20 @@ describe('degraded and unusual registry entries', () => {
     it('renders a symbol method key', () => {
         const key = Symbol('send');
 
-        class Task {
-        }
+        class Task {}
 
         recordParameterConstraint(Task.prototype, key, 0, GreaterThan(0));
 
-        expect(methodNamed(documentClass(Task), 'Symbol(send)').signature)
-            .toBe('Task.Symbol(send)(arg0)');
+        expect(methodNamed(documentClass(Task), 'Symbol(send)').signature).toBe('Task.Symbol(send)(arg0)');
     });
 
     it('carries the reserved pre/post slots, empty, without rendering them', () => {
         // Postconditions are the top Tier 2 item (IDEA-4) and the registry already reserves the
         // slot. Carrying it here means adding them extends the renderer, not the model.
         class Task {
-            run(_value: number) { /* no-op */ }
+            run(_value: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
@@ -648,7 +669,7 @@ describe('degraded and unusual registry entries', () => {
     });
 
     it('names an anonymous class rather than emitting an empty heading', () => {
-        const Anonymous = (() => class { })();
+        const Anonymous = (() => class {})();
         Object.defineProperty(Anonymous, 'name', {value: ''});
 
         expect(documentClass(Anonymous).name).toBe('(anonymous class)');
@@ -674,22 +695,26 @@ describe('markdown escaping', () => {
             expectation: 'a string matching /^a|b$/',
         };
 
-        const markdown = renderMarkdown([{
-            name: 'Task',
-            // `fields` is required rather than optional on `ClassDoc`: an optional band is one a
-            // future projection can silently forget to populate, which is the failure this whole
-            // task exists to remove. The cost is this one line.
-            fields: [],
-            methods: [{
-                name: 'run',
-                isStatic: false,
-                signature: 'Task.run(value)',
-                installed: true,
-                parameters: [{index: 0, name: 'value', nameRecovered: true, constraints: [piped]}],
-                pre: [],
-                post: [],
-            }],
-        }]);
+        const markdown = renderMarkdown([
+            {
+                name: 'Task',
+                // `fields` is required rather than optional on `ClassDoc`: an optional band is one a
+                // future projection can silently forget to populate, which is the failure this whole
+                // task exists to remove. The cost is this one line.
+                fields: [],
+                methods: [
+                    {
+                        name: 'run',
+                        isStatic: false,
+                        signature: 'Task.run(value)',
+                        installed: true,
+                        parameters: [{index: 0, name: 'value', nameRecovered: true, constraints: [piped]}],
+                        pre: [],
+                        post: [],
+                    },
+                ],
+            },
+        ]);
 
         const row = markdown.split('\n').filter(line => /^\| `value`/.test(line))[0];
 

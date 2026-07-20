@@ -219,9 +219,7 @@ export function resetContractDiagnostics(): void {
  */
 function diagnosticsActive(): boolean {
     if (!enabled) return false;
-    const env = typeof process !== 'undefined' && process && process.env
-        ? process.env.NODE_ENV
-        : undefined;
+    const env = typeof process !== 'undefined' && process && process.env ? process.env.NODE_ENV : undefined;
     return env !== 'production';
 }
 
@@ -243,6 +241,6 @@ function scheduleSweep(): void {
 
 function describeOwner(target: object): string {
     if (typeof target === 'function') return (target as Function).name || '<anonymous class>';
-    const constructor = (target as { constructor?: Function }).constructor;
+    const constructor = (target as {constructor?: Function}).constructor;
     return (constructor && constructor.name) || '<anonymous class>';
 }

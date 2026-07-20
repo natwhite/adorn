@@ -83,7 +83,10 @@ function rowsUnder(markdown: string, heading: string): Row[] {
         if (/^#{2,3} /.test(line)) break;
         if (!/^\| `/.test(line)) continue;
 
-        const cells = line.split(/(?<!\\)\|/).slice(1, -1).map(cell => cell.trim());
+        const cells = line
+            .split(/(?<!\\)\|/)
+            .slice(1, -1)
+            .map(cell => cell.trim());
         rows.push({name: cells[0], type: cells[1], constraint: cells[2], expectation: cells[3]});
     }
     return rows;
@@ -134,7 +137,7 @@ describe('a contracted field reaches the generated document (GAP-9)', () => {
         expect(fieldRows(markdown).map(row => unquote(row.name))).toEqual(['itemCount']);
     });
 
-    it('carries the constraint identity and the descriptor\'s own expectation', () => {
+    it("carries the constraint identity and the descriptor's own expectation", () => {
         class Basket {
             @Enforce.greaterThan(0)
             itemCount: number = 1;

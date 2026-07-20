@@ -195,11 +195,9 @@ let contractedClasses = new Set<Function>();
 
 let classEnumerationEnabled = true;
 
-const EMPTY_CONTRACTS: ReadonlyMap<MethodKey, MethodContract> =
-    new Map<MethodKey, MethodContract>();
+const EMPTY_CONTRACTS: ReadonlyMap<MethodKey, MethodContract> = new Map<MethodKey, MethodContract>();
 
-const EMPTY_FIELD_CONTRACTS: ReadonlyMap<FieldKey, FieldContract> =
-    new Map<FieldKey, FieldContract>();
+const EMPTY_FIELD_CONTRACTS: ReadonlyMap<FieldKey, FieldContract> = new Map<FieldKey, FieldContract>();
 
 // ---------------------------------------------------------------------------
 // Reads — the public introspection surface
@@ -411,10 +409,7 @@ export function getEffectiveFieldConstraints(
  *
  * Returns `undefined` when nothing on the chain declares the field.
  */
-export function getEffectiveFieldContract(
-    target: ContractTarget,
-    key: FieldKey,
-): FieldContract | undefined {
+export function getEffectiveFieldContract(target: ContractTarget, key: FieldKey): FieldContract | undefined {
     if (!isRegisterableTarget(target)) return undefined;
 
     let nearest: MutableFieldContract | undefined;
@@ -570,8 +565,8 @@ export function recordParameterConstraint(
     if (!constraint || typeof constraint.predicate !== 'function') {
         throw new TypeError(
             'recordParameterConstraint: expected a ConstraintDescriptor. Bare predicates are not ' +
-            'accepted — a closure carries no identity or params, so nothing can be projected from it ' +
-            '(DEC-006).',
+                'accepted — a closure carries no identity or params, so nothing can be projected from it ' +
+                '(DEC-006).',
         );
     }
     if (position !== 'append' && position !== 'prepend') {
@@ -642,8 +637,8 @@ export function recordFieldConstraint(
     if (!constraint || typeof constraint.predicate !== 'function') {
         throw new TypeError(
             'recordFieldConstraint: expected a ConstraintDescriptor. Bare predicates are not ' +
-            'accepted — a closure carries no identity or params, so nothing can be projected from it ' +
-            '(DEC-006).',
+                'accepted — a closure carries no identity or params, so nothing can be projected from it ' +
+                '(DEC-006).',
         );
     }
     if (position !== 'append' && position !== 'prepend') {
@@ -663,11 +658,7 @@ export function recordFieldConstraint(
  *
  * `undefined` leaves the stored value alone — the same honest-degradation rule.
  */
-export function setFieldMetadata(
-    target: ContractTarget,
-    key: FieldKey,
-    metadata: {type?: Function},
-): void {
+export function setFieldMetadata(target: ContractTarget, key: FieldKey, metadata: {type?: Function}): void {
     const entry = fieldEntry(target, key);
     if (metadata.type !== undefined) entry.type = metadata.type;
 }
@@ -770,7 +761,9 @@ function methodEntry(target: ContractTarget, key: MethodKey): MutableMethodContr
  */
 function parameterEntry(contract: MutableMethodContract, index: number): MutableParameterContract {
     if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
-        throw new TypeError(`ContractRegistry: parameter index must be a non-negative integer, received ${String(index)}`);
+        throw new TypeError(
+            `ContractRegistry: parameter index must be a non-negative integer, received ${String(index)}`,
+        );
     }
     for (const existing of contract.params) {
         if (existing.index === index) return existing;

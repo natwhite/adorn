@@ -154,20 +154,28 @@ function isNumeric(value: unknown): value is number {
 // ---------------------------------------------------------------------------
 
 /** `min` is inclusive. Backs `min`, and `between` via {@link within}. */
-const atLeast = (params: Readonly<MinParams>): Predicate =>
-    (value: unknown) => isNumeric(value) && value >= params.min;
+const atLeast =
+    (params: Readonly<MinParams>): Predicate =>
+    (value: unknown) =>
+        isNumeric(value) && value >= params.min;
 
 /** `max` is inclusive. Backs `max`, and `between` via {@link within}. */
-const atMost = (params: Readonly<MaxParams>): Predicate =>
-    (value: unknown) => isNumeric(value) && value <= params.max;
+const atMost =
+    (params: Readonly<MaxParams>): Predicate =>
+    (value: unknown) =>
+        isNumeric(value) && value <= params.max;
 
 /** `exclusiveMin` is excluded. Backs `greaterThan`. */
-const above = (params: Readonly<ExclusiveMinParams>): Predicate =>
-    (value: unknown) => isNumeric(value) && value > params.exclusiveMin;
+const above =
+    (params: Readonly<ExclusiveMinParams>): Predicate =>
+    (value: unknown) =>
+        isNumeric(value) && value > params.exclusiveMin;
 
 /** `exclusiveMax` is excluded. Backs `lessThan`. */
-const below = (params: Readonly<ExclusiveMaxParams>): Predicate =>
-    (value: unknown) => isNumeric(value) && value < params.exclusiveMax;
+const below =
+    (params: Readonly<ExclusiveMaxParams>): Predicate =>
+    (value: unknown) =>
+        isNumeric(value) && value < params.exclusiveMax;
 
 /**
  * Both bounds inclusive.
@@ -183,8 +191,7 @@ const within = (params: Readonly<RangeParams>): Predicate => {
 };
 
 /** No params: the rule is fully determined by its identity. */
-const whole = (): Predicate =>
-    (value: unknown) => isNumeric(value) && Number.isInteger(value);
+const whole = (): Predicate => (value: unknown) => isNumeric(value) && Number.isInteger(value);
 
 /**
  * Exact for integer operands; tolerant for fractional ones.

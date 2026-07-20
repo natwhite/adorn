@@ -85,9 +85,11 @@ export class Verify {
         // Cut the stack at this frame so the trace points at the caller's line rather than at
         // adorn's internals — the same boundary technique as `DecoratorFactory.attributeToCaller`,
         // applied at construction because the Error originates here. V8-only; a no-op elsewhere.
-        const capture = (Error as unknown as {
-            captureStackTrace?: (target: object, constructorOpt?: Function) => void
-        }).captureStackTrace;
+        const capture = (
+            Error as unknown as {
+                captureStackTrace?: (target: object, constructorOpt?: Function) => void;
+            }
+        ).captureStackTrace;
         if (typeof capture === 'function') capture(error, Verify.that);
 
         throw error;

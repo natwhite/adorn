@@ -50,10 +50,8 @@ describe('the constraint store', () => {
     });
 
     it('refuses a bare closure, so no field constraint can be unprojectable', () => {
-        expect(() => recordFieldConstraint({}, 'count', (() => true) as any))
-            .toThrow(/ConstraintDescriptor/);
-        expect(() => CreateFieldDecorator(((v: any) => v > 0) as any))
-            .toThrow(/ConstraintDescriptor/);
+        expect(() => recordFieldConstraint({}, 'count', (() => true) as any)).toThrow(/ConstraintDescriptor/);
+        expect(() => CreateFieldDecorator(((v: any) => v > 0) as any)).toThrow(/ConstraintDescriptor/);
     });
 
     it('is own-scoped — a subclass prototype does not read its parent entry', () => {
@@ -125,8 +123,12 @@ describe('installation', () => {
         const target: any = {};
         Object.defineProperty(target, 'count', {
             configurable: true,
-            get() { return 1; },
-            set() { /* noop */ },
+            get() {
+                return 1;
+            },
+            set() {
+                /* noop */
+            },
         });
         recordFieldConstraint(target, 'count', GreaterThan(0));
 
@@ -148,7 +150,9 @@ describe('installation', () => {
     });
 
     it('installFieldContracts is safe to re-drive, so @Contract() could call it', () => {
-        class Host { count: number; }
+        class Host {
+            count: number;
+        }
         recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
 
         installFieldContracts(Host);
@@ -190,13 +194,17 @@ describe('the accessor — BUG-1', () => {
 
     it('rejects an invalid assignment', () => {
         const widget = new Widget();
-        expect(() => { widget.count = -1; }).toThrow(/Widget\.count expected a number greater than 0/);
+        expect(() => {
+            widget.count = -1;
+        }).toThrow(/Widget\.count expected a number greater than 0/);
     });
 
     it('leaves the previously stored value intact when an assignment is rejected', () => {
         const widget = new Widget();
         widget.count = 7;
-        expect(() => { widget.count = -1; }).toThrow();
+        expect(() => {
+            widget.count = -1;
+        }).toThrow();
         expect(widget.count).toBe(7);
     });
 
@@ -215,7 +223,9 @@ describe('the accessor — BUG-1', () => {
         const widget = new Widget();
         widget.count = 5;
         widget.count = 6;
-        expect(() => { widget.count = -1; }).toThrow();
+        expect(() => {
+            widget.count = -1;
+        }).toThrow();
 
         // The own property must remain an accessor. A data property here would shadow the
         // prototype setter and silently disable validation from the second write onwards.
@@ -234,8 +244,11 @@ describe('the accessor — BUG-1', () => {
 
     it('names the field in the violation message', () => {
         const widget = new Widget();
-        expect(() => { widget.label = 'ab'; })
-            .toThrow("Value Error: Widget.label expected a string of length greater than 3 but received 'ab' instead");
+        expect(() => {
+            widget.label = 'ab';
+        }).toThrow(
+            "Value Error: Widget.label expected a string of length greater than 3 but received 'ab' instead",
+        );
     });
 
     it('supports symbol-keyed fields', () => {
@@ -247,7 +260,9 @@ describe('the accessor — BUG-1', () => {
         const instance = Object.create(target);
         instance[key] = 5;
         expect(instance[key]).toBe(5);
-        expect(() => { instance[key] = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            instance[key] = -1;
+        }).toThrow(/expected a number greater than 0/);
     });
 });
 
@@ -369,7 +384,9 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         // Declaration order in the registry, and the first-declared constraint is the one that
         // reports — so the document and the runtime tell the same story (DEC-017).
         expect(field.contract.constraints.map(c => c.constraint)).toEqual(['min', 'max']);
-        expect(() => { new Reading().value = 5; }).toThrow(/greater than or equal to 10/);
+        expect(() => {
+            new Reading().value = 5;
+        }).toThrow(/greater than or equal to 10/);
     });
 
     it('does not conjure a field contract for an installed-but-unrecorded field', () => {
@@ -399,20 +416,26 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         }
 
         // Own-scoped storage is unchanged — each declaration landed on the object it was written on.
-        expect(getFieldContract(Base.prototype, 'value')!.constraints.map(c => c.constraint))
-            .toEqual(['min']);
-        expect(getFieldContract(Sub.prototype, 'value')!.constraints.map(c => c.constraint))
-            .toEqual(['max']);
+        expect(getFieldContract(Base.prototype, 'value')!.constraints.map(c => c.constraint)).toEqual([
+            'min',
+        ]);
+        expect(getFieldContract(Sub.prototype, 'value')!.constraints.map(c => c.constraint)).toEqual(['max']);
 
         // What a projection reads is the union, base-most first, so a generated document describes
         // what is actually enforced. Reporting only `Sub`'s own `max` here would recreate BUG-16's
         // failure shape — enforced, and missing from an artifact that looks complete.
-        expect(getFieldContractsForClass(Sub)[0].contract.constraints.map(c => c.params))
-            .toEqual([{min: 10}, {max: 100}]);
+        expect(getFieldContractsForClass(Sub)[0].contract.constraints.map(c => c.params)).toEqual([
+            {min: 10},
+            {max: 100},
+        ]);
 
         const sub = new Sub();
-        expect(() => { sub.value = 5; }).toThrow(/greater than or equal to 10/);
-        expect(() => { sub.value = 500; }).toThrow(/less than or equal to 100/);
+        expect(() => {
+            sub.value = 5;
+        }).toThrow(/greater than or equal to 10/);
+        expect(() => {
+            sub.value = 500;
+        }).toThrow(/less than or equal to 100/);
         sub.value = 42;
         expect(sub.value).toBe(42);
     });
@@ -431,7 +454,9 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         expect(entries[0].contract.constraints.map(c => c.params)).toEqual([{min: 10}]);
         expect(entries[0].contract.installed).toBe(true);
 
-        expect(() => { new Sub().value = 5; }).toThrow(/greater than or equal to 10/);
+        expect(() => {
+            new Sub().value = 5;
+        }).toThrow(/greater than or equal to 10/);
     });
 
     it('lists a redeclared field once, not twice', () => {
@@ -460,8 +485,12 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         }
 
         expect(getFieldContractsForClass(Sub)[0].isStatic).toBe(true);
-        expect(() => { Sub.limit = 5; }).toThrow(/greater than or equal to 10/);
-        expect(() => { Sub.limit = 500; }).toThrow(/less than or equal to 100/);
+        expect(() => {
+            Sub.limit = 5;
+        }).toThrow(/greater than or equal to 10/);
+        expect(() => {
+            Sub.limit = 500;
+        }).toThrow(/less than or equal to 100/);
 
         // BUG-17: the subclass's own static initializer survives. `Sub.limit = 50` is emitted before
         // the decorator and lands on Base's inherited accessor, so by decoration time `Sub` carries
@@ -491,8 +520,12 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         const target: any = {};
         Object.defineProperty(target, 'count', {
             configurable: true,
-            get() { return 1; },
-            set() { /* noop */ },
+            get() {
+                return 1;
+            },
+            set() {
+                /* noop */
+            },
         });
         recordFieldConstraint(target, 'count', GreaterThan(0));
 
@@ -511,12 +544,13 @@ describe('field contracts are visible to projections (GAP-9)', () => {
         recordFieldConstraint(derived, 'count', LessThanEqual(10));
 
         expect(getFieldConstraints(derived, 'count').map(c => c.constraint)).toEqual(['max']);
-        expect(getEffectiveFieldConstraints(derived, 'count').map(c => c.constraint))
-            .toEqual(['greaterThan', 'max']);
+        expect(getEffectiveFieldConstraints(derived, 'count').map(c => c.constraint)).toEqual([
+            'greaterThan',
+            'max',
+        ]);
 
         // ...and the ancestor's own view is untouched by the descendant's declaration.
-        expect(getEffectiveFieldConstraints(base, 'count').map(c => c.constraint))
-            .toEqual(['greaterThan']);
+        expect(getEffectiveFieldConstraints(base, 'count').map(c => c.constraint)).toEqual(['greaterThan']);
     });
 });
 

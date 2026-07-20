@@ -96,12 +96,16 @@ function isText(value: unknown): value is string {
 // ---------------------------------------------------------------------------
 
 /** `minLength` is inclusive: a string of exactly `minLength` passes. Shared with `notEmpty`. */
-const atLeastLength = (params: Readonly<MinLengthParams>): Predicate =>
-    (value: unknown) => isText(value) && value.length >= params.minLength;
+const atLeastLength =
+    (params: Readonly<MinLengthParams>): Predicate =>
+    (value: unknown) =>
+        isText(value) && value.length >= params.minLength;
 
 /** `maxLength` is inclusive: a string of exactly `maxLength` passes. */
-const atMostLength = (params: Readonly<MaxLengthParams>): Predicate =>
-    (value: unknown) => isText(value) && value.length <= params.maxLength;
+const atMostLength =
+    (params: Readonly<MaxLengthParams>): Predicate =>
+    (value: unknown) =>
+        isText(value) && value.length <= params.maxLength;
 
 /**
  * Whole-value match. Shared by `matches` and `email`, so the two cannot enforce differently.
@@ -213,9 +217,8 @@ export const matchesConstraint = defineConstraint<PatternParams>({
      * fragment that rejects `FOO` while enforcement accepts it — over-claiming, which the rule in
      * the module header forbids. The fragment degrades to `{type: 'string'}` instead.
      */
-    schema: params => params.pattern.flags === ''
-        ? {type: 'string', pattern: params.pattern.source}
-        : {type: 'string'},
+    schema: params =>
+        params.pattern.flags === '' ? {type: 'string', pattern: params.pattern.source} : {type: 'string'},
 });
 
 /**
@@ -281,9 +284,7 @@ function toPatternSpec(pattern: RegExp | string, flags?: string): PatternSpec {
 
     if (pattern instanceof RegExp) {
         if (flags !== undefined) {
-            throw new TypeError(
-                'Matches: pass flags on the RegExp itself or as a source string, not both',
-            );
+            throw new TypeError('Matches: pass flags on the RegExp itself or as a source string, not both');
         }
         source = pattern.source;
         resolved = pattern.flags;
@@ -297,8 +298,8 @@ function toPatternSpec(pattern: RegExp | string, flags?: string): PatternSpec {
     if (/[gy]/.test(resolved)) {
         throw new TypeError(
             "Matches: the 'g' and 'y' flags are not supported — RegExp.test advances `lastIndex` " +
-            'under them, so the same value would validate differently on successive calls. Remove ' +
-            'them; they have no meaning for a whole-value check.',
+                'under them, so the same value would validate differently on successive calls. Remove ' +
+                'them; they have no meaning for a whole-value check.',
         );
     }
 

@@ -60,7 +60,7 @@ class MockObservable<T = any> {
     constructor(private readonly onSubscribe: (subscriber: MockSubscriber<T>) => (() => void) | void) {}
 
     subscribe(observerOrNext?: any): {unsubscribe: () => void} {
-        const sink = typeof observerOrNext === 'function' ? {next: observerOrNext} : (observerOrNext || {});
+        const sink = typeof observerOrNext === 'function' ? {next: observerOrNext} : observerOrNext || {};
         const teardown = this.onSubscribe(new MockSubscriber<T>(sink));
         return {
             unsubscribe: () => {
@@ -75,7 +75,7 @@ class MockSubject {
     private readonly sinks: any[] = [];
 
     subscribe(observerOrNext?: any): {unsubscribe: () => void} {
-        const sink = typeof observerOrNext === 'function' ? {next: observerOrNext} : (observerOrNext || {});
+        const sink = typeof observerOrNext === 'function' ? {next: observerOrNext} : observerOrNext || {};
         this.sinks.push(sink);
         return {
             unsubscribe: () => {
@@ -134,11 +134,14 @@ function atLeastSlept(ms: number): number {
  * reasons that have nothing to do with the code under test.
  */
 function busyWait(ms: number): void {
-    const clock = typeof performance !== 'undefined' && typeof performance.now === 'function'
-        ? () => performance.now()
-        : () => Date.now();
+    const clock =
+        typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? () => performance.now()
+            : () => Date.now();
     const until = clock() + ms;
-    while (clock() < until) { /* spin */ }
+    while (clock() < until) {
+        /* spin */
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +170,9 @@ describe('synchronous methods', () => {
     it('labels the record with Owner.member by default', () => {
         class Task {
             @Time()
-            work() { return 1; }
+            work() {
+                return 1;
+            }
         }
 
         new Task().work();
@@ -180,7 +185,9 @@ describe('synchronous methods', () => {
     it('honours an explicit label', () => {
         class Task {
             @Time({label: 'critical-path'})
-            work() { return 1; }
+            work() {
+                return 1;
+            }
         }
 
         new Task().work();
@@ -192,7 +199,9 @@ describe('synchronous methods', () => {
 
         class Task {
             @Time()
-            work(): never { throw boom; }
+            work(): never {
+                throw boom;
+            }
         }
 
         expect(() => new Task().work()).toThrow(boom);
@@ -206,7 +215,9 @@ describe('synchronous methods', () => {
             base = 10;
 
             @Time()
-            add(a: number, b: number) { return this.base + a + b; }
+            add(a: number, b: number) {
+                return this.base + a + b;
+            }
         }
 
         expect(new Task().add(1, 2)).toBe(13);
@@ -216,7 +227,9 @@ describe('synchronous methods', () => {
     it('measures a static method', () => {
         class Task {
             @Time()
-            static parse(input: string) { return input.trim(); }
+            static parse(input: string) {
+                return input.trim();
+            }
         }
 
         expect(Task.parse('  x  ')).toBe('x');
@@ -251,7 +264,9 @@ describe('promise-returning methods', () => {
     it('reports nothing until the promise settles', async () => {
         class Task {
             @Time()
-            async work() { await sleep(30); }
+            async work() {
+                await sleep(30);
+            }
         }
 
         const pending = new Task().work();
@@ -286,7 +301,11 @@ describe('promise-returning methods', () => {
                 // A legal thenable whose `then` returns undefined. Calling `.then()`
                 // on it directly and returning the result would hand the caller
                 // `undefined`; the wrapper assimilates it via `Promise.resolve`.
-                return {then: (resolve: (v: string) => void) => { setTimeout(() => resolve('ok'), 30); }};
+                return {
+                    then: (resolve: (v: string) => void) => {
+                        setTimeout(() => resolve('ok'), 30);
+                    },
+                };
             }
         }
 
@@ -403,7 +422,9 @@ describe('Observable-returning methods', () => {
 
         class Task {
             @Time()
-            work() { return subject; }
+            work() {
+                return subject;
+            }
         }
 
         // Note the wrapper is a plain Observable, so the *returned* value is not a
@@ -447,7 +468,9 @@ describe('sinks', () => {
 
         class Task {
             @Time({sink: record => local.push(record)})
-            work() { return 1; }
+            work() {
+                return 1;
+            }
         }
 
         new Task().work();
@@ -456,12 +479,16 @@ describe('sinks', () => {
         expect(records).toHaveLength(0);
     });
 
-    it('never lets a broken sink become the method\'s failure', () => {
-        setTimingSink(() => { throw new Error('sink exploded'); });
+    it("never lets a broken sink become the method's failure", () => {
+        setTimingSink(() => {
+            throw new Error('sink exploded');
+        });
 
         class Task {
             @Time()
-            work() { return 'fine'; }
+            work() {
+                return 'fine';
+            }
         }
 
         expect(new Task().work()).toBe('fine');

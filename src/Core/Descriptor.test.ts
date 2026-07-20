@@ -54,20 +54,24 @@ describe('defineConstraint', () => {
     });
 
     it('requires a derive function — predicates are never attached alongside params', () => {
-        expect(() => defineConstraint({
-            kind: 'number',
-            constraint: uniqueIdentity('noDerive'),
-            describe: () => 'anything',
-        } as any)).toThrow(/derive/);
+        expect(() =>
+            defineConstraint({
+                kind: 'number',
+                constraint: uniqueIdentity('noDerive'),
+                describe: () => 'anything',
+            } as any),
+        ).toThrow(/derive/);
     });
 
     it('requires a non-empty identity', () => {
-        expect(() => defineConstraint({
-            kind: 'number',
-            constraint: '',
-            derive: () => () => true,
-            describe: () => 'anything',
-        })).toThrow(/identity/);
+        expect(() =>
+            defineConstraint({
+                kind: 'number',
+                constraint: '',
+                derive: () => () => true,
+                describe: () => 'anything',
+            }),
+        ).toThrow(/identity/);
     });
 });
 
@@ -96,7 +100,7 @@ describe('predicate derivation (DEC-010)', () => {
         const broken = defineConstraint({
             kind: 'generic',
             constraint: uniqueIdentity('broken'),
-            derive: () => (undefined as any),
+            derive: () => undefined as any,
             describe: () => 'anything',
         });
 
@@ -105,7 +109,7 @@ describe('predicate derivation (DEC-010)', () => {
 });
 
 describe('params immutability', () => {
-    it('clones the caller\'s object so later mutation cannot desynchronise the predicate', () => {
+    it("clones the caller's object so later mutation cannot desynchronise the predicate", () => {
         const min = defineMin();
         const source: MinParams = {min: 5};
         const descriptor = min(source);
@@ -136,12 +140,13 @@ describe('params immutability', () => {
 });
 
 describe('params serialisability', () => {
-    const build = (params: any) => () => defineConstraint<any>({
-        kind: 'generic',
-        constraint: uniqueIdentity('serialisable'),
-        derive: () => () => true,
-        describe: () => 'anything',
-    })(params);
+    const build = (params: any) => () =>
+        defineConstraint<any>({
+            kind: 'generic',
+            constraint: uniqueIdentity('serialisable'),
+            derive: () => () => true,
+            describe: () => 'anything',
+        })(params);
 
     it('accepts plain JSON data', () => {
         expect(build({a: 1, b: 'two', c: true, d: null, e: [1, {f: 'g'}]})).not.toThrow();
@@ -228,7 +233,7 @@ describe('optional projection hooks', () => {
         expect(descriptor.params).toEqual({min: 2});
     });
 
-    it('binds supplied hooks to the descriptor\'s own params', () => {
+    it("binds supplied hooks to the descriptor's own params", () => {
         const withHooks = defineConstraint<MinParams>({
             kind: 'number',
             constraint: uniqueIdentity('hooked'),
@@ -256,28 +261,30 @@ describe('message formatting', () => {
     it('uses the supplied signature as the subject', () => {
         const descriptor = numeric({min: 5});
 
-        expect(descriptor.message({
-            value: 2,
-            signature: "Task.test(count) parameter 'count'",
-        })).toBe(
+        expect(
+            descriptor.message({
+                value: 2,
+                signature: "Task.test(count) parameter 'count'",
+            }),
+        ).toBe(
             "Value Error: Task.test(count) parameter 'count' expected a number greater than or " +
-            'equal to 5 but received 2 instead',
+                'equal to 5 but received 2 instead',
         );
     });
 
     it('falls back to the parameter name, then to a generic subject', () => {
         const descriptor = numeric({min: 5});
 
-        expect(descriptor.message({value: 2, paramName: 'count'}))
-            .toBe('Value Error: count expected a number greater than or equal to 5 but received 2 instead');
-        expect(descriptor.message({value: 2}))
-            .toBe('Value Error: value expected a number greater than or equal to 5 but received 2 instead');
+        expect(descriptor.message({value: 2, paramName: 'count'})).toBe(
+            'Value Error: count expected a number greater than or equal to 5 but received 2 instead',
+        );
+        expect(descriptor.message({value: 2})).toBe(
+            'Value Error: value expected a number greater than or equal to 5 but received 2 instead',
+        );
     });
 
     it('quotes the received value for string constraints and not for numeric ones', () => {
-        expect(stringy({}).message({value: 'ab', paramName: 'message'}))
-            .toContain("received 'ab' instead");
-        expect(numeric({min: 5}).message({value: 2, paramName: 'count'}))
-            .toContain('received 2 instead');
+        expect(stringy({}).message({value: 'ab', paramName: 'message'})).toContain("received 'ab' instead");
+        expect(numeric({min: 5}).message({value: 2, paramName: 'count'})).toContain('received 2 instead');
     });
 });

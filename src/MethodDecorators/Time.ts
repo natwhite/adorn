@@ -190,8 +190,11 @@ export function Time(options?: TimeOptions): MethodDecorator {
 // ---------------------------------------------------------------------------
 
 function isThenable(value: any): boolean {
-    return !!value && (typeof value === 'object' || typeof value === 'function')
-        && typeof value.then === 'function';
+    return (
+        !!value &&
+        (typeof value === 'object' || typeof value === 'function') &&
+        typeof value.then === 'function'
+    );
 }
 
 /**
@@ -202,11 +205,19 @@ function isThenable(value: any): boolean {
  * `subscribe` is the only member required, because it is the only one this file calls.
  */
 function isObservableLike(value: any): boolean {
-    return !!value && (typeof value === 'object' || typeof value === 'function')
-        && typeof value.subscribe === 'function';
+    return (
+        !!value &&
+        (typeof value === 'object' || typeof value === 'function') &&
+        typeof value.subscribe === 'function'
+    );
 }
 
-type Report = (durationMs: number, kind: TimedResultKind, outcome: 'returned' | 'threw', settled: boolean) => void;
+type Report = (
+    durationMs: number,
+    kind: TimedResultKind,
+    outcome: 'returned' | 'threw',
+    settled: boolean,
+) => void;
 
 /**
  * `Promise.resolve(result)` rather than `result.then(...)` directly.
@@ -330,13 +341,18 @@ function loadObservable(): any {
 // Internals
 // ---------------------------------------------------------------------------
 
-function buildReporter(context: InvocationContext, label: string | undefined, local: TimingSink | undefined): Report {
+function buildReporter(
+    context: InvocationContext,
+    label: string | undefined,
+    local: TimingSink | undefined,
+): Report {
     // Resolved once per call rather than once per install: `context.target` is fixed, but reading
     // these is cheap and doing it here keeps the reporter self-contained.
     const owner = ownerNameOf(context.target);
-    const member = typeof context.propertyKey === 'symbol'
-        ? context.propertyKey.toString()
-        : String(context.propertyKey);
+    const member =
+        typeof context.propertyKey === 'symbol'
+            ? context.propertyKey.toString()
+            : String(context.propertyKey);
 
     return function (durationMs, kind, outcome, settled) {
         const record: TimingRecord = {

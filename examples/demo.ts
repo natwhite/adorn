@@ -18,8 +18,8 @@
  * and `@Log` — which never had anything to do with rxjs — now lives in `src/MethodDecorators/Log`.
  */
 import {StringMinLength, GreaterThanEqual, LessThanEqual} from '../src/ParameterDecorators/Constraints';
-import { Log } from '../src/MethodDecorators/Log';
-import { Contract } from '../src/Core/ContractInstaller';
+import {Log} from '../src/MethodDecorators/Log';
+import {Contract} from '../src/Core/ContractInstaller';
 
 // P1.3 (BREAKING): parameter decorators now only RECORD their constraints; `@Contract()` is what
 // installs the enforcing wrapper. Without it the constraints below are silently inert — running
@@ -32,7 +32,10 @@ class Task {
 
     // We imagine that by invoking decorators that there will be no other side effects other that those explicitly desired.
     // For this reason, decorators should be decorated using Functional Programming paradigms
-    test(@StringMinLength(10) message: string, @GreaterThanEqual(100) @LessThanEqual(1000) someNumber: number) {
+    test(
+        @StringMinLength(10) message: string,
+        @GreaterThanEqual(100) @LessThanEqual(1000) someNumber: number,
+    ) {
         console.log(message + this.testing);
         // await new Promise<void>(resolve => setTimeout(() => resolve(console.log('inbetween')), 1000));
         console.log(someNumber);
@@ -40,8 +43,8 @@ class Task {
     }
 
     @Log()
-    test2(str = "string", num = 7) {
-        return "input is " + str + " and number is " + num + "";
+    test2(str = 'string', num = 7) {
+        return 'input is ' + str + ' and number is ' + num + '';
     }
 
     async test3(waitTime: number = 1000) {
@@ -59,7 +62,7 @@ const task = new Task();
     const value = await task.test('addsodifhisfl1', 101);
     console.log(value);
 
-    const value3 = task.test2("SomeInput", 12);
+    const value3 = task.test2('SomeInput', 12);
     console.log(value3);
 
     // --- 2. A call that violates a constraint ------------------------------
@@ -74,5 +77,3 @@ const task = new Task();
         console.log('caught as expected:', (e as Error).message);
     }
 })();
-
-

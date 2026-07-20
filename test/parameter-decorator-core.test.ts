@@ -157,7 +157,10 @@ describe('multiple decorators', () => {
         // also what every projection reads. Same fact, honest source.
         @Contract()
         class Task {
-            test(@StringMinLength(10) message: string, @GreaterThanEqual(100) @LessThanEqual(1000) someNumber: number) {
+            test(
+                @StringMinLength(10) message: string,
+                @GreaterThanEqual(100) @LessThanEqual(1000) someNumber: number,
+            ) {
                 return 'ok';
             }
         }
@@ -206,7 +209,9 @@ describe('multiple decorators', () => {
         // both stacked constraints, the one written first reports.
         @Contract()
         class Task {
-            test(@GreaterThanEqual(100) @LessThanEqual(50) n: number) { return n; }
+            test(@GreaterThanEqual(100) @LessThanEqual(50) n: number) {
+                return n;
+            }
         }
 
         // 10 violates only the first-declared constraint
@@ -230,11 +235,14 @@ describe('multiple decorators', () => {
         // sites now normalise as they write.
         @Contract()
         class Bounded {
-            clamp(@GreaterThanEqual(100) @LessThanEqual(1000) n: number) { return n; }
+            clamp(@GreaterThanEqual(100) @LessThanEqual(1000) n: number) {
+                return n;
+            }
         }
 
-        const recorded = getContract(Bounded.prototype, 'clamp')!.params[0].constraints
-            .map(constraint => constraint.constraint);
+        const recorded = getContract(Bounded.prototype, 'clamp')!.params[0].constraints.map(
+            constraint => constraint.constraint,
+        );
 
         // declaration order: GTE (`min`) first, LTE (`max`) second
         expect(recorded).toEqual(['min', 'max']);
@@ -325,7 +333,9 @@ describe('wrapper transparency', () => {
 
         // matching the undecorated sibling exactly
         class Undecorated {
-            test(message: string, someNumber: number) { return ''; }
+            test(message: string, someNumber: number) {
+                return '';
+            }
         }
         expect(Undecorated.prototype.test.name).toBe(Task.prototype.test.name);
     });
@@ -341,7 +351,9 @@ describe('wrapper transparency', () => {
         expect(Task.prototype.test.length).toBe(0);
 
         class Undecorated {
-            test(message: string, someNumber: number) { return ''; }
+            test(message: string, someNumber: number) {
+                return '';
+            }
         }
         expect(Undecorated.prototype.test.length).toBe(2);
     });
@@ -353,9 +365,7 @@ describe('wrapper transparency', () => {
         // source transparency is load-bearing for parameter-name recovery.
         expect((Task.prototype.test as any).parameterDecorated).toBeUndefined();
         expect((Task.prototype.test as any).parameterDecorators).toBeUndefined();
-        expect(Object.getOwnPropertyNames(Task.prototype.test)).toEqual(
-            expect.arrayContaining(['toString']),
-        );
+        expect(Object.getOwnPropertyNames(Task.prototype.test)).toEqual(expect.arrayContaining(['toString']));
         expect(Object.getOwnPropertyNames(Task.prototype.test)).not.toEqual(
             expect.arrayContaining(['parameterDecorated', 'parameterDecorators']),
         );
@@ -379,14 +389,16 @@ describe('violation message formatting', () => {
         throw new Error('expected the call to throw, but it did not');
     };
 
-    it('includes the formatted signature: Class.method(param, param) parameter \'name\'', () => {
-        expect(messageFor(() => new Task().test('short', 500)))
-            .toContain("Task.test(message, someNumber) parameter 'message'");
+    it("includes the formatted signature: Class.method(param, param) parameter 'name'", () => {
+        expect(messageFor(() => new Task().test('short', 500))).toContain(
+            "Task.test(message, someNumber) parameter 'message'",
+        );
     });
 
     it('names the offending parameter, not just its index', () => {
-        expect(messageFor(() => new Task().test('0123456789', 5)))
-            .toContain("Task.test(message, someNumber) parameter 'someNumber'");
+        expect(messageFor(() => new Task().test('0123456789', 5))).toContain(
+            "Task.test(message, someNumber) parameter 'someNumber'",
+        );
     });
 
     it('reports the full message including expectation and actual value', () => {
@@ -396,7 +408,7 @@ describe('violation message formatting', () => {
         // model in was not also a silent change to every error string.
         expect(messageFor(() => new Task().test('short', 500))).toBe(
             "Value Error: Task.test(message, someNumber) parameter 'message' " +
-            "expected a string of length greater than 10 but received 'short' instead",
+                "expected a string of length greater than 10 but received 'short' instead",
         );
     });
 
@@ -408,7 +420,9 @@ describe('violation message formatting', () => {
         // this to be reconsidered there.
         @Contract()
         class Base {
-            run(@GreaterThan(0) n: number) { return `base:${n}`; }
+            run(@GreaterThan(0) n: number) {
+                return `base:${n}`;
+            }
         }
         class Sub extends Base {}
 
@@ -445,7 +459,9 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
     it('leaves the wrapper installed after __decorate completes', () => {
         @Contract()
         class Task {
-            test(@StringMinLength(10) message: string) { return 'ok'; }
+            test(@StringMinLength(10) message: string) {
+                return 'ok';
+            }
         }
 
         const installed = Object.getOwnPropertyDescriptor(Task.prototype, 'test')!.value;
@@ -470,7 +486,9 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
 
         @Contract()
         class Task {
-            test(@StringMinLength(10) message: string, @GreaterThanEqual(1) n: number) { return 'ok'; }
+            test(@StringMinLength(10) message: string, @GreaterThanEqual(1) n: number) {
+                return 'ok';
+            }
         }
         void Task;
 
@@ -481,11 +499,23 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
         const pristine = Object.defineProperty;
 
         @Contract()
-        class A { a(@GreaterThan(0) n: number) { return n; } }
+        class A {
+            a(@GreaterThan(0) n: number) {
+                return n;
+            }
+        }
         @Contract()
-        class B { b(@GreaterThan(0) n: number) { return n; } }
+        class B {
+            b(@GreaterThan(0) n: number) {
+                return n;
+            }
+        }
         @Contract()
-        class C { c(@GreaterThan(0) n: number) { return n; } }
+        class C {
+            c(@GreaterThan(0) n: number) {
+                return n;
+            }
+        }
 
         expect(Object.defineProperty).toBe(pristine);
 
@@ -498,7 +528,9 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
     it('keeps Object.defineProperty usable immediately after a decorated class', () => {
         @Contract()
         class Task {
-            test(@GreaterThan(0) n: number) { return n; }
+            test(@GreaterThan(0) n: number) {
+                return n;
+            }
         }
         void Task;
 
@@ -518,7 +550,9 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
 
         @Contract()
         class Task {
-            test(@GreaterThan(0) n: number) { return n; }
+            test(@GreaterThan(0) n: number) {
+                return n;
+            }
         }
         Object.defineProperty(probe, 'first', {value: 1, configurable: true});
         Object.defineProperty(probe, 'second', {value: 2, configurable: true});
@@ -543,7 +577,9 @@ describe('known defects pinned', () => {
         // in the first hundred cases.
         @Contract()
         class Task {
-            test(@StringMinLength(10) message: string) { return 'ok'; }
+            test(@StringMinLength(10) message: string) {
+                return 'ok';
+            }
         }
 
         expect(() => new Task().test(null as any)).toThrow(Error);
@@ -571,8 +607,12 @@ describe('known defects pinned', () => {
         // generated artifact instead of being buried in a word.
         @Contract()
         class Task {
-            excludesZero(@GreaterThan(0) n: number) { return n; }
-            includesZero(@GreaterThanEqual(0) n: number) { return n; }
+            excludesZero(@GreaterThan(0) n: number) {
+                return n;
+            }
+            includesZero(@GreaterThanEqual(0) n: number) {
+                return n;
+            }
         }
 
         expect(() => new Task().excludesZero(0)).toThrow(/expected a number greater than 0/);
@@ -581,8 +621,7 @@ describe('known defects pinned', () => {
 
         // The spelling a caller who relied on 0 passing migrates to.
         expect(new Task().includesZero(0)).toBe(0);
-        expect(() => new Task().includesZero(-1))
-            .toThrow(/expected a number greater than or equal to 0/);
+        expect(() => new Task().includesZero(-1)).toThrow(/expected a number greater than or equal to 0/);
     });
 
     it('Q-7 SETTLED BY P3.3 — NaN violates numeric constraints instead of satisfying them', () => {
@@ -594,7 +633,9 @@ describe('known defects pinned', () => {
         // that the settlement reaches actual call sites.
         @Contract()
         class Task {
-            test(@GreaterThanEqual(100) n: number) { return n; }
+            test(@GreaterThanEqual(100) n: number) {
+                return n;
+            }
         }
 
         expect(() => new Task().test(NaN)).toThrow(/parameter 'n'/);
@@ -613,13 +654,16 @@ describe('known defects pinned', () => {
         // original failure — the failure mode was strictly worse than no handling
         // at all. `DecoratorFactory.attributeToCaller` now ignores anything
         // without a string `stack`.
-        const ThrowsAString = () => ParameterDecoratorFactory.CreateSimpleDecorator(() => {
-            throw 'the original failure';
-        });
+        const ThrowsAString = () =>
+            ParameterDecoratorFactory.CreateSimpleDecorator(() => {
+                throw 'the original failure';
+            });
 
         @Contract()
         class Task {
-            test(@ThrowsAString() n: number) { return n; }
+            test(@ThrowsAString() n: number) {
+                return n;
+            }
         }
 
         expect(() => new Task().test(1)).toThrow('the original failure');
@@ -644,7 +688,9 @@ describe('known defects pinned', () => {
         // now be strict about the WHOLE stack rather than just its first frames.
         @Contract()
         class Task {
-            test(@StringMinLength(10) message: string) { return 'ok'; }
+            test(@StringMinLength(10) message: string) {
+                return 'ok';
+            }
         }
 
         let stack = '';
@@ -667,13 +713,16 @@ describe('known defects pinned', () => {
 describe('ParameterDecoratorFactory.CreateSimpleDecorator (public authoring surface)', () => {
     it('passes a fully populated ParamObject to the decorator body', () => {
         const seen: any[] = [];
-        const Capture = () => ParameterDecoratorFactory.CreateSimpleDecorator(params => {
-            seen.push({...params});
-        });
+        const Capture = () =>
+            ParameterDecoratorFactory.CreateSimpleDecorator(params => {
+                seen.push({...params});
+            });
 
         @Contract()
         class Task {
-            doWork(@Capture() alpha: string, @Capture() beta: number) { return 'ok'; }
+            doWork(@Capture() alpha: string, @Capture() beta: number) {
+                return 'ok';
+            }
         }
 
         new Task().doWork('a', 1);
@@ -696,13 +745,16 @@ describe('ParameterDecoratorFactory.CreateSimpleDecorator (public authoring surf
         // silent no-op. The disabled "Deconstruct parameter value changes" line
         // in the old factory showed this was once intended to work. Pinned so
         // that if coercion/modifier support lands, it is a deliberate change.
-        const Mutate = () => ParameterDecoratorFactory.CreateSimpleDecorator((params: any) => {
-            params.value = 'CHANGED';
-        });
+        const Mutate = () =>
+            ParameterDecoratorFactory.CreateSimpleDecorator((params: any) => {
+                params.value = 'CHANGED';
+            });
 
         @Contract()
         class Task {
-            doWork(@Mutate() alpha: string) { return alpha; }
+            doWork(@Mutate() alpha: string) {
+                return alpha;
+            }
         }
 
         expect(new Task().doWork('original')).toBe('original');
@@ -713,13 +765,16 @@ describe('ParameterDecoratorFactory.CreateSimpleDecorator (public authoring surf
         // a closure carries no identity and no params, so ContractRegistry
         // refuses it by design and no projection can ever see it. It is staged
         // adapter-side instead, and enforced exactly as before.
-        const NonEmpty = () => ParameterDecoratorFactory.CreateSimpleDecorator((params: any) => {
-            if (!params.value) throw new Error(`Value Error: ${params.signature} must not be empty`);
-        });
+        const NonEmpty = () =>
+            ParameterDecoratorFactory.CreateSimpleDecorator((params: any) => {
+                if (!params.value) throw new Error(`Value Error: ${params.signature} must not be empty`);
+            });
 
         @Contract()
         class Task {
-            doWork(@NonEmpty() alpha: string) { return alpha; }
+            doWork(@NonEmpty() alpha: string) {
+                return alpha;
+            }
         }
 
         expect(new Task().doWork('x')).toBe('x');

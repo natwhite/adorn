@@ -223,8 +223,9 @@ export function documentClass(constructor: Function): ClassDoc {
 
     const name = constructor.name || '(anonymous class)';
 
-    const methods = getContractsForClass(constructor)
-        .map((entry: ClassMethodContract) => toMethodDoc(name, entry));
+    const methods = getContractsForClass(constructor).map((entry: ClassMethodContract) =>
+        toMethodDoc(name, entry),
+    );
     const fields = getFieldContractsForClass(constructor).map(toFieldDoc);
 
     // Deterministic ordering. Decoration order is not source order — parameter decorators are
@@ -239,10 +240,7 @@ export function documentClass(constructor: Function): ClassDoc {
 }
 
 /** Instance members before statics, alphabetical within each band. */
-function byBandThenName(
-    a: {isStatic: boolean; name: string},
-    b: {isStatic: boolean; name: string},
-): number {
+function byBandThenName(a: {isStatic: boolean; name: string}, b: {isStatic: boolean; name: string}): number {
     if (a.isStatic !== b.isStatic) return a.isStatic ? 1 : -1;
     return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
@@ -344,7 +342,11 @@ function toConstraintDoc(descriptor: ConstraintDescriptor): ConstraintDoc {
     };
 }
 
-function buildSignature(className: string, methodName: string, parameters: ReadonlyArray<ParameterDoc>): string {
+function buildSignature(
+    className: string,
+    methodName: string,
+    parameters: ReadonlyArray<ParameterDoc>,
+): string {
     let highest = -1;
     parameters.forEach(parameter => {
         if (parameter.index > highest) highest = parameter.index;
@@ -389,7 +391,7 @@ export function renderMarkdown(classes: ReadonlyArray<ClassDoc>, options?: Markd
         // unless it is said out loud (DEC-007).
         lines.push(
             'Contracts are discovered at runtime, so a class is only visible once the module ' +
-            'declaring it has been imported and evaluated.',
+                'declaring it has been imported and evaluated.',
         );
         return lines.join('\n') + '\n';
     }
@@ -429,7 +431,7 @@ function renderMethod(method: MethodDoc, lines: string[]): void {
         // would otherwise describe a guarantee that does not hold at runtime (plan §8, risk 1).
         lines.push(
             '> **Not enforced.** Contracts are recorded for this method but no enforcement ' +
-            'wrapper is installed.',
+                'wrapper is installed.',
             '',
         );
     }
@@ -440,18 +442,15 @@ function renderMethod(method: MethodDoc, lines: string[]): void {
         return;
     }
 
-    lines.push(
-        '| Parameter | Type | Constraint | Expectation |',
-        '| --- | --- | --- | --- |',
-    );
+    lines.push('| Parameter | Type | Constraint | Expectation |', '| --- | --- | --- | --- |');
 
     method.parameters.forEach(parameter => {
         parameter.constraints.forEach(constraint => {
             lines.push(
                 `| \`${escapeCell(parameter.name)}\` (${parameter.index}) ` +
-                `| ${parameter.typeName ? '`' + escapeCell(parameter.typeName) + '`' : '—'} ` +
-                `| \`${escapeCell(constraint.constraint)}\` ` +
-                `| ${escapeCell(constraint.expectation)} |`,
+                    `| ${parameter.typeName ? '`' + escapeCell(parameter.typeName) + '`' : '—'} ` +
+                    `| \`${escapeCell(constraint.constraint)}\` ` +
+                    `| ${escapeCell(constraint.expectation)} |`,
             );
         });
     });
@@ -479,8 +478,8 @@ function renderFields(fields: ReadonlyArray<FieldDoc>, lines: string[]): void {
         // does not actually hold at runtime.
         lines.push(
             '> **Not enforced.** Contracts are recorded for ' +
-            unenforced.map(field => `\`${escapeCell(field.name)}\``).join(', ') +
-            ' but no validating accessor is installed.',
+                unenforced.map(field => `\`${escapeCell(field.name)}\``).join(', ') +
+                ' but no validating accessor is installed.',
             '',
         );
     }
@@ -493,18 +492,15 @@ function renderFields(fields: ReadonlyArray<FieldDoc>, lines: string[]): void {
         return;
     }
 
-    lines.push(
-        '| Field | Type | Constraint | Expectation |',
-        '| --- | --- | --- | --- |',
-    );
+    lines.push('| Field | Type | Constraint | Expectation |', '| --- | --- | --- | --- |');
 
     fields.forEach(field => {
         field.constraints.forEach(constraint => {
             lines.push(
                 `| \`${escapeCell(field.name)}\`${field.isStatic ? ' _(static)_' : ''} ` +
-                `| ${field.typeName ? '`' + escapeCell(field.typeName) + '`' : '—'} ` +
-                `| \`${escapeCell(constraint.constraint)}\` ` +
-                `| ${escapeCell(constraint.expectation)} |`,
+                    `| ${field.typeName ? '`' + escapeCell(field.typeName) + '`' : '—'} ` +
+                    `| \`${escapeCell(constraint.constraint)}\` ` +
+                    `| ${escapeCell(constraint.expectation)} |`,
             );
         });
     });

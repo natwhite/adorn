@@ -21,9 +21,12 @@ module.exports = {
     setupFiles: ['<rootDir>/test/jest.setup.ts'],
 
     transform: {
-        '^.+\\.tsx?$': ['ts-jest', {
-            tsconfig: 'tsconfig.test.json',
-        }],
+        '^.+\\.tsx?$': [
+            'ts-jest',
+            {
+                tsconfig: 'tsconfig.test.json',
+            },
+        ],
     },
 
     clearMocks: true,

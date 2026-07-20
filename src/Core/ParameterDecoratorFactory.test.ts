@@ -24,11 +24,7 @@
  * degradation is honest rather than incidental: names must flow with or without it.
  */
 
-import {
-    GreaterThan,
-    GreaterThanEqual,
-    StringMinLength,
-} from '../ParameterDecorators/Constraints';
+import {GreaterThan, GreaterThanEqual, StringMinLength} from '../ParameterDecorators/Constraints';
 import {ParameterDecoratorFactory} from './ParameterDecoratorFactory';
 import {Contract, Validate} from './ContractInstaller';
 import {getContract} from './ContractRegistry';
@@ -87,14 +83,16 @@ describe('BUG-14 — parameter names reach the registry from the real decorator 
         // consistent-with-itself.
         expect(thrown).toBe(
             "Value Error: Order.place(sku, quantity) parameter 'sku' " +
-            "expected a string of length greater than 3 but received 'ab' instead",
+                "expected a string of length greater than 3 but received 'ab' instead",
         );
     });
 
     it('records names on the @Validate() path too, not only @Contract()', () => {
         class Shipment {
             @Validate()
-            send(@StringMinLength(2) carrier: string) { return carrier; }
+            send(@StringMinLength(2) carrier: string) {
+                return carrier;
+            }
         }
 
         expect(getContract(Shipment.prototype, 'send')!.params[0].name).toBe('carrier');
@@ -104,7 +102,9 @@ describe('BUG-14 — parameter names reach the registry from the real decorator 
     it('records names for a static method as well', () => {
         @Contract()
         class Parser {
-            static parse(@StringMinLength(3) input: string) { return input.trim(); }
+            static parse(@StringMinLength(3) input: string) {
+                return input.trim();
+            }
         }
 
         expect(getContract(Parser, 'parse')!.params[0].name).toBe('input');
@@ -115,7 +115,9 @@ describe('BUG-14 — parameter names reach the registry from the real decorator 
 describe('types — present when the toolchain emits them, absent when it does not', () => {
     @Contract()
     class Order {
-        place(@StringMinLength(3) sku: string) { return sku; }
+        place(@StringMinLength(3) sku: string) {
+            return sku;
+        }
     }
 
     it('records no type at all without reflect-metadata, rather than inventing one', () => {
@@ -141,7 +143,9 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
     it('names an UNDECORATED leading parameter instead of rendering arg0', () => {
         @Contract()
         class Report {
-            render(format: string, @GreaterThanEqual(1) pageSize: number) { return `${format}${pageSize}`; }
+            render(format: string, @GreaterThanEqual(1) pageSize: number) {
+                return `${format}${pageSize}`;
+            }
         }
 
         // Position 0 carries no constraint, so before this it had no registry entry at all and the
@@ -153,7 +157,9 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
     it('keeps a TRAILING undecorated parameter visible instead of dropping it', () => {
         @Contract()
         class Report {
-            render(@StringMinLength(1) format: string, verbose: boolean) { return `${format}${verbose}`; }
+            render(@StringMinLength(1) format: string, verbose: boolean) {
+                return `${format}${verbose}`;
+            }
         }
 
         // The signature used to be rebuilt as `0..maxContractedIndex`, so a trailing undecorated
@@ -164,7 +170,9 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
     it('adds no constraint rows for the positions it merely names', () => {
         @Contract()
         class Report {
-            render(format: string, @GreaterThanEqual(1) pageSize: number) { return `${format}${pageSize}`; }
+            render(format: string, @GreaterThanEqual(1) pageSize: number) {
+                return `${format}${pageSize}`;
+            }
         }
 
         const parameters = documentClass(Report).methods[0].parameters;
@@ -181,7 +189,9 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
         // runtime would ever contradict.
         @Contract()
         class Odd {
-            run({a, b}: {a: number, b: number}, @GreaterThan(0) n: number) { return a + b + n; }
+            run({a, b}: {a: number; b: number}, @GreaterThan(0) n: number) {
+                return a + b + n;
+            }
         }
 
         const indices = getContract(Odd.prototype, 'run')!.params.map(p => p.index);
@@ -193,7 +203,9 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
     it('does not invent positions for a rest parameter either', () => {
         @Contract()
         class Sum {
-            add(@GreaterThan(0) first: number, ...rest: number[]) { return first + rest.length; }
+            add(@GreaterThan(0) first: number, ...rest: number[]) {
+                return first + rest.length;
+            }
         }
 
         // `...rest` is not a fixed slot, so the parse is not treated as a signature. The decorated
@@ -205,13 +217,16 @@ describe('Q-10 — how much of the arity problem the name recovery solves', () =
 
 describe('the registry is not given contracts it cannot describe', () => {
     it('a CreateSimpleDecorator-only method still records nothing (SMELL-14 unchanged)', () => {
-        const NonEmpty = () => ParameterDecoratorFactory.CreateSimpleDecorator(params => {
-            if (!params.value) throw new Error(`${params.signature} must not be empty`);
-        });
+        const NonEmpty = () =>
+            ParameterDecoratorFactory.CreateSimpleDecorator(params => {
+                if (!params.value) throw new Error(`${params.signature} must not be empty`);
+            });
 
         @Contract()
         class Legacy {
-            run(@NonEmpty() value: string) { return value; }
+            run(@NonEmpty() value: string) {
+                return value;
+            }
         }
 
         // Signature capture must not be the thing that finally creates a phantom entry for a
@@ -227,13 +242,21 @@ describe('the registry is not given contracts it cannot describe', () => {
 
 describe('BUG-12 — getObjectName resolves the constructor band', () => {
     it('returns the class name for a prototype', () => {
-        class Task { run() { return 1; } }
+        class Task {
+            run() {
+                return 1;
+            }
+        }
 
         expect(DecoratorFactory.getObjectName(Task.prototype)).toBe('Task');
     });
 
     it('returns the class name for a CONSTRUCTOR, not "Function"', () => {
-        class Task { static parse() { return 1; } }
+        class Task {
+            static parse() {
+                return 1;
+            }
+        }
 
         // A static member's decoration target IS the constructor, so `target.constructor` is
         // `Function`. That produced `Function.parse(input)` in every static violation message.
@@ -251,6 +274,6 @@ describe('BUG-12 — getObjectName resolves the constructor band', () => {
         // Callers substitute their own placeholder — `ContractInstaller` uses `<anonymous class>`.
         expect(DecoratorFactory.getObjectName(Object.create(null))).toBeFalsy();
         expect(DecoratorFactory.getObjectName(class {})).toBe('');
-        expect(DecoratorFactory.getObjectName((class {}).prototype)).toBe('');
+        expect(DecoratorFactory.getObjectName(class {}.prototype)).toBe('');
     });
 });

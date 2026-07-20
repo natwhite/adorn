@@ -181,24 +181,29 @@ export function getAssertEnforcement(): AssertEnforcement {
  * way here is a deliberate call in application code.
  */
 export function disableGuardEnforcement(options: {confirm: true; reason: string}): void {
-    if (!options || options.confirm !== true || typeof options.reason !== 'string' || options.reason.trim() === '') {
+    if (
+        !options ||
+        options.confirm !== true ||
+        typeof options.reason !== 'string' ||
+        options.reason.trim() === ''
+    ) {
         throw new Error(
             'disableGuardEnforcement: refusing to strip guard contracts without an explicit ' +
-            "`{confirm: true, reason: '...'}`. Guards validate untrusted input — stripping them " +
-            'removes the check exactly where hostile input arrives (DEC-008 / Q-2). If you meant ' +
-            'to strip internal self-checks, mark those contracts `trust: \'assert\'` and use ' +
-            'setAssertEnforcement(false) instead.',
+                "`{confirm: true, reason: '...'}`. Guards validate untrusted input — stripping them " +
+                'removes the check exactly where hostile input arrives (DEC-008 / Q-2). If you meant ' +
+                "to strip internal self-checks, mark those contracts `trust: 'assert'` and use " +
+                'setAssertEnforcement(false) instead.',
         );
     }
 
     state.guard = false;
     emit(
         '[adorn] GUARD CONTRACTS DISABLED. Contracts validating untrusted external input are no ' +
-        'longer enforced process-wide.\n' +
-        `  Reason given: ${options.reason}\n` +
-        '  This is not the production toggle — production strips `assert` contracts only, and ' +
-        'leaves guards in place.\n' +
-        '  Re-enable with enableGuardEnforcement().',
+            'longer enforced process-wide.\n' +
+            `  Reason given: ${options.reason}\n` +
+            '  This is not the production toggle — production strips `assert` contracts only, and ' +
+            'leaves guards in place.\n' +
+            '  Re-enable with enableGuardEnforcement().',
     );
 }
 
@@ -234,7 +239,9 @@ export function getDefaultTrust(): ContractTrust {
 export function resolveTrust(options?: TrustOptions): ContractTrust {
     if (options && options.trust) {
         if (options.trust !== 'guard' && options.trust !== 'assert') {
-            throw new TypeError(`adorn: trust must be 'guard' or 'assert', received ${String(options.trust)}`);
+            throw new TypeError(
+                `adorn: trust must be 'guard' or 'assert', received ${String(options.trust)}`,
+            );
         }
         return options.trust;
     }
@@ -263,8 +270,10 @@ export function applyViolationPolicy(violation: unknown, site: ViolationSite): v
     const policy = state.onViolation;
 
     if (policy === 'warn') {
-        emit(`[adorn] Contract violation (not enforced — onViolation is 'warn') in ` +
-            `${site.owner}.${site.member}: ${describeViolation(violation)}`);
+        emit(
+            `[adorn] Contract violation (not enforced — onViolation is 'warn') in ` +
+                `${site.owner}.${site.member}: ${describeViolation(violation)}`,
+        );
         return;
     }
 

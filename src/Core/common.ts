@@ -1,12 +1,12 @@
 // Custom decorator type wrappers
 
 export type AdornClassDecorator = ClassDecorator;
-export type AdornPropertyDecorator = PropertyDecorator
-export type AdornMethodDecorator = MethodDecorator
-export type AdornParameterDecorator = ParameterDecorator
+export type AdornPropertyDecorator = PropertyDecorator;
+export type AdornMethodDecorator = MethodDecorator;
+export type AdornParameterDecorator = ParameterDecorator;
 
-
-const STRIP_COMMENTS = /(\/\/.*$)|(\/\*[\s\S]*?\*\/)|(\s*=[^,)]*(('(?:\\'|[^'\r\n])*')|("(?:\\"|[^"\r\n])*"))|(\s*=[^,)]*))/mg;
+const STRIP_COMMENTS =
+    /(\/\/.*$)|(\/\*[\s\S]*?\*\/)|(\s*=[^,)]*(('(?:\\'|[^'\r\n])*')|("(?:\\"|[^"\r\n])*"))|(\s*=[^,)]*))/gm;
 const ARGUMENT_NAMES = /([^\s,]+)/g;
 
 export abstract class DecoratorFactory {
@@ -73,11 +73,13 @@ export abstract class DecoratorFactory {
      */
     static attributeToCaller(error: unknown, boundary: Function): void {
         if (error === null || typeof error !== 'object') return;
-        if (typeof (error as { stack?: unknown }).stack !== 'string') return;
+        if (typeof (error as {stack?: unknown}).stack !== 'string') return;
 
-        const capture = (Error as unknown as {
-            captureStackTrace?: (target: object, constructorOpt?: Function) => void
-        }).captureStackTrace;
+        const capture = (
+            Error as unknown as {
+                captureStackTrace?: (target: object, constructorOpt?: Function) => void;
+            }
+        ).captureStackTrace;
         if (typeof capture !== 'function') return;
 
         capture(error as object, boundary);

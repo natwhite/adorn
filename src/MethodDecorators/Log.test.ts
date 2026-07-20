@@ -209,8 +209,8 @@ describe('Log', () => {
     });
 
     it('refuses to decorate anything that is not a method', () => {
-        expect(() =>
-            (Log() as any)({}, 'notAMethod', {value: undefined} as PropertyDescriptor),
-        ).toThrow(TypeError);
+        expect(() => (Log() as any)({}, 'notAMethod', {value: undefined} as PropertyDescriptor)).toThrow(
+            TypeError,
+        );
     });
 });

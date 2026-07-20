@@ -197,7 +197,7 @@ export function defineConstraint<P extends ConstraintParams = ConstraintParams>(
     if (typeof definition.derive !== 'function') {
         throw new TypeError(
             `defineConstraint('${definition.constraint}'): \`derive\` is required — predicates are ` +
-            'derived from params, never attached alongside them (DEC-010)',
+                'derived from params, never attached alongside them (DEC-010)',
         );
     }
     if (typeof definition.describe !== 'function') {
@@ -206,7 +206,7 @@ export function defineConstraint<P extends ConstraintParams = ConstraintParams>(
     if (definitions.has(definition.constraint)) {
         throw new Error(
             `defineConstraint: constraint identity '${definition.constraint}' is already registered. ` +
-            'Identities must be unique — a duplicate makes serialised descriptors ambiguous.',
+                'Identities must be unique — a duplicate makes serialised descriptors ambiguous.',
         );
     }
 
@@ -246,7 +246,7 @@ export function constraintFromJSON<P extends ConstraintParams = ConstraintParams
     if (!definition) {
         throw new Error(
             `constraintFromJSON: unknown constraint identity '${serialized.constraint}'. ` +
-            'The module defining it must be imported before its descriptors can be rehydrated.',
+                'The module defining it must be imported before its descriptors can be rehydrated.',
         );
     }
     return createDescriptor(definition as ConstraintDefinition<P>, serialized.params);
@@ -313,8 +313,10 @@ function createDescriptor<P extends ConstraintParams>(
  */
 function formatMessage(kind: ConstraintKind, expectation: string, context: ViolationContext): string {
     const subject = context.signature || context.paramName || 'value';
-    return `Value Error: ${subject} expected ${expectation} but received ` +
-        `${formatReceived(kind, context.value)} instead`;
+    return (
+        `Value Error: ${subject} expected ${expectation} but received ` +
+        `${formatReceived(kind, context.value)} instead`
+    );
 }
 
 /** String constraints quote the received value; numeric ones do not. Matches current behaviour. */
@@ -347,7 +349,9 @@ function cloneSerializable(value: JsonValue, path: string): JsonValue {
         // NaN / Infinity survive neither JSON.stringify nor a schema, so reject them here rather
         // than let them become `null` inside a generated artifact.
         if (!isFinite(value as number)) {
-            throw new TypeError(`Constraint params at '${path}' must be a finite number, received ${String(value)}`);
+            throw new TypeError(
+                `Constraint params at '${path}' must be a finite number, received ${String(value)}`,
+            );
         }
         return value;
     }
@@ -363,9 +367,9 @@ function cloneSerializable(value: JsonValue, path: string): JsonValue {
         if (prototype !== Object.prototype && prototype !== null) {
             throw new TypeError(
                 `Constraint params at '${path}' must be plain JSON data, received ` +
-                `${describeUnserializable(value)}. A RegExp, Date, Map, or class instance cannot be ` +
-                'projected into a schema or a doc artifact — represent it explicitly instead ' +
-                "(e.g. { source, flags } for a RegExp).",
+                    `${describeUnserializable(value)}. A RegExp, Date, Map, or class instance cannot be ` +
+                    'projected into a schema or a doc artifact — represent it explicitly instead ' +
+                    '(e.g. { source, flags } for a RegExp).',
             );
         }
         const source = value as JsonObject;

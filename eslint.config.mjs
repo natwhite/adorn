@@ -87,11 +87,14 @@ export default tseslint.config(
              * `(target, key, descriptor)` to be callable even when it only reads one of them.
              * Unused locals and imports are still reported. Leading-underscore is the opt-out.
              */
-            '@typescript-eslint/no-unused-vars': ['warn', {
-                args: 'none',
-                varsIgnorePattern: '^_',
-                caughtErrors: 'none',
-            }],
+            '@typescript-eslint/no-unused-vars': [
+                'warn',
+                {
+                    args: 'none',
+                    varsIgnorePattern: '^_',
+                    caughtErrors: 'none',
+                },
+            ],
 
             /**
              * The next three fire only inside method-*wrapper* construction, where each is the

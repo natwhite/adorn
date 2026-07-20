@@ -51,15 +51,18 @@ import {
 } from './src/Core/ContractRegistry';
 
 // --- Projections ----------------------------------------------------------
-import {
-    documentClass, documentContracts, renderMarkdown, generateMarkdown,
-} from './src/Projections/docs';
+import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
 
 // The projection's model types, so a consumer can actually type a variable holding one.
 // `ClassDoc.fields` is deliberately required, not optional: an optional band is one a future
 // projection can silently forget to populate, which is the failure this whole layer exists to avoid.
 export type {
-    ClassDoc, MethodDoc, ParameterDoc, ConstraintDoc, FieldDoc, MarkdownOptions,
+    ClassDoc,
+    MethodDoc,
+    ParameterDoc,
+    ConstraintDoc,
+    FieldDoc,
+    MarkdownOptions,
 } from './src/Projections/docs';
 
 // --- Constraint descriptors, namespaced -----------------------------------
@@ -139,7 +142,6 @@ export {
     // Constraint descriptors (data, not decorators)
     NumberContracts, StringContracts,
 };
-
 
 /*
     Parameters & Field:

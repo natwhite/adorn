@@ -189,9 +189,10 @@ export function Validate(options?: TrustOptions): MethodDecorator {
  * on the constructor in both cases.
  */
 function registerOwningClass(target: object): void {
-    const constructor = typeof target === 'function'
-        ? (target as Function)
-        : target && (target as {constructor?: Function}).constructor;
+    const constructor =
+        typeof target === 'function'
+            ? (target as Function)
+            : target && (target as {constructor?: Function}).constructor;
 
     if (typeof constructor === 'function') registerContractedClass(constructor);
 }
@@ -224,8 +225,8 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
     if (!original) {
         throw new TypeError(
             `adorn: @Contract() found constraints recorded for '${String(key)}' but no such method ` +
-            'exists on the class. If this is an arrow-function class property it is an instance ' +
-            'field and cannot be contracted (plan P1.6 / Tier 2).',
+                'exists on the class. If this is an arrow-function class property it is an instance ' +
+                'field and cannot be contracted (plan P1.6 / Tier 2).',
         );
     }
 

@@ -28,16 +28,19 @@ const passthrough: MethodBehavior = (_context, proceed) => proceed();
 describe('CreateMethodDecorator', () => {
     it('installs a wrapper by returning the descriptor, with no global patching', () => {
         const calls: string[] = [];
-        const Trace = () => CreateMethodDecorator((context, proceed) => {
-            calls.push(String(context.propertyKey));
-            return proceed();
-        });
+        const Trace = () =>
+            CreateMethodDecorator((context, proceed) => {
+                calls.push(String(context.propertyKey));
+                return proceed();
+            });
 
         const pristine = Object.defineProperty;
 
         class Task {
             @Trace()
-            run(n: number) { return n * 2; }
+            run(n: number) {
+                return n * 2;
+            }
         }
 
         // The mechanism: `__decorate` does `r = d(target, key, r) || r` and then
@@ -55,7 +58,10 @@ describe('CreateMethodDecorator', () => {
 
         class Task {
             @Skip()
-            run() { invoked = true; return 'original'; }
+            run() {
+                invoked = true;
+                return 'original';
+            }
         }
 
         expect(new Task().run()).toBe('short-circuited');
@@ -64,18 +70,22 @@ describe('CreateMethodDecorator', () => {
 
     it('can wrap the result and observe both sides of the call', () => {
         const events: string[] = [];
-        const Around = () => CreateMethodDecorator((_context, proceed) => {
-            events.push('before');
-            try {
-                return proceed();
-            } finally {
-                events.push('after');
-            }
-        });
+        const Around = () =>
+            CreateMethodDecorator((_context, proceed) => {
+                events.push('before');
+                try {
+                    return proceed();
+                } finally {
+                    events.push('after');
+                }
+            });
 
         class Task {
             @Around()
-            run() { events.push('body'); return 1; }
+            run() {
+                events.push('body');
+                return 1;
+            }
         }
 
         expect(new Task().run()).toBe(1);
@@ -89,12 +99,16 @@ describe('CreateMethodDecorator', () => {
         // method decorator installs — which is what makes a per-method installer
         // viable at all.
         const order: string[] = [];
-        const RecordParam = () => (_t: any, _k: string, index: number) => { order.push(`param:${index}`); };
+        const RecordParam = () => (_t: any, _k: string, index: number) => {
+            order.push(`param:${index}`);
+        };
         const Install = () => CreateMethodDecorator(passthrough);
 
         class Task {
             @Install()
-            run(@RecordParam() a: number, @RecordParam() b: number) { return a + b; }
+            run(@RecordParam() a: number, @RecordParam() b: number) {
+                return a + b;
+            }
         }
         void Task;
 
@@ -110,7 +124,9 @@ describe('CreateMethodDecorator', () => {
 });
 
 describe('wrapper identity', () => {
-    function original(a: number, b: number) { return a + b; }
+    function original(a: number, b: number) {
+        return a + b;
+    }
 
     it('preserves the function name (BUG-7)', () => {
         const wrapper = wrapMethod(original, {}, 'original', passthrough);
@@ -132,7 +148,9 @@ describe('wrapper identity', () => {
         // SMELL-10: the old implementation used `for...in` + assignment, which
         // silently dropped non-enumerables and symbols.
         const marker = Symbol('marker');
-        const source: any = function tagged() { return 1; };
+        const source: any = function tagged() {
+            return 1;
+        };
         source.visible = 'yes';
         Object.defineProperty(source, 'hidden', {value: 'also', enumerable: false});
         source[marker] = 'symbolic';
@@ -149,7 +167,9 @@ describe('wrapper identity', () => {
         const seen: InvocationContext[] = [];
         const host = {
             greeting: 'hi',
-            greet(name: string, punctuation: string) { return `${this.greeting} ${name}${punctuation}`; },
+            greet(name: string, punctuation: string) {
+                return `${this.greeting} ${name}${punctuation}`;
+            },
         };
 
         host.greet = wrapMethod(host.greet, host, 'greet', (context, proceed) => {
@@ -164,9 +184,15 @@ describe('wrapper identity', () => {
 
     it('lets a behaviour mutate arguments before the method sees them', () => {
         const Double = wrapMethod(
-            function scale(n: number) { return n; },
-            {}, 'scale',
-            (context, proceed) => { context.args[0] = (context.args[0] as number) * 2; return proceed(); },
+            function scale(n: number) {
+                return n;
+            },
+            {},
+            'scale',
+            (context, proceed) => {
+                context.args[0] = (context.args[0] as number) * 2;
+                return proceed();
+            },
         );
 
         expect((Double as any)(21)).toBe(42);
@@ -178,7 +204,14 @@ describe('wrapper identity', () => {
         // survive intact; only a behaviour knows which failures are its own.
         const boom = new Error('from the method');
         const originalStack = boom.stack;
-        const wrapper = wrapMethod(function fails() { throw boom; }, {}, 'fails', passthrough);
+        const wrapper = wrapMethod(
+            function fails() {
+                throw boom;
+            },
+            {},
+            'fails',
+            passthrough,
+        );
 
         let caught: any;
         try {
@@ -195,7 +228,9 @@ describe('wrapper identity', () => {
 describe('installMethodWrapper', () => {
     it('replaces the method with an own, non-enumerable, configurable property', () => {
         class Task {
-            run(n: number) { return n; }
+            run(n: number) {
+                return n;
+            }
         }
 
         installMethodWrapper(Task.prototype, 'run', (context, proceed) => `${proceed()}!`);
@@ -212,7 +247,9 @@ describe('installMethodWrapper', () => {
         // prototype chain, so a naive installer would find and modify the
         // PARENT's method, corrupting the base class for every other subclass.
         class Base {
-            run(n: number) { return `base:${n}`; }
+            run(n: number) {
+                return `base:${n}`;
+            }
         }
         class Sub extends Base {}
         class Other extends Base {}
@@ -229,7 +266,9 @@ describe('installMethodWrapper', () => {
 
     it('installs over a static method on the constructor', () => {
         class Task {
-            static parse(input: string) { return input.trim(); }
+            static parse(input: string) {
+                return input.trim();
+            }
         }
 
         installMethodWrapper(Task, 'parse', (_context, proceed) => `[${proceed()}]`);
@@ -245,8 +284,9 @@ describe('installMethodWrapper', () => {
             arrow = (n: number) => n;
         }
 
-        expect(() => installMethodWrapper(Task.prototype, 'arrow', passthrough))
-            .toThrow(/arrow-function class property/);
+        expect(() => installMethodWrapper(Task.prototype, 'arrow', passthrough)).toThrow(
+            /arrow-function class property/,
+        );
     });
 
     it('refuses a non-configurable property instead of throwing an opaque error', () => {
@@ -259,10 +299,14 @@ describe('installMethodWrapper', () => {
 
 describe('findMethod', () => {
     class Base {
-        inherited() { return 'base'; }
+        inherited() {
+            return 'base';
+        }
     }
     class Sub extends Base {
-        own() { return 'sub'; }
+        own() {
+            return 'sub';
+        }
     }
 
     it('finds own and inherited methods', () => {

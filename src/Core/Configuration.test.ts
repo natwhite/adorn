@@ -167,7 +167,9 @@ describe('violation routing', () => {
     });
 
     it('lets a custom handler escalate by throwing', () => {
-        setViolationPolicy(() => { throw new Error('escalated'); });
+        setViolationPolicy(() => {
+            throw new Error('escalated');
+        });
 
         expect(() => applyViolationPolicy(new Error('bad'), SITE)).toThrow(/escalated/);
     });

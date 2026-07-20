@@ -28,7 +28,11 @@ function makeSource(onSubscribe: (sink: any) => void) {
     return {
         subscribe(sink: any) {
             onSubscribe(sink);
-            return {unsubscribe() { /* nothing to tear down */ }};
+            return {
+                unsubscribe() {
+                    /* nothing to tear down */
+                },
+            };
         },
     };
 }
@@ -39,12 +43,16 @@ describe('rxjs is genuinely absent', () => {
         expect(() => require.resolve('rxjs')).toThrow(/Cannot find module/);
     });
 
-    it('hands back the caller\'s own object, unwrapped', () => {
-        const source = makeSource(() => { /* not subscribed by the decorator */ });
+    it("hands back the caller's own object, unwrapped", () => {
+        const source = makeSource(() => {
+            /* not subscribed by the decorator */
+        });
 
         class Task {
             @Time()
-            work() { return source; }
+            work() {
+                return source;
+            }
         }
 
         // With no Observable constructor there is nothing to wrap with, so the source must pass
@@ -54,11 +62,15 @@ describe('rxjs is genuinely absent', () => {
 
     it('does not subscribe to the source', () => {
         let subscribed = 0;
-        const source = makeSource(() => { subscribed++; });
+        const source = makeSource(() => {
+            subscribed++;
+        });
 
         class Task {
             @Time()
-            work() { return source; }
+            work() {
+                return source;
+            }
         }
 
         new Task().work();
@@ -71,7 +83,9 @@ describe('rxjs is genuinely absent', () => {
     it('flags the measurement as unsettled rather than reporting a plausible-looking zero', () => {
         class Task {
             @Time()
-            work() { return makeSource(() => undefined); }
+            work() {
+                return makeSource(() => undefined);
+            }
         }
 
         new Task().work();
@@ -87,7 +101,9 @@ describe('rxjs is genuinely absent', () => {
     it('still measures synchronous and promise-returning methods normally', async () => {
         class Task {
             @Time()
-            sync() { return 'done'; }
+            sync() {
+                return 'done';
+            }
 
             @Time()
             async later() {

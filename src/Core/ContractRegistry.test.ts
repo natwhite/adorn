@@ -106,8 +106,9 @@ describe('recording and lookup', () => {
     });
 
     it('rejects a bare predicate in place of a descriptor', () => {
-        expect(() => recordParameterConstraint({}, 'send', 0, ((v: number) => v > 0) as any))
-            .toThrow(/ConstraintDescriptor/);
+        expect(() => recordParameterConstraint({}, 'send', 0, ((v: number) => v > 0) as any)).toThrow(
+            /ConstraintDescriptor/,
+        );
     });
 
     it('rejects a non-integer parameter index', () => {
@@ -116,8 +117,9 @@ describe('recording and lookup', () => {
     });
 
     it('rejects a non-object target', () => {
-        expect(() => recordParameterConstraint(null as any, 'send', 0, min({min: 0})))
-            .toThrow(/target must be an object/);
+        expect(() => recordParameterConstraint(null as any, 'send', 0, min({min: 0}))).toThrow(
+            /target must be an object/,
+        );
     });
 });
 
@@ -132,8 +134,9 @@ describe('descriptors survive round-trip retrieval', () => {
         expect(retrieved.params).toEqual({min: 10});
         expect(retrieved.predicate(10)).toBe(true);
         expect(retrieved.predicate(9)).toBe(false);
-        expect(retrieved.message({value: 9, paramName: 'count'}))
-            .toBe('Value Error: count expected a number greater than or equal to 10 but received 9 instead');
+        expect(retrieved.message({value: 9, paramName: 'count'})).toBe(
+            'Value Error: count expected a number greater than or equal to 10 but received 9 instead',
+        );
     });
 
     it('stores constraints of different kinds side by side', () => {
@@ -148,13 +151,14 @@ describe('descriptors survive round-trip retrieval', () => {
 });
 
 describe('own-property scoping', () => {
-    it('does not let a subclass see — or corrupt — its parent\'s contract', () => {
+    it("does not let a subclass see — or corrupt — its parent's contract", () => {
         class Base {
-            send(_value: number) { /* no-op */ }
+            send(_value: number) {
+                /* no-op */
+            }
         }
 
-        class Sub extends Base {
-        }
+        class Sub extends Base {}
 
         recordParameterConstraint(Base.prototype, 'send', 0, min({min: 0}));
 
@@ -226,8 +230,7 @@ describe('installation flag', () => {
 
 describe('enumeration (DEC-011)', () => {
     it('is empty until a class is explicitly registered', () => {
-        class Task {
-        }
+        class Task {}
 
         recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
 
@@ -241,11 +244,9 @@ describe('enumeration (DEC-011)', () => {
     });
 
     it('answers the question a WeakMap cannot: which classes have contracts', () => {
-        class First {
-        }
+        class First {}
 
-        class Second {
-        }
+        class Second {}
 
         registerContractedClass(First);
         registerContractedClass(Second);
@@ -262,8 +263,7 @@ describe('enumeration (DEC-011)', () => {
     });
 
     it('deduplicates repeat registrations', () => {
-        class Task {
-        }
+        class Task {}
 
         registerContractedClass(Task);
         registerContractedClass(Task);
@@ -272,13 +272,14 @@ describe('enumeration (DEC-011)', () => {
     });
 
     it('returns a snapshot that callers cannot use to mutate the registry', () => {
-        class Task {
-        }
+        class Task {}
 
         registerContractedClass(Task);
 
         const snapshot = getContractedClasses();
-        snapshot.push(function Injected() { /* no-op */ });
+        snapshot.push(function Injected() {
+            /* no-op */
+        });
 
         expect(getContractedClasses()).toHaveLength(1);
     });
@@ -288,8 +289,7 @@ describe('enumeration (DEC-011)', () => {
     });
 
     it('can be opted out of, which drops the strong references it holds', () => {
-        class Task {
-        }
+        class Task {}
 
         registerContractedClass(Task);
         expect(getContractedClasses()).toHaveLength(1);
@@ -304,8 +304,7 @@ describe('enumeration (DEC-011)', () => {
     });
 
     it('still supports per-target lookup while enumeration is disabled', () => {
-        class Task {
-        }
+        class Task {}
 
         setClassEnumerationEnabled(false);
         recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
@@ -338,22 +337,26 @@ describe('constraint position within a parameter (SMELL-13)', () => {
         recordParameterConstraint(target, 'send', 0, declaredSecond, 'prepend');
         recordParameterConstraint(target, 'send', 0, declaredFirst, 'prepend');
 
-        expect(getContract(target, 'send')!.params[0].constraints)
-            .toEqual([declaredFirst, declaredSecond]);
+        expect(getContract(target, 'send')!.params[0].constraints).toEqual([declaredFirst, declaredSecond]);
     });
 
     it('rejects an unknown position', () => {
-        expect(() => recordParameterConstraint({}, 'send', 0, min({min: 0}), 'sideways' as any))
-            .toThrow(/position must be/);
+        expect(() => recordParameterConstraint({}, 'send', 0, min({min: 0}), 'sideways' as any)).toThrow(
+            /position must be/,
+        );
     });
 });
 
 describe('getContractsForClass — both key bands (Q-9)', () => {
     it('returns instance and static contracts together, each tagged', () => {
         class Task {
-            send(_message: string) { /* no-op */ }
+            send(_message: string) {
+                /* no-op */
+            }
 
-            static parse(_input: string) { /* no-op */ }
+            static parse(_input: string) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
@@ -374,7 +377,9 @@ describe('getContractsForClass — both key bands (Q-9)', () => {
         // silently drops — producing an artifact that looks complete and is
         // missing every static method, with nothing thrown to reveal it.
         class StaticsOnly {
-            static parse(_input: string) { /* no-op */ }
+            static parse(_input: string) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(StaticsOnly, 'parse', 0, min({min: 0}));
@@ -386,19 +391,19 @@ describe('getContractsForClass — both key bands (Q-9)', () => {
     });
 
     it('returns an empty array for a class with nothing recorded', () => {
-        class Bare {
-        }
+        class Bare {}
 
         expect(getContractsForClass(Bare)).toEqual([]);
     });
 
     it('is own-scoped, exactly as the per-target reads are', () => {
         class Base {
-            run(_n: number) { /* no-op */ }
+            run(_n: number) {
+                /* no-op */
+            }
         }
 
-        class Sub extends Base {
-        }
+        class Sub extends Base {}
 
         recordParameterConstraint(Base.prototype, 'run', 0, min({min: 0}));
 
@@ -408,7 +413,9 @@ describe('getContractsForClass — both key bands (Q-9)', () => {
 
     it('carries the same MethodContract the per-target read returns', () => {
         class Task {
-            run(_n: number) { /* no-op */ }
+            run(_n: number) {
+                /* no-op */
+            }
         }
 
         recordParameterConstraint(Task.prototype, 'run', 0, min({min: 0}));
@@ -440,8 +447,7 @@ describe('the field band (GAP-9)', () => {
     it('refuses a bare closure, exactly as the parameter band does', () => {
         // The whole reason the band exists is so field contracts are *projectable*. Accepting a
         // closure here would reintroduce SMELL-14 on a band that has never had it (DEC-006).
-        expect(() => recordFieldConstraint({}, 'count', (() => true) as any))
-            .toThrow(/ConstraintDescriptor/);
+        expect(() => recordFieldConstraint({}, 'count', (() => true) as any)).toThrow(/ConstraintDescriptor/);
     });
 
     it('honours prepend, so an adapter can normalise __decorate ordering as it writes', () => {
@@ -457,8 +463,9 @@ describe('the field band (GAP-9)', () => {
     });
 
     it('rejects an unknown position', () => {
-        expect(() => recordFieldConstraint({}, 'count', min({min: 0}), 'sideways' as any))
-            .toThrow(/position must be/);
+        expect(() => recordFieldConstraint({}, 'count', min({min: 0}), 'sideways' as any)).toThrow(
+            /position must be/,
+        );
     });
 
     it('keeps metadata and the installed flag independent of the constraints', () => {
@@ -505,8 +512,7 @@ describe('the field band (GAP-9)', () => {
 
 describe('getFieldContractsForClass — both key bands (GAP-9)', () => {
     it('returns instance and static fields together, each tagged', () => {
-        class Config {
-        }
+        class Config {}
 
         recordFieldConstraint(Config.prototype, 'count', min({min: 0}));
         recordFieldConstraint(Config, 'limit', min({min: 1}));
@@ -525,8 +531,7 @@ describe('getFieldContractsForClass — both key bands (GAP-9)', () => {
         // The same silent-omission failure `getContractsForClass` exists to prevent (DEC-018): a
         // projection walking only the prototype emits a document missing every static field, and
         // nothing throws to say so.
-        class StaticsOnly {
-        }
+        class StaticsOnly {}
 
         recordFieldConstraint(StaticsOnly, 'limit', min({min: 0}));
 
@@ -536,8 +541,7 @@ describe('getFieldContractsForClass — both key bands (GAP-9)', () => {
     });
 
     it('returns an empty array for a class with no field contracts', () => {
-        class Bare {
-        }
+        class Bare {}
 
         expect(getFieldContractsForClass(Bare)).toEqual([]);
     });
@@ -549,8 +553,7 @@ describe('getFieldContractsForClass — both key bands (GAP-9)', () => {
 
 describe('resetRegistry', () => {
     it('clears per-target contracts, enumeration, and the opt-out flag', () => {
-        class Task {
-        }
+        class Task {}
 
         recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
         registerContractedClass(Task);
@@ -564,8 +567,7 @@ describe('resetRegistry', () => {
     });
 
     it('clears the field band too', () => {
-        class Config {
-        }
+        class Config {}
 
         recordFieldConstraint(Config.prototype, 'count', min({min: 0}));
 

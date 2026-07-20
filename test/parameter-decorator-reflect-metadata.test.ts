@@ -58,7 +58,9 @@ describe('emitDecoratorMetadata still works after the TypeScript upgrade (DEC-00
             return `${message}:${someNumber}`;
         }
 
-        untouched(a: string, b: number) { return `${a}${b}`; }
+        untouched(a: string, b: number) {
+            return `${a}${b}`;
+        }
     }
 
     it('emits design:paramtypes for a parameter-decorated method', () => {
@@ -75,7 +77,9 @@ describe('emitDecoratorMetadata still works after the TypeScript upgrade (DEC-00
     it('emits no metadata for an undecorated method', () => {
         // Metadata is only emitted for members that carry a decorator; this is
         // the limit P1.5's type checking has to work within.
-        expect((Reflect as any).getMetadata('design:paramtypes', Task.prototype, 'untouched')).toBeUndefined();
+        expect(
+            (Reflect as any).getMetadata('design:paramtypes', Task.prototype, 'untouched'),
+        ).toBeUndefined();
     });
 
     it('survives the wrapper being installed over the original method', () => {
@@ -131,7 +135,7 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
         }
         expect(message).toBe(
             "Value Error: Task.test(message, someNumber) parameter 'message' " +
-            "expected a string of length greater than 10 but received 'short' instead",
+                "expected a string of length greater than 10 but received 'short' instead",
         );
     });
 
@@ -145,7 +149,9 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
     it('runs stacked decorators on a single parameter', () => {
         @Contract()
         class Bounded {
-            clamp(@GreaterThanEqual(100) @LessThanEqual(1000) n: number) { return n; }
+            clamp(@GreaterThanEqual(100) @LessThanEqual(1000) n: number) {
+                return n;
+            }
         }
 
         expect(new Bounded().clamp(500)).toBe(500);
@@ -161,7 +167,9 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
         // which is exactly what this assertion is here to prove.
         @Contract()
         class Task2 {
-            test(@StringMinLength(10) message: string, @LessThanEqual(1000) someNumber: number) { return 'ok'; }
+            test(@StringMinLength(10) message: string, @LessThanEqual(1000) someNumber: number) {
+                return 'ok';
+            }
         }
 
         // registry order is declaration order on this branch too (SMELL-13):
@@ -176,7 +184,9 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
     it('registers the class for projection enumeration on this branch', () => {
         @Contract()
         class Enumerated {
-            run(@GreaterThan(0) n: number) { return n; }
+            run(@GreaterThan(0) n: number) {
+                return n;
+            }
         }
 
         expect(getContractedClasses()).toContain(Enumerated as unknown as Function);
@@ -200,7 +210,9 @@ describe('__decorate / Object.defineProperty interaction on the Reflect.decorate
     it('leaves the wrapper installed after __decorate completes', () => {
         @Contract()
         class Task {
-            test(@StringMinLength(10) message: string) { return 'ok'; }
+            test(@StringMinLength(10) message: string) {
+                return 'ok';
+            }
         }
 
         const installed = Object.getOwnPropertyDescriptor(Task.prototype, 'test')!.value;
@@ -215,7 +227,9 @@ describe('__decorate / Object.defineProperty interaction on the Reflect.decorate
 
         @Contract()
         class Task {
-            test(@GreaterThan(0) n: number, @GreaterThanEqual(1) m: number) { return n + m; }
+            test(@GreaterThan(0) n: number, @GreaterThanEqual(1) m: number) {
+                return n + m;
+            }
         }
         void Task;
 
@@ -225,7 +239,9 @@ describe('__decorate / Object.defineProperty interaction on the Reflect.decorate
     it('keeps Object.defineProperty usable immediately after a decorated class', () => {
         @Contract()
         class Task {
-            test(@GreaterThan(0) n: number) { return n; }
+            test(@GreaterThan(0) n: number) {
+                return n;
+            }
         }
         void Task;
 

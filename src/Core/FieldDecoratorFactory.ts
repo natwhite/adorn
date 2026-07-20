@@ -242,17 +242,13 @@ const seedsByTarget = new WeakMap<object, Map<FieldKey, unknown>>();
  * Knowledge of `__decorate`'s application order stays here, in the adapter, which is the only layer
  * entitled to it (DEC-015).
  */
-export function recordFieldConstraint(
-    target: object,
-    key: FieldKey,
-    constraint: ConstraintDescriptor,
-): void {
+export function recordFieldConstraint(target: object, key: FieldKey, constraint: ConstraintDescriptor): void {
     assertTarget(target, 'recordFieldConstraint');
     if (!constraint || typeof constraint.predicate !== 'function') {
         throw new TypeError(
             'recordFieldConstraint: expected a ConstraintDescriptor built by defineConstraint(). ' +
-            'A bare closure carries no identity and no params, so nothing could be projected from it ' +
-            '(DEC-006).',
+                'A bare closure carries no identity and no params, so nothing could be projected from it ' +
+                '(DEC-006).',
         );
     }
 
@@ -352,7 +348,7 @@ export function installFieldContract(target: object, key: FieldKey): void {
     if (existing && existing.configurable === false) {
         throw new TypeError(
             `adorn: cannot contract ${describeField(target, key)} — the property is already defined and ` +
-            'is non-configurable, so it cannot be replaced with a validating accessor.',
+                'is non-configurable, so it cannot be replaced with a validating accessor.',
         );
     }
     if (existing && isAdornAccessor(existing)) {
@@ -380,31 +376,35 @@ export function installFieldContract(target: object, key: FieldKey): void {
         // here would be silently undone. Fail loudly rather than pretend to contract something.
         throw new TypeError(
             `adorn: ${describeField(target, key)} is a getter/setter, not a field. A field decorator ` +
-            'cannot contract an accessor; put the check inside the setter, or contract the backing ' +
-            'field instead.',
+                'cannot contract an accessor; put the check inside the setter, or contract the backing ' +
+                'field instead.',
         );
     } else if (existing && 'value' in existing) {
         rememberSeed(target, key, existing.value);
     }
 
-    Object.defineProperty(target, key, brand({
-        configurable: true,
-        // Non-enumerable on the prototype so `for...in` over an instance does not report the field
-        // before anything has been assigned to it. An undecorated field with no initializer does not
-        // exist until written either; the trampoline should not change that.
-        enumerable: false,
+    Object.defineProperty(
+        target,
+        key,
+        brand({
+            configurable: true,
+            // Non-enumerable on the prototype so `for...in` over an instance does not report the field
+            // before anything has been assigned to it. An undecorated field with no initializer does not
+            // exist until written either; the trampoline should not change that.
+            enumerable: false,
 
-        // Reached only before the first assignment to a given instance. An undecorated field with no
-        // initializer reads `undefined`, so this does too.
-        get: function adornFieldTrampolineGet(): unknown {
-            return undefined;
-        },
+            // Reached only before the first assignment to a given instance. An undecorated field with no
+            // initializer reads `undefined`, so this does too.
+            get: function adornFieldTrampolineGet(): unknown {
+                return undefined;
+            },
 
-        set: function adornFieldTrampolineSet(this: object, value: unknown): void {
-            assertFieldValue(target, key, value, adornFieldTrampolineSet);
-            defineInstanceSlot(this, target, key, value);
-        },
-    }));
+            set: function adornFieldTrampolineSet(this: object, value: unknown): void {
+                assertFieldValue(target, key, value, adornFieldTrampolineSet);
+                defineInstanceSlot(this, target, key, value);
+            },
+        }),
+    );
 
     markInstalled(target, key);
     // The registry's own flag, so a projection can tell a recorded-but-unenforced field from an
@@ -491,7 +491,7 @@ export function CreateFieldDecorator(constraint: ConstraintDescriptor): AdornFie
     if (!constraint || typeof constraint.predicate !== 'function') {
         throw new TypeError(
             'CreateFieldDecorator: expected a ConstraintDescriptor built by defineConstraint() — ' +
-            'e.g. GreaterThan(0) from src/Contracts/number.',
+                'e.g. GreaterThan(0) from src/Contracts/number.',
         );
     }
 
@@ -555,30 +555,34 @@ function defineInstanceSlot(instance: object, owner: object, key: FieldKey, init
 
     let slot = initial;
 
-    Object.defineProperty(instance, key, brand({
-        configurable: true,
-        // Own **and enumerable** — this is what keeps JSON.stringify, Object.keys, spread and
-        // Object.assign behaving exactly as they do for an undecorated field.
-        enumerable: true,
-        get: function adornFieldGet(): unknown {
-            return slot;
-        },
-        set: function adornFieldSet(this: object, next: unknown): void {
-            assertFieldValue(owner, key, next, adornFieldSet);
+    Object.defineProperty(
+        instance,
+        key,
+        brand({
+            configurable: true,
+            // Own **and enumerable** — this is what keeps JSON.stringify, Object.keys, spread and
+            // Object.assign behaving exactly as they do for an undecorated field.
+            enumerable: true,
+            get: function adornFieldGet(): unknown {
+                return slot;
+            },
+            set: function adornFieldSet(this: object, next: unknown): void {
+                assertFieldValue(owner, key, next, adornFieldSet);
 
-            if (this === instance) {
-                slot = next;
-                return;
-            }
+                if (this === instance) {
+                    slot = next;
+                    return;
+                }
 
-            // Assignment reached this accessor through the prototype chain — a subclass writing to
-            // an inherited *static* field is the realistic case (`Sub.limit = 5` when `limit` is
-            // declared on `Base`). Writing `slot` here would silently mutate the parent's value,
-            // whereas assigning to an inherited plain data property creates an own property on the
-            // receiver. Give the receiver its own slot so the two behave the same.
-            defineInstanceSlot(this, owner, key, next);
-        },
-    }));
+                // Assignment reached this accessor through the prototype chain — a subclass writing to
+                // an inherited *static* field is the realistic case (`Sub.limit = 5` when `limit` is
+                // declared on `Base`). Writing `slot` here would silently mutate the parent's value,
+                // whereas assigning to an inherited plain data property creates an own property on the
+                // receiver. Give the receiver its own slot so the two behave the same.
+                defineInstanceSlot(this, owner, key, next);
+            },
+        }),
+    );
 }
 
 /**

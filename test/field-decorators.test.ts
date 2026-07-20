@@ -46,7 +46,9 @@ describe('a decorated field behaves like a field (BUG-1)', () => {
         const basket = new Basket();
         basket.itemCount = 9;
 
-        expect(() => { basket.itemCount = -3; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            basket.itemCount = -3;
+        }).toThrow(/expected a number greater than 0/);
         expect(basket.itemCount).toBe(9);
     });
 
@@ -64,8 +66,9 @@ describe('a decorated field behaves like a field (BUG-1)', () => {
     });
 
     it('reports the class and field in the message', () => {
-        expect(() => { new Basket().itemCount = 0; })
-            .toThrow('Value Error: Basket.itemCount expected a number greater than 0 but received 0 instead');
+        expect(() => {
+            new Basket().itemCount = 0;
+        }).toThrow('Value Error: Basket.itemCount expected a number greater than 0 but received 0 instead');
     });
 
     it('survives JSON round-tripping like an undecorated object', () => {
@@ -86,8 +89,12 @@ describe('stacked constraints', () => {
     it('enforces every constraint on the field', () => {
         const reading = new Reading();
 
-        expect(() => { reading.value = 5; }).toThrow(/greater than or equal to 10/);
-        expect(() => { reading.value = 500; }).toThrow(/less than or equal to 100/);
+        expect(() => {
+            reading.value = 5;
+        }).toThrow(/greater than or equal to 10/);
+        expect(() => {
+            reading.value = 500;
+        }).toThrow(/less than or equal to 100/);
 
         reading.value = 75;
         expect(reading.value).toBe(75);
@@ -95,7 +102,9 @@ describe('stacked constraints', () => {
 
     it('reports the first violated constraint in declaration order, not __decorate order', () => {
         // Both are violated by `NaN`; the one written first is the one reported.
-        expect(() => { new Reading().value = NaN; }).toThrow(/greater than or equal to 10/);
+        expect(() => {
+            new Reading().value = NaN;
+        }).toThrow(/greater than or equal to 10/);
     });
 
     it('installs once, not once per decorator (BUG-1: configurable:false made the second throw)', () => {
@@ -118,7 +127,9 @@ describe('inheritance', () => {
         derived.count = 5;
 
         expect(derived.count).toBe(5);
-        expect(() => { derived.count = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            derived.count = -1;
+        }).toThrow(/expected a number greater than 0/);
     });
 
     it('keeps subclass instances independent of each other and of the base', () => {
@@ -149,10 +160,14 @@ describe('inheritance', () => {
         expect(getFieldConstraints(Derived.prototype, 'count').map(c => c.constraint)).toEqual(['max']);
 
         // ...while the effective view of the subclass is the union, base-most first.
-        expect(getEffectiveFieldConstraints(Derived.prototype, 'count').map(c => c.constraint))
-            .toEqual(['greaterThan', 'max']);
+        expect(getEffectiveFieldConstraints(Derived.prototype, 'count').map(c => c.constraint)).toEqual([
+            'greaterThan',
+            'max',
+        ]);
 
-        expect(() => { new Base().count = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            new Base().count = -1;
+        }).toThrow(/expected a number greater than 0/);
     });
 
     /*
@@ -172,12 +187,16 @@ describe('inheritance', () => {
         expect(derived.count).toBe(8);
 
         // The subclass's own constraint is enforced...
-        expect(() => { derived.count = 50; }).toThrow(/less than or equal to 10/);
+        expect(() => {
+            derived.count = 50;
+        }).toThrow(/less than or equal to 10/);
 
         // ...and so is the base's, which the subclass has no way to shed. Redeclaring `count`
         // shadows the base's *accessor*, but the accessor is only how the assignment is intercepted;
         // the contract is resolved along the prototype chain at check time, so both apply.
-        expect(() => { derived.count = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            derived.count = -1;
+        }).toThrow(/expected a number greater than 0/);
         expect(derived.count).toBe(8);
     });
 
@@ -189,7 +208,9 @@ describe('inheritance', () => {
 
         // `NaN` violates both. Base-most first, so a reader scanning the hierarchy top-down meets
         // the reported constraint where they would look for it.
-        expect(() => { new Derived().count = NaN; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            new Derived().count = NaN;
+        }).toThrow(/expected a number greater than 0/);
     });
 
     it('cannot weaken an inherited bound even by restating it more loosely', () => {
@@ -206,7 +227,9 @@ describe('inheritance', () => {
         }
 
         const loosened = new Loosened();
-        expect(() => { loosened.value = 5; }).toThrow(/greater than or equal to 10/);
+        expect(() => {
+            loosened.value = 5;
+        }).toThrow(/greater than or equal to 10/);
 
         loosened.value = 20;
         expect(loosened.value).toBe(20);
@@ -242,9 +265,15 @@ describe('inheritance', () => {
         }
 
         const c = new C();
-        expect(() => { c.v = -1; }).toThrow(/greater than or equal to 0/);
-        expect(() => { c.v = 500; }).toThrow(/less than or equal to 100/);
-        expect(() => { c.v = 1.5; }).toThrow(/an integer/);
+        expect(() => {
+            c.v = -1;
+        }).toThrow(/greater than or equal to 0/);
+        expect(() => {
+            c.v = 500;
+        }).toThrow(/less than or equal to 100/);
+        expect(() => {
+            c.v = 1.5;
+        }).toThrow(/an integer/);
 
         c.v = 42;
         expect(c.v).toBe(42);
@@ -277,7 +306,9 @@ describe('static fields', () => {
 
         Config.limit = 25;
         expect(Config.limit).toBe(25);
-        expect(() => { Config.limit = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            Config.limit = -1;
+        }).toThrow(/expected a number greater than 0/);
         expect(Config.limit).toBe(25);
     });
 
@@ -294,7 +325,9 @@ describe('static fields', () => {
         // accessor found on the chain must not silently write through to the base's storage.
         expect(Sub.limit).toBe(99);
         expect(Base.limit).toBe(10);
-        expect(() => { Sub.limit = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            Sub.limit = -1;
+        }).toThrow(/expected a number greater than 0/);
     });
 
     it('rejects an invalid static initializer at class-evaluation time', () => {
@@ -338,7 +371,9 @@ describe('coexisting with parameter contracts', () => {
         task.priority = 3;
 
         expect(task.priority).toBe(3);
-        expect(() => { task.priority = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            task.priority = -1;
+        }).toThrow(/expected a number greater than 0/);
     });
 
     it('enforces the parameter contract on the same class', () => {
@@ -360,7 +395,9 @@ describe('coexisting with parameter contracts', () => {
             count: number = 1;
         }
 
-        expect(() => { new Unannotated().count = -1; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            new Unannotated().count = -1;
+        }).toThrow(/expected a number greater than 0/);
     });
 });
 
@@ -375,18 +412,24 @@ describe('totality, inherited from the shared descriptors', () => {
 
     it('reports a contract violation, not a TypeError, for null (BUG-4)', () => {
         const guarded = new Guarded();
-        expect(() => { (guarded as any).label = null; }).toThrow(/expected a string of length/);
+        expect(() => {
+            (guarded as any).label = null;
+        }).toThrow(/expected a string of length/);
         expect(guarded.label).toBe('abc');
     });
 
     it('rejects NaN (Q-7)', () => {
         const guarded = new Guarded();
-        expect(() => { guarded.count = NaN; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            guarded.count = NaN;
+        }).toThrow(/expected a number greater than 0/);
     });
 
     it('rejects undefined', () => {
         const guarded = new Guarded();
-        expect(() => { (guarded as any).count = undefined; }).toThrow(/expected a number greater than 0/);
+        expect(() => {
+            (guarded as any).count = undefined;
+        }).toThrow(/expected a number greater than 0/);
     });
 });
 
