@@ -34,6 +34,8 @@ import {
     Positive,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
+import {Contract} from '../src/Core/ContractInstaller';
+import {getContract, getContractedClasses} from '../src/Core/ContractRegistry';
 
 describe('preconditions of this file', () => {
     it('runs on the Reflect.decorate branch of tslib __decorate', () => {
@@ -50,6 +52,7 @@ describe('emitDecoratorMetadata still works after the TypeScript upgrade (DEC-00
      * either the compiler options regressed or the transform stopped using the
      * real TypeScript compiler.
      */
+    @Contract()
     class Task {
         test(@StringMinLength(10) message: string, @GreaterThanEqual(100) someNumber: number) {
             return `${message}:${someNumber}`;
@@ -77,16 +80,26 @@ describe('emitDecoratorMetadata still works after the TypeScript upgrade (DEC-00
 
     it('survives the wrapper being installed over the original method', () => {
         // Metadata is attached to (prototype, key), not to the function object,
-        // so replacing the method with a wrapper does not lose it. P1.3 moves
-        // installation to a descriptor-returning method decorator; this must
-        // still hold afterwards.
+        // so replacing the method with a wrapper does not lose it. P1.3 moved
+        // installation to a class-level `@Contract()` doing its own
+        // `Object.defineProperty`; this still holds afterwards.
         expect(Task.prototype.test.length).toBe(0); // the wrapper, not the original
         const paramtypes = (Reflect as any).getMetadata('design:paramtypes', Task.prototype, 'test');
         expect(paramtypes.map((t: any) => t.name)).toEqual(['String', 'Number']);
     });
+
+    it('metadata survives even though the wrapper is a different function object', () => {
+        // Worth pinning explicitly now that installation happens in a separate
+        // pass: the wrapper is created long after `__metadata` ran, so if the
+        // metadata had been keyed on the function rather than on (proto, key) it
+        // would have been lost here. P1.5's type checking depends on this.
+        expect(Task.prototype.test.name).toBe('test');
+        expect((Reflect as any).getMetadata('design:type', Task.prototype, 'test')).toBe(Function);
+    });
 });
 
 describe('core pipeline behaves identically on the Reflect.decorate branch', () => {
+    @Contract()
     class Task {
         greeting = 'hello';
 
@@ -122,15 +135,15 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
         );
     });
 
-    it('CHARACTERIZATION: name and arity are lost on this branch too', () => {
-        // Same known defects as the non-Reflect branch — recorded here so a fix
-        // that only addresses one branch is caught. Intended after P1.2/P1.6:
-        // name 'test', length 2.
-        expect(Task.prototype.test.name).toBe('');
+    it('name is restored on this branch too, arity is not', () => {
+        // CHANGED BY P1.2 (name, BUG-7). Arity remains 0 and is P1.6's. Recorded
+        // on both branches so a fix that only addresses one is caught.
+        expect(Task.prototype.test.name).toBe('test');
         expect(Task.prototype.test.length).toBe(0);
     });
 
     it('runs stacked decorators on a single parameter', () => {
+        @Contract()
         class Bounded {
             clamp(@GreaterThanEqual(100) @LessThanEqual(1000) n: number) { return n; }
         }
@@ -140,14 +153,32 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
         expect(() => new Bounded().clamp(5000)).toThrow(/less than or equal to 1000/);
     });
 
-    it('still evaluates constraints in reverse parameter order', () => {
+    it('evaluates constraints in declaration order on this branch too', () => {
+        // CHANGED BY P1.3 (SMELL-11). Both `Reflect.decorate` and tslib's own
+        // loop apply the decorator array back-to-front, so BOTH branches used to
+        // check the highest-index parameter first. The normalisation happens at
+        // install time, downstream of either branch, so both are fixed together —
+        // which is exactly what this assertion is here to prove.
+        @Contract()
         class Task2 {
             test(@StringMinLength(10) message: string, @LessThanEqual(1000) someNumber: number) { return 'ok'; }
         }
 
-        const recorded = (Task2.prototype.test as any).parameterDecorators as { parameterIndex: number }[];
-        expect(recorded.map(d => d.parameterIndex)).toEqual([1, 0]);
-        expect(() => new Task2().test('short', 5000)).toThrow(/parameter 'someNumber'/);
+        // registry order is still arrival order, index-sorted
+        const contract = getContract(Task2.prototype, 'test')!;
+        expect(contract.params.map(p => p.index)).toEqual([0, 1]);
+
+        // ...but enforcement reports the first-declared violation
+        expect(() => new Task2().test('short', 5000)).toThrow(/parameter 'message'/);
+    });
+
+    it('registers the class for projection enumeration on this branch', () => {
+        @Contract()
+        class Enumerated {
+            run(@Positive() n: number) { return n; }
+        }
+
+        expect(getContractedClasses()).toContain(Enumerated as unknown as Function);
     });
 });
 
@@ -155,24 +186,33 @@ describe('__decorate / Object.defineProperty interaction on the Reflect.decorate
     /**
      * `Reflect.decorate` does not itself define the property — tslib still runs
      * its own trailing `Object.defineProperty(target, key, r)` afterwards. So the
-     * clobbering hazard, and the one-shot patch that swallows it, are live on
-     * this branch exactly as on the other. P1.4 must be verified here too.
+     * clobbering hazard was live on this branch exactly as on the other, and P1.4
+     * has to be verified here too rather than assumed to transfer.
+     *
+     * Note the class decorator takes a different `Reflect.decorate` path again:
+     * `__decorate([Contract()], Task)` is a 2-argument call, so tslib passes
+     * `key`/`desc` as `undefined` and reflect-metadata dispatches to
+     * `DecorateConstructor` instead of `DecorateProperty`. Installation therefore
+     * exercises a third code path that the non-metadata file cannot reach.
      */
 
     it('leaves the wrapper installed after __decorate completes', () => {
+        @Contract()
         class Task {
             test(@StringMinLength(10) message: string) { return 'ok'; }
         }
 
         const installed = Object.getOwnPropertyDescriptor(Task.prototype, 'test')!.value;
         expect(installed.length).toBe(0);
+        expect(installed.name).toBe('test');
         expect(installed.toString()).toContain('test(message)');
         expect(() => new Task().test('short')).toThrow(/expected a string of length greater than 10/);
     });
 
-    it('restores Object.defineProperty by the time decoration finishes', () => {
+    it('never patches Object.defineProperty on this branch either (P1.4)', () => {
         const before = Object.defineProperty;
 
+        @Contract()
         class Task {
             test(@Positive() n: number, @GreaterThanEqual(1) m: number) { return n + m; }
         }
@@ -182,6 +222,7 @@ describe('__decorate / Object.defineProperty interaction on the Reflect.decorate
     });
 
     it('keeps Object.defineProperty usable immediately after a decorated class', () => {
+        @Contract()
         class Task {
             test(@Positive() n: number) { return n; }
         }

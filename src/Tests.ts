@@ -1,7 +1,12 @@
 import { from } from 'rxjs';
 import {Positive, StringMinLength, GreaterThanEqual, LessThanEqual} from './ParameterDecorators/Constraints';
 import { Log, Memoize } from './MethodDecorators/promise/Memoize';
+import { Contract } from './Core/ContractInstaller';
 
+// P1.3 (BREAKING): parameter decorators now only RECORD their constraints; `@Contract()` is what
+// installs the enforcing wrapper. Without it the constraints below are silently inert — running
+// this demo would print a development-mode warning naming this class and nothing would be checked.
+@Contract()
 class Task {
     private testing: string = ' yolo';
     // @timeIt()
