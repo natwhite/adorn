@@ -439,3 +439,25 @@ Because DEC-004 makes ts-jest binding — itself forced by esbuild's permanent r
 **Rationale.** Two reasons beyond "least surprising". First, it is the order documentation will list constraints in, so enforcement and projection describe the same declaration the same way — under DEC-006 those two are supposed to be one source. Second, keeping the normalisation in the adapter means knowledge of `__decorate`'s application order stays in the only layer entitled to have it; a standard-decorator adapter with different ordering produces identical behaviour without touching the core.
 
 **Consequences.** A behavioural change: a call violating several constraints now reports a different one than before. Nothing depended on the old order except a characterization test that existed to catch exactly this, which was updated. **Residue:** the `ContractRegistry` array is still in arrival order, so within a single parameter the registry — and therefore documentation — lists constraints reversed relative to enforcement. Cosmetic, no semantic disagreement, tracked as **SMELL-13** with a minimal additive registry fix proposed rather than applied.
+
+---
+
+## DEC-023 — Sensitive-flow analysis: iterative single-hop, report-by-default
+**Status:** ACCEPTED (governs the spike) · user ruling · feasibility **unproven** — see `sensitive-flow-spike.md`
+
+**Context.** `@Sensitive` can propagate through object-typed parameters by resolving markings from the runtime prototype, but **cannot** propagate through primitives — `(ssn: string)` severs the link, and value-tainting was rejected on measured grounds (see `pii-redaction-plan.md`). The proposal is to close that gap at build time with static flow analysis.
+
+**Decisions, as ruled:**
+
+1. **Iterative single-hop, not interprocedural.** Find a `@Sensitive` value passed *directly* into an unmarked parameter; once that parameter is annotated it becomes a source itself, so the next run finds the next hop. Coverage accumulates by repeated application rather than by whole-program analysis.
+
+   *Why this is the interesting choice:* it sidesteps interprocedural taint analysis entirely. Each pass stays cheap and near-zero-false-positive, and — decisively — **propagation is materialized in source at every step**, so there is no inferred-but-invisible taint to go stale. It should terminate because annotations are only ever added, never removed; that must be *proven*, including under recursion, not assumed.
+
+2. **Report by default; `--fix` opts in** to writing annotations. Never auto-writes silently: an inferred marking that lands without review expands the trusted surface without anyone agreeing to it.
+
+3. **Both an ESLint rule and a CLI**, ideally over one analysis core. A CLI is arriving regardless for documentation generation (see IDEA-9).
+
+4. **A feasibility spike precedes any implementation.**
+
+**Consequences.** The analysis is a *supplement*, never load-bearing — the redaction plan's central principle is that every emitting path must be safe without consulting any annotation. The danger to guard is a **silent** blind spot: a tool that cannot see a flow and does not say so produces exactly the false confidence the redaction plan calls worse than no design. A related hazard is that "silent because converged" and "silent because never re-run" look identical, which must be designed against.
+
