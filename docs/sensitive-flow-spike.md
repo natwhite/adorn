@@ -15,6 +15,12 @@
 > ### ⚠ A re-evaluation under a NARROWED threat model was added as §14 on 2026-07-20.
 >
 > **§1–§13 are unchanged and are not superseded.** The user has since ruled that adorn's obligation is to make **adorn's own emissions** safe, not to police a developer's raw `console.log`. That makes the sink set closed and enumerable, which is precisely the thing §4.3 found the design to lack. **§14 re-measures every number under that model and returns a different verdict on a different design.** The record below of *why the original design failed under the broader model* is exactly what justifies the narrowing, so it is preserved verbatim rather than rewritten. Read §1 first, then §14.1.
+>
+> ---
+>
+> ### ⚠ A third pass — two ALTERNATIVE approaches to the same gap — was added as §15 on 2026-07-20.
+>
+> **§1–§14 are unchanged and are not superseded.** Both prior verdicts stand exactly as written. §15 evaluates two designs neither of them considered: **Option A**, runtime observation through the `@Sensitive` getter, and **Option B**, full interprocedural static analysis. **Option A catches 15 of the 17** — the first thing in this document to move that number — **and is rejected anyway**, on grounds that have nothing to do with its catch rate. Option B is rejected as posed and replaced by something an order of magnitude smaller. Read §15.1 for the verdicts.
 
 ---
 
@@ -817,3 +823,375 @@ Everything in §10 still stands. Additionally:
 **3. Interface dispatch flipped from the spike's best surprise to a real hole.** §12.3 recorded barrels-and-interfaces resolving as the one place the design was *stronger* than assumed. Under the narrowed model, resolving to the interface signature is precisely the wrong answer, because the whole question is now "what is the receiver, and is it decorated?" The same compiler behaviour, unchanged, is a positive under one threat model and a defect under the other. That is worth recording as a general caution: **a capability finding is only meaningful relative to the question being asked of it.**
 
 **4. I set out to test whether the narrowing rescues the design and found it rescues a different one.** The honest framing is not "DEC-023 point 1 works after all under a narrower model" — it does not, and §14.5's 64% is the evidence. It is that the narrowing makes a *simpler* design viable that nobody had proposed, because under the broad model a one-pass detector would have been obviously useless (there is no enumerable sink set to point it at). The narrowing did not repair the iteration; it removed the need for it, in the one case it can serve.
+
+---
+---
+
+# 15. THIRD PASS — two alternative approaches: runtime observation, and full interprocedural analysis
+
+*Added 2026-07-20, after §1–§14. Same machine, same toolchain (Node v22.11.0, TypeScript 6.0.3). New spike code in `spike/observe.js`, `spike/observe-fixtures.js`, `spike/observe-run.js`, `spike/observe-collide.js`, `spike/observe-scope.js`, `spike/observe-bench.js`, `spike/observe-limits.js` and `spike/observe-optionb.js`. The existing apparatus was reused rather than rebuilt: `classifySource` and `isMarked` are imported from `core.js` unchanged, and the 22 SCOPE-IN shapes are transcribed one-for-one from `spike/fixtures/blindspots-sink.ts`.*
+
+> **§1–§14 are not superseded and were not edited.** Both prior verdicts stand. This section evaluates two designs neither considered, and returns a **reject** on both — but for the first time in this document one of them **moves the 17**, and the reason it is still rejected is the most decision-relevant finding of the whole spike.
+
+## 15.1 The verdicts
+
+| | Verdict | Confidence |
+|---|---|---|
+| **Option A — runtime observation via the `@Sensitive` getter, value-membership in a call-scoped set** | **REJECT.** It works. It catches **15 of the 17** by exact membership and **16 of 17** with substring matching — the only mechanism in this spike that has moved that number at all. It is rejected because its **coverage is a property of execution history rather than of code**, it **cannot enumerate its own misses** (so it cannot satisfy DEC-026 point 4, a condition of shipping), and **no eligibility policy is simultaneously safe and useful**. | **HIGH** on rejection. The two decisive findings (§15.6b, §15.6c) are structural, not fixture-dependent. **MEDIUM-HIGH** on the specific false-positive percentages. |
+| **Option B — full interprocedural static analysis, rebuilt on every build** | **REJECT AS POSED**, and the framing is wrong. Measured: only **10 of the 17** need interprocedural reasoning. **6 are ordinary local severings** a single-function-body pass sees, and one of those is `bs8_template` — §6.2's "most dangerous blind spot" and §14.4's headline in-scope-and-invisible case — which **falls to a six-line local propagator at zero false-positive cost**. A full taint engine is being proposed for a problem where a bounded local pass gets the highest-value half. | **HIGH** on rejecting the full engine. **MEDIUM-HIGH** on the 6-of-17 split (fixture-dependent, as §10 records). |
+| **Are A and B complementary?** | **Arithmetically yes, as a design no.** Union is **16/17** against 15 for A alone and 6 for B alone — so the premise holds. But **static's entire unique contribution is one case**, and that case is cheaper and cleaner from the static side. Combining them buys one shape and inherits every one of Option A's disqualifying properties. | **HIGH** — this is a direct computation over the case set (§15.10). |
+
+**The one-sentence version.** Option A is the first thing in this spike that actually closes the source-side gap, and it closes it by making adorn's redaction depend on what the program happened to do rather than on what the developer declared — which trades a gap you can enumerate for a gap you cannot.
+
+## 15.2 What was built
+
+`spike/observe.js` mirrors `src/Core/FieldDecoratorFactory.ts`'s accessor shape exactly, so the measurements transfer: a **non-enumerable prototype trampoline** (`installFieldContract`, `FieldDecoratorFactory.ts:386`) whose setter installs an **own, enumerable accessor over a closure slot** (`defineInstanceSlot`, `:558`). The only addition is a `record()` call inside the getter.
+
+The mechanism under test is **not branding** — `pii-redaction-plan.md` §5.5 already rejected that on measured grounds. It is **value-membership in a call-scoped set**: the getter records what it returned, and the emitter checks membership before printing. A copied string is the same string, so `const copy = s.ssn` is caught. That is the positional appeal the brief identified, and it is real.
+
+`Log()` mirrors `src/MethodDecorators/Log.ts:92` — it renders **every** argument — with a structural walk so a nested value (`emitObj({...s})`, `emitWrapped({value: s.ssn})`) is reached.
+
+## 15.3 Question A.1 — does it catch the 17? **Yes. 15 of them, and 16 with substring.**
+
+`node spike/observe-run.js`, over the 22 SCOPE-IN shapes:
+
+| Mode | In-scope caught | **Of the 17 static blind spots, rescued** | Still missed |
+|---|---|---|---|
+| **exact value membership** | 20 / 22 | **15 / 17** | `bs8_template`, `bs11_transform` |
+| **substring matching** | 21 / 22 | **16 / 17** | `bs11_transform` |
+| exact, strings of length ≥ 8 | 20 / 22 | 15 / 17 | `bs8_template`, `bs11_transform` |
+
+**This is a real result and it deserves to be stated without hedging.** Every shape §14.4 called a genuine silent miss — `const copy = s.ssn`, `const {ssn} = s`, `{...s}`, `s[key]`, `bs10_read(s)`, the callback, the index-signature bag, the laundering through an unmarked field — is caught, because all of them read the field first and the getter fires before any severing occurs.
+
+**Two of the rescues are worth naming individually, because §14 recorded them as structural problems:**
+
+- **`bs2_any` — the `any`-typed holder.** §6.3 called this "total. No symbol, no declaration, no marking." At runtime there are no types, so `any` is not a category. The accessor fires exactly as it does for a declared `Subject`.
+- **`bs17_iface` — interface dispatch.** §14.4 introduced this as *"a new blind spot the narrowing creates"* and called it "not a corner case," being the ordinary dependency-injected shape. Runtime dispatch always arrives at the concrete method, so the `@Log`-decorated implementation is the one that runs. **The blind spot the re-evaluation discovered is dissolved entirely.**
+
+**The two residual misses, precisely:**
+
+- **`bs8_template`** — ``SINK.emit(`user ${s.ssn}`)``. The getter fires and records the SSN, but the emitted string is a *different* string containing it. Exact membership misses; substring catches it. §15.4c prices that.
+- **`bs11_transform`** — `s.ssn.slice(-4)`. Missed by **both** modes and by every static approach, and §15.8 argues it is the most interesting case in the inventory.
+
+## 15.4 Questions A.2, A.4, A.5 — the correlation, collision and substring problems
+
+The property that makes the design work — a copy is the same value — is exactly the property that breaks it. An unrelated value that happens to equal a sensitive one is indistinguishable from it. `true` is `true`.
+
+`node spike/observe-collide.js`: 500 benign emission leaves drawn from realistic pools (booleans, small integers and status codes, short enums, ids, messages, dates), against a `Customer` whose eight sensitive fields deliberately span the shapes a real record has — an 11-character SSN, a 7-character email, a 10-character date of birth, a 2-character country code, a 1-character tier, an **empty** middle name, a **boolean** consent flag and a **zero** failed-login count.
+
+| Eligibility policy | False positives | FP rate | Sensitive fields protected | TP rate |
+|---|---|---|---|---|
+| exact, record everything | 119 / 500 | **23.8%** | 8 / 8 | 100% |
+| exact, strings only | 57 / 500 | **11.4%** | 6 / 8 | 75% |
+| exact, strings length ≥ 4 | 12 / 500 | **2.4%** | 3 / 8 | 37.5% |
+| exact, strings length ≥ 8 | 12 / 500 | **2.4%** | 2 / 8 | 25% |
+| exact, strings length ≥ 12 | 0 / 500 | **0.0%** | 0 / 8 | **0%** |
+| **substring**, record everything | 147 / 500 | **29.4%** | 8 / 8 | 100% |
+| substring, strings length ≥ 8 | 12 / 500 | 2.4% | 2 / 8 | 25% |
+
+> **There is no knee in this curve.** The trade is monotone from end to end. Protect everything and one emission in four is corrupted; get the false-positive rate to zero and the mechanism protects nothing at all.
+
+**The individual collisions, counted:**
+
+| Sensitive value | Benign leaves it collides with |
+|---|---|
+| `true` | 48 / 500 (**9.6%**) |
+| `""` (empty middle name) | 23 / 500 (4.6%) |
+| `0` (failed logins) | 14 / 500 (2.8%) |
+| `"US"` (country code) | 13 / 500 (2.6%) |
+| `"1981-04-02"` (date of birth) | 12 / 500 (2.4%) |
+| `"A"` (tier) | 9 / 500 (1.8%) |
+| `"123-45-6789"` (SSN) | 0 / 500 |
+| `"a@b.com"` (email) | 0 / 500 |
+
+**Is the collision containable, as the brief asks? No, and the reason is sharper than "short values collide."**
+
+A length guard removes the boolean, the zero, the empty string and the short enums — and with them 6 of the 8 fields' protection. What it does **not** remove is the residual, and `spike/observe-bench.js` attributes it exactly:
+
+> At `minLength ≥ 8`, **100% of the remaining false positives are the date of birth** colliding with ordinary benign dates — 34 of 500 in the benchmark corpus, 12 of 500 in the collision corpus.
+
+**A date of birth is a sensitive value shaped exactly like a timestamp.** No length threshold can separate `1981-04-02` from `2024-01-15`, because there is nothing to separate — they are the same shape, the same length, the same character class. The one guard that suppresses collisions is structurally incapable of suppressing the collision that matters most in a PII context. Containment fails not at the margin but on one of the canonical PII field types.
+
+### 15.4b The correlation problem, measured — and it is not what I expected
+
+A value being *read* is not a value being *logged*, and reads vastly outnumber emissions. I expected the observed set to accumulate through a request until it matched half the world. **It does not, and the reason is worth recording because it cuts in the design's favour.**
+
+`spike/observe-bench.js`, false-positive rate against the number of records read in one scope:
+
+| Records read | Set size | FP (record everything) | FP (strings ≥ 8) |
+|---|---|---|---|
+| 1 | 7 | 34.0% | 6.8% |
+| 10 | 16 | 34.0% | 6.8% |
+| 100 | 106 | 34.0% | 6.8% |
+| 1,000 | 1,006 | 34.0% | 6.8% |
+
+**Flat.** Long values are unique per subject, so adding a thousand more SSNs to the set adds a thousand values nothing will ever collide with. The false-positive rate is driven by the **shape** of the sensitive fields, not by the **size** of the observed set. Scope-membership is therefore a better approximation than I predicted: it does not degrade with scope length.
+
+That is a genuine positive and it is why the verdict does not rest here. The 23.8% is bad; it is bad *at one record*, and it is bad because of what a `boolean` is, not because of anything the scope accumulated.
+
+### 15.4c Substring matching — is there a defensible middle?
+
+**No.** Substring buys exactly one case (`bs8_template`) and prices it three ways:
+
+1. **False positives rise**, 23.8% → **29.4%**.
+2. **Cost becomes O(n·m).** Per emission of a realistic 12-leaf payload: **757 ns** at 1 observed value, **1,049 ns** at 10, **4,427 ns** at 100, **38,970 ns** at 1,000 — **63×** the exact-match path, and it scales with set size where exact matching does not.
+3. **An empty observed string matches every string.** The prototype has to special-case it, and a sensitive field that is legitimately empty is common (an absent middle name, an unset optional).
+
+And the case it buys is available for free from the other direction: §15.9 shows a **six-line static propagator** catches `bs8_template` with **zero** false positives and no per-emission cost. Substring matching is the expensive way to buy something already on the shelf.
+
+## 15.5 Question A.3 — scope propagation, and the finding that decides Option A's fate
+
+`node spike/observe-scope.js`. **`AsyncLocalStorage` is excellent at the thing it is for and irrelevant to the thing that matters.**
+
+| Case | Scope survived? |
+|---|---|
+| synchronous read and emit | **YES** |
+| `await` across a `setTimeout` | **YES** |
+| `Promise.all`, emit in a concurrent branch | **YES** |
+| `setTimeout` callback, after the scope function returned | **YES** |
+| `process.nextTick` | **YES** |
+| `EventEmitter`, listener registered outside, `emit()` called inside | **YES** |
+| `EventEmitter`, value read in scope and emitted after it closed | **NO** |
+| request A reads and caches, request B emits | **NO** |
+| request B emits request A's secret (ALS correctly isolates them) | **NO** |
+| **nothing opened a scope at all** | **NO** |
+| field read at startup, emitted inside a scope | **NO** |
+
+> **6 of 11.** Every async-control-flow hop survives. Every *architectural* boundary loses it.
+
+**The decisive row is "nothing opened a scope at all," and it is not an edge case — it is the default.** adorn is a decorator library. It does not own the request lifecycle, cannot assume a consumer installed middleware, and has no hook that runs before application code. Absent a scope the emitter **fails open, silently**: full rendering, no redaction, no diagnostic.
+
+The only scope adorn can open for itself is one per **decorated method call**. `spike/observe-scope.js` §A.3b measures what that covers:
+
+| | Redacted? |
+|---|---|
+| field read **inside** an adorn-decorated frame | **YES** |
+| field read in the **caller**, then passed to a decorated method | **NO** |
+| free function, no adorn frame anywhere | **NO** |
+
+**So the real coverage boundary is "reads that occur inside an adorn-decorated call frame."** The read-in-the-caller shape is not exotic; it is the ordinary one — a handler reads the field, then calls the logging or audit service. The design covers the case where the developer's own code is already inside adorn, which is a much smaller set than "reads of sensitive fields."
+
+## 15.6 Question A.7 and the false-confidence surface — **the two findings the verdict rests on**
+
+### 15.6a It observes reads of decorated fields, not sensitive data
+
+`node spike/observe-limits.js`, seven probes:
+
+| Probe | Result |
+|---|---|
+| decorated field, read normally — **the control** | REDACTED |
+| plain object from `JSON.parse` (a wire payload) | **LEAKED** |
+| null-prototype row from a DB driver | **LEAKED** |
+| value read before any scope existed, emitted inside one | **LEAKED** |
+| `Object.defineProperty` shadowing the instance accessor | **LEAKED** |
+| **undecorated sibling field on a decorated class** | **LEAKED** |
+| the same secret typed as a literal at the call site | **LEAKED** |
+
+> **6 of 7 leaked.** The covered case is exactly one: a read of a **decorated** field, **through the accessor**, inside an **open scope**.
+
+The brief anticipated this and it is confirmed: the mechanism sees *reads of decorated fields*, which is strictly narrower than *sensitive data*. Note this is not unique to Option A — the ratified object-walk path (`pii-redaction-plan.md` §5.1) also cannot see a `JSON.parse`'d plain object, because there is no prototype to resolve markings from. **Partial marking is likewise not new.** Marking one field of three gives partial redaction under the existing design too. Fairness requires saying so.
+
+### 15.6b What IS new, and it is worse than partial coverage
+
+**Coverage becomes a property of execution history rather than of code.** `spike/observe-limits.js` §A.10 demonstrates it with an utterly ordinary memoised read:
+
+```
+request 1 (cache miss)    REDACTED  [REDACTED]
+request 2 (cache hit)     LEAKED    123-45-6789
+request 3 (cache hit)     LEAKED    123-45-6789
+```
+
+One `SINK.emit(ssn)`. **The same line of code**, redacted on the first request and in the clear on every subsequent one. No declaration changed. No code changed. Nothing was reported. **A test written against request 1 passes and proves nothing about request 2.**
+
+This is precisely the failure `pii-redaction-plan.md` §3.1 identifies as *"the single most instructive result in the survey"* and instructs adorn to treat *"as a warning rather than a template"* — class-transformer [#146](https://github.com/typestack/class-transformer/issues/146), *"leaked on one route and not another."* Option A reproduces that failure by construction, and in one respect **more severely**: class-transformer fails deterministically per route, so a route-level test catches it. Option A's outcome depends on cache state, on which branch ran, on whether an earlier request warmed something. It is not reliably testable.
+
+### 15.6c It cannot enumerate its own misses — so it cannot satisfy DEC-026 point 4
+
+**DEC-026 point 4 made scope disclosure a condition of shipping**, in terms this spike wrote for itself:
+
+> *"A run must state how many adorn emission positions were analysed **and how many `@Sensitive` values were observed flowing to non-adorn receivers and therefore not analysed.** This is a **condition of shipping**, not a nicety."*
+
+A static pass satisfies this from a pure registry read: it can print *"N fields are `@Sensitive`; M fields on contracted classes are not"* with no flow analysis at all. **Option A definitionally cannot.** To report *"a sensitive value reached an emitter without being observed"* it would have to already know the value was sensitive — and observing the read is the only way it ever learns that. The mechanism's knowledge is created by the very event whose absence it would need to report.
+
+Measured: emitting an unmarked sensitive field prints `hypertension` with no warning, no counter, and no difference of any kind from emitting a non-sensitive value.
+
+### 15.6d And the emission actively signals safety
+
+`spike/observe-limits.js` §A.8 — a `Patient` with three sensitive fields, one marked:
+
+```
+emitted: {mrn:[REDACTED],diagnosis:hypertension,insuranceId:INS-4410-22}
+```
+
+**The record is one-third protected and the output contains a `[REDACTED]` token.** A visible censor mark is the strongest possible signal to a reader that redaction is working. This is a materially worse false-confidence shape than anything measured in §1–§14: §4.3's failure was *silence*, which is at least ambiguous, and §14.6's was a *quiet reclassification*. This one **affirmatively displays evidence of protection** on a payload that is mostly in the clear.
+
+Against `pii-redaction-plan.md` §11.2 — *"a design that lets a developer believe they are covered when they are not is worse than no design at all"* — this is the strongest instance the spike has produced.
+
+## 15.7 Question A.6 — cost
+
+`node spike/observe-bench.js`.
+
+**Per field read:**
+
+| | ns | vs. plain |
+|---|---|---|
+| plain data property read | 1.6 | 1.0× |
+| adorn accessor, no scope open | 4.6 | 2.8× |
+| adorn accessor, scope open, value already recorded | 22.1 | **13.5×** |
+| adorn accessor, scope open, a new value every read | 293.6 | 180× |
+| *(control)* accessor **write** only, no scope | 6.7 | 4.1× |
+
+The 2.8× line is adorn's accessor today and is not attributable to this design. **The design's own cost is the jump to 22.1 ns — a `Set.has` plus an eligibility check on every read of every decorated field.** The 293.6 ns figure is the pathological unbounded case, where the `Set` grows to 500,000 entries and rehashing dominates; it is an upper bound on a scope that never closes, not a per-read cost.
+
+**Per emission** (one realistic 12-leaf payload):
+
+| Observed-set size | no store | exact | substring |
+|---|---|---|---|
+| 0 | 637 ns | 698 ns | 791 ns |
+| 1 | — | 658 ns | 757 ns |
+| 10 | — | 588 ns | 1,049 ns |
+| 100 | — | 597 ns | 4,427 ns |
+| 1,000 | — | 618 ns | **38,970 ns** |
+
+**Exact membership is free at the emitter** — within noise of rendering the payload at all, and flat in set size. **Substring is 63× at 1,000 observed values and grows without bound.** Cost is not what rejects Option A; exact matching is cheap enough to ship.
+
+**One cost that is not CPU time, and it is a genuine objection rather than a curiosity.** The observed set is a **plaintext index of sensitive values**, retained for the scope's lifetime:
+
+| Records read | Values retained | Plaintext held |
+|---|---|---|
+| 1 | 7 | ~0.1 KiB |
+| 100 | 106 | ~3.8 KiB |
+| 10,000 | 10,006 | ~408 KiB |
+
+A control that works by **building an in-memory register of every secret the process touched** has created a new exposure — reachable from a heap dump, a core file, or any debugger — in order to reduce an old one. Against GDPR Art. 25 (data protection by design) and Art. 32 (security of processing), and `pii-redaction-plan.md` §3.3's approving note that `secrecy` **zeroizes on drop**, that is the wrong direction. It is not disqualifying on its own; it belongs on the ledger.
+
+## 15.8 `bs11_transform` — the case neither option catches, and why it matters most
+
+`s.ssn.slice(-4)`. Missed by exact membership, missed by substring, missed by the local static pass, and missed by every propagating design in §1–§14.
+
+**And an off-the-shelf static engine would not merely miss it — it would declare it clean.** `pii-redaction-plan.md` §3.4 records that CodeQL's Java query treats `substring`/`take`/`takeLast` of **≤ 7 characters** as **sanitizing**, and that `notSensitiveRegexp()` ends a taint flow at any callee whose *name* looks like hashing. Against PCI-DSS 3.5.1.1 — *"keyed cryptographic hashes of the entire PAN"* — and 3.5.1.c's requirement that truncated and hashed forms *"cannot be correlated to reconstruct the original PAN"*, and against GDPR Recital 26, that is a contested privacy conclusion baked into the analyser.
+
+So `bs11` is the case where **building your own means adopting a sanitizer policy, and a sanitizer policy is a regulatory judgement.** Deciding whether `.slice(-4)` sanitizes an SSN is not a decorator library's decision to make, and shipping a tool that silently encodes an answer is worse than shipping no tool. This single case is the strongest argument in §15.9 that Option B is a security-tool project wearing a library's clothes.
+
+## 15.9 Option B — assessed comparatively, and the framing is wrong
+
+The brief asks for a comparative assessment, not a taint engine, and one bounded probe was worth running because it changes the question. `spike/observe-optionb.js` is a deliberately minimal **intraprocedural** pass — local `const` aliases, destructuring, template-literal propagation, literal-keyed element access — within a single function body. **No summaries, no fixpoint, no heap model, no cross-function reasoning of any kind.**
+
+| Of the 17 source-side blind spots | Count |
+|---|---|
+| **Caught by a purely LOCAL pass** | **6** — `bs1_localVar`, `bs3_dynamic`, `bs6_destructure`, `bs6_paramDestructure`, **`bs8_template`**, `bs19_optional` |
+| A **sink-resolution** problem, needing class-hierarchy analysis (not source severing) | 1 — `bs17_iface` |
+| Needing genuine interprocedural reasoning, or unsolvable | 10 |
+
+> **`bs8_template` falls to a six-line local propagator.** §6.2 called it *"the most dangerous blind spot,"* winning "on all three axes that matter." §14.4 singled it out as the shape that is *in scope and invisible*. It is neither interprocedural nor hard — it is a template literal with a marked expression in one of its spans, and Semgrep has a name for the rule that catches it (a *propagator*).
+
+**This reframes Option B entirely.** "Full interprocedural analysis, rebuilt on every build" is being proposed to close a gap of which **a third is local**, including its single most-cited member. The expensive answer is being priced against a problem the cheap answer partly solves.
+
+**On cost and "rebuild on build."** One pass on this 15k-LOC repo is ~907 ms (§14.3), and the local extension adds no rounds and no fixpoint — it is the same single walk. A *full* engine is a different proposition: program construction is superlinear in cross-file type resolution (§8.2), nothing amortises because each build sees changed sources, and DEC-013 caps TypeScript at 6.x, so a taint engine is a permanent maintenance commitment against a moving compiler API. Meta shipped annotation-carried taint kinds in Pysa and **backed them out** (`pii-redaction-plan.md` §3.4); the ECOOP 2025 survey attributes non-adoption of type-based taint checking to *"false positives and annotating existing codebases."*
+
+**On the CodeQL precedent, answering the brief's question directly.** That the best-resourced analyser in the industry *guesses at variable names* cuts **both ways**, and both must be said:
+
+- **For adorn.** CodeQL guesses because *nothing in the source language declares sensitivity*. adorn has the declaration. It is not rolling its own version of CodeQL's hardest problem — that problem is solved by `@Sensitive`, and Mariana Trench's `has_annotation` constraint is direct production evidence the approach works.
+- **Against adorn.** The *sanitizer* problem is unavoidable and adorn would inherit it whole (§15.8). CodeQL's answer to it contradicts GDPR Recital 26 and PCI 3.5.1.1 — and CodeQL has a security research team. A decorator library taking on the same obligation, with a fraction of the resources and no security-research function, would produce a worse answer and ship it inside a library people trust for *contracts*. It would also inherit CodeQL's own defensive posture: `isBarrierIn` exists purely to contain the blast radius of imprecise sources.
+
+**Verdict on B: reject the full engine; admit the local pass.** A bounded intraprocedural extension to the already-admitted DEC-026 one-pass detector is cheap, deterministic, zero-false-positive on the measured set, needs no new vocabulary, writes nothing to source, and takes the blind-spot count from 5-of-22-seen to 11-of-22-seen in one pass. It stays inside what a library can honestly maintain. Everything past that boundary is a different project.
+
+## 15.10 The question that matters most — are A and B complementary?
+
+**The user's read was that they are complementary: static sees all paths but is blind to source-side severing; runtime sees severed values but only on executed paths. The premise is exactly right. The conclusion does not follow, and the computation shows why.**
+
+`spike/observe-optionb.js` §B.2, over the 17:
+
+| | Count | Cases |
+|---|---|---|
+| Caught by **both** | 5 | `bs1_localVar`, `bs3_dynamic`, `bs6_destructure`, `bs6_paramDestructure`, `bs19_optional` |
+| **Runtime only** (A) | **10** | `bs2_any`, `bs5_callback`, `bs5_install`, `bs7_objectSpread`, `bs7_argSpread`, `bs10_caller`, `bs12_wrapped`, `bs14_fieldWrite`, `bs17_iface`, `bs18_indexSig` |
+| **Static only** (B, local pass) | **1** | `bs8_template` |
+| Caught by **neither** | 1 | `bs11_transform` |
+| **Union** | **16 / 17** | |
+
+**So the complementarity is real and it is almost entirely one-directional.** The union (16) beats either alone (15 runtime, 6 static), which vindicates the premise. But:
+
+1. **Static's entire unique contribution is one case.** Runtime already covers the other five it finds.
+2. **That one case is cheaper from the static side.** `bs8_template` costs six lines and zero false positives statically, versus a 29.4% false-positive rate and 63× emission cost to get it through substring matching. **Same case, two prices** — and the static price is better.
+3. **So there is no combination worth building.** Take the static local pass and you have 6 of 17 at zero false-positive cost, deterministic, CI-checkable, and able to print its own scope. Add runtime observation and you gain 10 more shapes and inherit every disqualifying property of §15.5 and §15.6.
+
+**And the deeper reason they should not be combined: they are complementary in coverage and incompatible in kind.** Static coverage is a property of *code* — enumerable, checkable in CI, identical on every run, and reportable in the shape DEC-026 point 4 requires. Runtime coverage is a property of an *execution*. Union them and the resulting artifact's coverage is a checkable set unioned with an uncheckable one, with **no way for a developer to tell which half caught anything, or which half missed**. A combined design does not inherit the stronger guarantee; it inherits the weaker one, and hides the fact that it has done so.
+
+**The brief's hypothesis therefore holds arithmetically and fails as a design**, and the arithmetic is what shows the failure — because it reveals the complementarity is worth exactly one case.
+
+## 15.11 Does Option A create a new false-confidence surface? **Yes — a new *kind*, not merely more of the existing one.**
+
+The brief asks this precisely, and the honest answer has three parts.
+
+**1. The partial-marking case the brief describes is NOT new.** A developer marking one field of three gets partial coverage under the ratified object-walk design too (`pii-redaction-plan.md` §5.1). Option A should not be charged for that.
+
+**2. But under the existing design, coverage is a *declarative* property — and that is the whole difference.** What is marked is enumerable from `ContractRegistry`. §14.7(3)'s emission-position report can print *"here are the N places adorn will render a value, and here is which of them you have marked"* from a **pure registry read, with no flow analysis**. A developer can be told the shape of their own coverage.
+
+**3. Under Option A, coverage is an *execution* property, and the design cannot report it.** §15.6b: the same line redacts on a cache miss and leaks on a cache hit. §15.6c: the mechanism is definitionally unable to enumerate its own misses, so it **cannot satisfy DEC-026 point 4** — which this spike itself made a condition of shipping. §15.6d: the emission **displays a `[REDACTED]` token** on a record that is two-thirds in the clear, actively signalling protection that is not there.
+
+> **That is a new false-confidence surface, and it is the worst one this spike has measured.** §4.3's was silence. §14.6's was a quiet reclassification with a fix available (print your scope). This one is an **affirmative safety signal that cannot be qualified**, on a mechanism that **cannot describe its own boundary**, with an outcome that **varies between two runs of identical code**. There is no disclosure that repairs it, because the design does not know what to disclose.
+
+## 15.12 Recommendation
+
+**Build neither Option A nor Option B as posed. Build the local pass, and keep the primitive gap honestly open.**
+
+1. **Reject Option A.** Do not ship runtime observation, in any eligibility policy. Record the 15-of-17 result prominently — it is the only mechanism that has moved that number, and a future reader who rediscovers the idea deserves to know it works and why it was still refused.
+2. **Reject Option B as posed.** No taint engine, no interprocedural analysis, no sanitizer policy.
+3. **Extend DEC-026's admitted one-pass detector with the bounded local pass** — local `const` aliases, parameter and body destructuring, template-literal propagation, literal-keyed element access. Measured: **6 of 17** additional shapes, zero false positives, no additional rounds, ~907 ms. This takes the detector from 5-of-22 to 11-of-22 in-scope shapes seen. Its scope-disclosure obligation (DEC-026 point 4) is unchanged and still binding.
+4. **Ship §14.7(3)'s emission-position report.** A pure registry read, no flow analysis, no false-confidence mode. Against §15.11 it is the *only* artifact here that can honestly describe its own coverage, which makes it the most valuable thing in the whole area.
+5. **DEC-PII-5 stands unweakened, for the third time.** The primitive gap is closed only by a hand-written `@Sensitive()`. Three independent designs have now failed to close it automatically, by three different mechanisms, and the failures are not the same failure — which is the strongest available evidence that the gap is real rather than an artifact of one approach.
+
+**What would change this verdict.** Option A becomes reconsiderable if — and only if — it can (a) enumerate its own misses, and (b) make coverage deterministic across executions. I do not believe (a) is achievable: it requires knowing a value is sensitive without having observed it, which is the mechanism's definition of knowing. **If someone finds a way to do (a), reopen this.** That is the load-bearing claim, and it is the one to attack.
+
+## 15.13 Proposed decision entry
+
+> **A proposal, in this document.** `DECISIONS.md` was **not** edited.
+>
+> **Numbering.** DEC-026 is itself still `PROPOSED` (§14.8) and is not yet in `DECISIONS.md`; the highest ACCEPTED identifier is **DEC-025**. This entry is therefore proposed as **DEC-027**, assuming DEC-026 lands first. **Re-check the highest allocated identifier before transferring** — DEC-021's numbering hazard has now fired twice in this document's history.
+
+### DEC-027 — runtime observation is rejected; static analysis is capped at an intraprocedural pass
+**Status:** PROPOSED · **source:** the §15 third pass · **extends:** DEC-026 (proposed) · **relates to:** DEC-PII-1, DEC-PII-5, DEC-023, DEC-024, DEC-025, DEC-016, DEC-021
+
+**Context.** DEC-024 and DEC-026 both rejected iterated single-hop propagation, the second under DEC-025's narrowed threat model. Both left the same residue: **17 of 22 in-scope leak shapes remain silent misses, and every one severs the value on the source side**, where static analysis is structurally blind. Two alternatives address that residue from opposite directions — runtime observation through the `@Sensitive` accessor, which fires at the source before severing; and full interprocedural static analysis, which the single-hop design existed to avoid.
+
+**Decision.**
+
+1. **Runtime observation is REJECTED.** adorn's emitters must not consult a scope-held set of observed field values. This holds for every eligibility policy and both matching modes.
+2. **Full interprocedural static analysis is REJECTED.** No taint engine, no cross-function summaries, and — decisively — **no sanitizer policy**. Whether `.slice(-4)` sanitizes an SSN is a regulatory judgement, not a library's.
+3. **DEC-026's one-pass detector MAY be extended intraprocedurally**: local `const` aliases, body and parameter destructuring, template-literal propagation, and literal-keyed element access, within a single function body. No fixpoint, no rounds, no interprocedural reasoning. Measured at 6 of 17 additional shapes, zero false positives, no additional cost over the existing single pass.
+4. **DEC-026 point 4 (print your scope) is reaffirmed and generalised**: any flow artifact adorn ships must be able to describe its own coverage boundary. **A design that cannot enumerate its own misses is disqualified on that ground alone**, independent of its catch rate.
+5. **DEC-PII-5 stands unweakened.** The primitive gap is closed only by an explicit hand-written `@Sensitive()`.
+
+**Rationale — and the order matters, because the first finding is the one that decides it.**
+
+- **Runtime observation works, and that is not enough.** Measured: **15 of the 17** source-side blind spots caught by exact value membership, **16 of 17** with substring matching — the first mechanism in three passes to move that number. It dissolves `bs2_any` (runtime has no types) and `bs17_iface` (runtime dispatch reaches the concrete method), the latter being the new blind spot DEC-026 discovered. **The design is rejected despite this, not for want of it.**
+- **Coverage becomes a property of execution history rather than of code.** Measured with a memoised read: one `SINK.emit(ssn)` line redacted on a cache miss and printed in the clear on every subsequent request, with no code change and no report. This is class-transformer #146's failure shape — which `pii-redaction-plan.md` §3.1 designates *"a warning rather than a template"* — and is **worse**, because class-transformer fails deterministically per route and is therefore testable.
+- **It cannot enumerate its own misses, so it cannot satisfy DEC-026 point 4.** Reporting *"a sensitive value reached an emitter unobserved"* requires knowing the value is sensitive without having observed the read — which is the only way it ever knows. A static pass discharges the same obligation from a pure registry read.
+- **It emits an affirmative safety signal on unprotected data.** With one of three sensitive fields marked, the emission reads `{mrn:[REDACTED],diagnosis:hypertension,insuranceId:INS-4410-22}`. A visible censor token is the strongest possible signal that redaction is working. Against `pii-redaction-plan.md` §11.2 this is the most severe false-confidence shape the spike has measured — worse than §4.3's silence, because silence is at least ambiguous.
+- **No eligibility policy is both safe and useful.** Record everything: **23.8%** false positives at 100% protection. Strings of length ≥ 8: **2.4%** false positives at **25%** protection. Length ≥ 12: 0% and **0%**. The trade is monotone with no knee. And at length ≥ 8, **100% of residual false positives are a date of birth colliding with ordinary dates** — a collision no length guard can ever remove, because a DOB is shaped exactly like a timestamp.
+- **adorn cannot open the scope.** `AsyncLocalStorage` survives every async hop measured (6 of 6) and fails at every architectural boundary (5 of 5), the decisive one being that **nothing opens a scope by default** and the emitter then fails open, silently. The only scope adorn can open is per-decorated-call, covering reads *inside* a decorated frame but not reads in the caller — and the caller is the ordinary shape.
+- **The full static engine is aimed at the wrong target.** Measured: only **10 of 17** shapes need interprocedural reasoning. **6 are local**, including `bs8_template` — §6.2's *"most dangerous blind spot"* — which falls to a six-line propagator. The expensive design is priced against a problem a bounded pass partly solves.
+- **The CodeQL precedent cuts both ways and both were weighed.** adorn has the declaration CodeQL lacks, so the *source* problem is genuinely solved (Mariana Trench's `has_annotation` is production evidence). But the *sanitizer* problem is unavoidable, and CodeQL — with a security research team — answers it in a way that contradicts GDPR Recital 26 and PCI 3.5.1.1. A decorator library would answer it worse and ship it inside something trusted for contracts.
+- **The two options are complementary in coverage and incompatible in kind.** Union 16/17 against 15 and 6 alone, so the hypothesis holds arithmetically — but **static's unique contribution is exactly one case**, and that case is cheaper statically (zero false positives, six lines) than through runtime substring matching (29.4% false positives, 63× emission cost). Combining a checkable coverage set with an uncheckable one yields an artifact inheriting the weaker guarantee while obscuring that it has.
+
+**Consequences.**
+
+- **The 15-of-17 result must be recorded prominently, not buried in a rejection.** It is the only mechanism that has moved that number, and the next person to propose it deserves to learn that it works before learning why it was refused.
+- **A new general rule, and it is the transferable part:** *a privacy mechanism whose coverage varies between two executions of identical code is disqualified regardless of its catch rate.* This is DEC-016's asymmetry-of-failure argument applied to emission, and it generalises past `@Sensitive`.
+- **The observed set would itself be a PII repository** — ~408 KiB of plaintext sensitive values at 10,000 records, reachable from a heap dump, held for the scope lifetime. A control that builds an index of every secret the process touched has created an exposure to reduce one. Recorded because it is the kind of second-order cost a later proposal will otherwise miss.
+- **`bs11_transform` (`.slice(-4)`) is caught by nothing** — not runtime, not substring, not static, at any budget — and an off-the-shelf engine would declare it **clean**. It is the permanent floor on any automated approach here and should be documented as such rather than rediscovered.
+- **`@Time()` remains not a sink** (DEC-026 point 1, unchanged). The sink set's maintenance obligation is unchanged.
+- **Q-18 is untouched and remains the decision-relevant unknown.** What fraction of real leaks reach an emitter *directly* rather than through a severing shape still determines whether the detector is useful or merely correct. Nothing in §15 answers it.
+
+## 15.14 What the third pass could not measure
+
+Everything in §10 and §14.9 still stands. Additionally:
+
+- **The false-positive corpus is mine.** 500 benign leaves drawn from pools I chose with weights I chose. The *shape* of the result is robust — a boolean collides with every boolean, and a DOB is shaped like a timestamp regardless of corpus — but **23.8% and 2.4% are properties of my weighting, not population estimates.** A corpus with fewer booleans moves the first number a lot.
+- **The runtime fixtures are transcriptions, not the TypeScript fixtures themselves.** `spike/observe-fixtures.js` reproduces the 22 SCOPE-IN shapes in plain JavaScript so they can be *executed*. Types erase, so every runtime-relevant construct is identical — but they are a transcription, and a transcription error would be invisible to the harness.
+- **Nothing was measured against the real `@Log` or the real `@Sensitive`.** As in §14.9, the emitter and the field decorator are stand-ins. The accessor shape is mirrored from `FieldDecoratorFactory.ts` deliberately and closely, but it is a mirror.
+- **The 6-of-17 local-pass figure is from a probe, not an implementation.** It handles the constructs the fixtures contain. Real code contains `let` reassignment, closures over mutable bindings, and conditional assignment, none of which the probe models — so **6 is an optimistic bound for that design**, and the honest reading is "at least a third of the 17 are local," not "exactly six."
+- **`bs17_iface` is counted as a runtime catch on the strength of dynamic dispatch**, which is sound, but no fixture exercises a *proxy* or a runtime-composed delegate, where the concrete method may not be the decorated one.
+- **`AsyncLocalStorage` was measured on Node v22.11.0 only.** Its propagation semantics have changed across major versions, and no other runtime (Bun, Deno, workerd) was tested. A design depending on it would need that matrix; this one does not, because it is rejected.
+- **No measurement of how often a developer marks a subset of a record's sensitive fields.** §15.11's partial-marking argument is structural, and the one-of-three fixture is illustrative rather than representative.

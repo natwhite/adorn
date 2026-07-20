@@ -502,3 +502,34 @@ This is the same boundary an OpenTelemetry instrumentation library draws: it sec
 - **It bounds the "alert on exposure" projection** to adorn sinks, which is the half that was ever computable from the registry.
 - **New risk, and it must be stated rather than implied:** a developer may believe adorn covers them when the leak path simply exits the framework. The redaction plan holds that a design letting someone believe they are covered when they are not is worse than no design — so this boundary belongs in user-facing documentation in plain words, not buried in a decision log. Do not let "adorn protects your PII" become the shorthand.
 
+
+---
+
+## DEC-027 — Runtime getter observation and full interprocedural analysis: both rejected
+**Status:** ACCEPTED (both rejected) · evidence: `sensitive-flow-spike.md` §15
+
+**Context.** After iterated single-hop failed twice, two alternatives were spiked: (A) observing reads through the `@Sensitive` field getter, since adorn owns the accessors and the getter fires *before* any source-side severing; and (B) full interprocedural static analysis rebuilt on every build.
+
+### Option A — rejected, and notably **not** on catch rate
+
+It is the first mechanism in three attempts to move the number: **15 of 17 blind spots by exact value membership, 16 of 17 with substring**. It also dissolves two failures recorded as structural — untyped values (runtime has no types) and interface dispatch (runtime dispatch always reaches the concrete decorated method). It works. It is rejected anyway, on four independent grounds:
+
+1. **Coverage becomes a property of execution history rather than of code.** With an ordinary memoised read, one emit line is redacted on a cache miss and printed in the clear on every subsequent request — same line, no code change, no report. That is `class-transformer` #146's shape, which the redaction plan already designates *a warning rather than a template*; and it is worse, because that failure is deterministic per route and therefore testable, while this one is not.
+2. **It cannot enumerate its own misses**, so it cannot satisfy the shipping condition the previous spike itself established. Reporting "a sensitive value reached an emitter unobserved" requires knowing the value is sensitive *without having observed the read* — circular.
+3. **It emits an affirmative safety signal over unprotected data.** `{mrn:[REDACTED],diagnosis:hypertension,insuranceId:INS-4410-22}` — a visible censor token is the strongest available signal that redaction is working, printed across a record two-thirds in the clear.
+4. **adorn cannot open the scope.** `AsyncLocalStorage` survived every async hop tested (6/6) and failed at every architectural boundary (5/5). Nothing opens a scope by default, and the emitter then fails open, silently.
+
+**Collision, measured:** record everything → 23.8% false positives at 100% protection; strings ≥8 chars → 2.4% FP at **25%** protection; ≥12 chars → 0% FP at **0%** protection. **Monotone with no knee**, so there is no threshold to tune to. Decisively: at ≥8 chars, **100% of residual false positives are a date of birth colliding with ordinary dates** — no length guard can ever remove that, because a DOB is shaped exactly like a timestamp.
+
+### Option B — rejected as posed, because the framing was wrong
+
+Only **10 of 17** blind spots need interprocedural reasoning. **6 are local severings**, and the template-literal case previously called the most dangerous blind spot **falls to a six-line local propagator at zero false-positive cost**. It never needed whole-program analysis.
+
+On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is genuinely solved — but the **sanitizer problem is inherited whole**, and deciding whether `.slice(-4)` sanitizes an SSN is a regulatory judgement, not a library's. That is the precise sense in which this is a security-tool project in a library's clothes.
+
+### Are they complementary?
+
+**Arithmetically yes; as a design, no.** Both catch 5, runtime-only 10, **static-only 1**, neither 1 — union 16 of 17. Static's entire unique contribution is a single case, and that case is cheaper statically (six lines, 0% FP) than through runtime substring matching (29.4% FP, 63× emit cost). They are complementary in coverage and **incompatible in kind**: union a checkable coverage set with an uncheckable one and you inherit the weaker guarantee while concealing that you have.
+
+**Consequences.** A new *kind* of false-confidence surface is what settles it. Partial marking already exists in the ratified design, but that coverage is **declarative and enumerable from `ContractRegistry`**; Option A's coverage is an execution property the design cannot report. Recommendation carried forward: extend the one-pass detector **intraprocedurally** (+6 of 17, zero FP, no extra rounds) and ship the emission-position report. One case is caught by nothing at any budget — the permanent floor, and it should be documented as such rather than chased.
+
