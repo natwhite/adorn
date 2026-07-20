@@ -1,26 +1,118 @@
+/**
+ * Imperative assertions — the non-decorator way to enforce a contract.
+ *
+ * ## Does `Verify` still have a job now that descriptors exist? (SMELL-8)
+ *
+ * Yes, but a much narrower one, and it is no longer allowed to have opinions.
+ *
+ * A `ConstraintDescriptor` is *data plus a boolean predicate*. It never throws — deciding what a
+ * failure means belongs to an enforcement layer, and there are now three: `ParameterDecoratorFactory`
+ * for arguments, `FieldDecoratorFactory` for fields, and this one, for the places neither can reach —
+ * inside a function body, a factory, a parsing loop, a hand-rolled constructor, a plain object that
+ * is not a class at all. Those call sites have no decoration point. Deleting `Verify` would leave
+ * adorn with no imperative entry point, so it stays.
+ *
+ * ## What changed: it no longer implements anything
+ *
+ * Previously every method here was a hand-written comparison:
+ *
+ * ```ts
+ * static positive(keyName, value) {
+ *     if (value < 0) throw new Error(`ValueError: ${keyName} is expected to be a positive number...`);
+ * }
+ * ```
+ *
+ * That is a **second implementation** of boundaries `src/Contracts/` also defines — precisely the
+ * descriptor/predicate drift Q-4 names as the worst failure mode the "contracts as the single source
+ * of truth" goal introduces (DEC-006, DEC-010). `Verify.positive` and `@Positive()` could silently
+ * disagree, and generated documentation would describe one while the other ran. It was not
+ * hypothetical: P3.3 made `positive` strict, and a hand-written `Verify.positive` would still be
+ * accepting `0` today.
+ *
+ * **There is not one comparison operator left in this file.** Every check comes from the descriptor
+ * its decorator counterpart uses, so drift is structurally impossible rather than merely unlikely,
+ * and `Verify` becomes what it should always have been: a throw site, not a rule.
+ *
+ * ## `that()` is the real API; the rest are conveniences
+ *
+ * {@link Verify.that} takes any descriptor, so `Verify` never needs a method per constraint and
+ * cannot fall behind `src/Contracts/` as that set grows:
+ *
+ * ```ts
+ * Verify.that(Between(1, 10), 'retries', retries);
+ * Verify.that(Email(), 'contact', input.contact);
+ * ```
+ *
+ * The three named helpers below are kept because they are the pre-existing public surface (SMELL-8
+ * found two of them unused, but `Verify` is exported from `index.ts`, so they are removable API
+ * rather than dead internals).
+ *
+ * ## Two behavioural changes, both deliberate
+ *
+ * 1. **`lessThanEqual` / `greaterThanEqual` took `(key, target, constraint)`** while `positive` took
+ *    `(keyName, value)` — value and bound sat in different positions in sibling methods. Normalised
+ *    to `(keyName, value, bound)`. Neither had a caller anywhere (SMELL-8), so the cost is nil, and
+ *    the implementation plan's compatibility table calls for exactly this: "normalize now while
+ *    surface area is tiny".
+ * 2. **Messages now come from the descriptor**, matching what the decorators produce and what
+ *    documentation renders. `ValueError: count is expected to be a positive number, got '-1'`
+ *    becomes `Value Error: count expected a positive number but received -1 instead`. Nothing
+ *    pinned the old strings.
+ *
+ * `Verify.positive` also inherits P3.3's break — `0` is now rejected — because it shares the
+ * descriptor. That is the mechanism working as intended.
+ */
+
+import {ConstraintDescriptor} from '../Core/Descriptor';
+import {GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
+
 export class Verify {
     /**
-     * Returns the value if it's positive or throws an error
+     * Check `value` against any constraint descriptor. Returns `value` on success, throws otherwise.
      *
-     * @param keyName - The name of the variable being assigned (for logging)
-     * @param value - The value being assigned
+     * @param constraint - a descriptor from `src/Contracts/`, e.g. `Between(1, 10)`
+     * @param keyName    - name of the thing being checked, used in the message
+     * @param value      - the value to check
      */
-    static positive(keyName, value) {
-        if (value < 0) {
-            throw new Error(`ValueError: ${String(keyName)} is expected to be a positive number, got '${value}'`);
-        }
-        return value;
+    static that<T>(constraint: ConstraintDescriptor, keyName: string | symbol, value: T): T {
+        if (constraint.predicate(value)) return value;
+
+        const error = new Error(constraint.message({value, signature: String(keyName)}));
+        // Cut the stack at this frame so the trace points at the caller's line rather than at
+        // adorn's internals — the same boundary technique as `DecoratorFactory.attributeToCaller`,
+        // applied at construction because the Error originates here. V8-only; a no-op elsewhere.
+        const capture = (Error as unknown as {
+            captureStackTrace?: (target: object, constructorOpt?: Function) => void
+        }).captureStackTrace;
+        if (typeof capture === 'function') capture(error, Verify.that);
+
+        throw error;
     }
 
-    static lessThanEqual(key, target, constraint) {
-        if (target > constraint) {
-            throw new Error(`ValueError: ${String(key)} is expected to be less than or equal to '${constraint}', got '${target}'`);
-        }
+    /**
+     * Returns `value` if it is greater than zero, otherwise throws.
+     *
+     * **`0` no longer passes** (P3.3, Q-1 / DEC-001) — use `Verify.that(NonNegative(), ...)`.
+     */
+    static positive<T>(keyName: string | symbol, value: T): T {
+        return Verify.that(Positive(), keyName, value);
     }
 
-    static greaterThanEqual(key, target, constraint) {
-        if (target < constraint) {
-            throw new Error(`ValueError: ${String(key)} is expected to be greater than or equal to '${constraint}', got '${target}'`);
-        }
+    /**
+     * Returns `value` if it is not above `max`, otherwise throws. `max` itself passes.
+     *
+     * **Argument order changed** from `(key, target, constraint)` — see the module note.
+     */
+    static lessThanEqual<T>(keyName: string | symbol, value: T, max: number): T {
+        return Verify.that(LessThanEqual(max), keyName, value);
+    }
+
+    /**
+     * Returns `value` if it is not below `min`, otherwise throws. `min` itself passes.
+     *
+     * **Argument order changed** from `(key, target, constraint)` — see the module note.
+     */
+    static greaterThanEqual<T>(keyName: string | symbol, value: T, min: number): T {
+        return Verify.that(GreaterThanEqual(min), keyName, value);
     }
 }

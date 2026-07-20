@@ -15,7 +15,7 @@ import {
     resetRegistry,
     setParameterMetadata,
 } from '../Core/ContractRegistry';
-import {GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
+import {GreaterThan, GreaterThanEqual, LessThanEqual, Positive} from '../Contracts/number';
 import {StringMinLength} from '../Contracts/string';
 import {
     ClassDoc,
@@ -70,7 +70,9 @@ describe('rendering the ported built-in constraints', () => {
             descriptor: Positive(),
             identity: 'positive',
             kind: 'number',
-            params: {min: 0},
+            // P3.3 settled Q-1: `positive` is strict, so this is an *exclusive*
+            // lower bound and projects to `exclusiveMinimum` in a schema.
+            params: {exclusiveMin: 0},
             expectation: 'a positive number',
         },
         {
@@ -121,12 +123,14 @@ describe('rendering the ported built-in constraints', () => {
         }
 
         recordParameterConstraint(Task.prototype, 'run', 0, Positive());
-        recordParameterConstraint(Task.prototype, 'run', 1, GreaterThanEqual(0));
+        // Pairs with GreaterThan, not GreaterThanEqual: since Q-1 was settled,
+        // `positive` shares its exclusive-bound params with `greaterThan`.
+        recordParameterConstraint(Task.prototype, 'run', 1, GreaterThan(0));
 
         const parameters = methodNamed(documentClass(Task), 'run').parameters;
 
         expect(parameters[0].constraints[0].constraint).toBe('positive');
-        expect(parameters[1].constraints[0].constraint).toBe('min');
+        expect(parameters[1].constraints[0].constraint).toBe('greaterThan');
         expect(parameters[0].constraints[0].params).toEqual(parameters[1].constraints[0].params);
         expect(parameters[0].constraints[0].expectation)
             .not.toBe(parameters[1].constraints[0].expectation);

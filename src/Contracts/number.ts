@@ -1,28 +1,90 @@
 /**
- * Numeric constraints, as descriptors (P1.0 / plan §2).
+ * Numeric constraints, as descriptors (P1.0 / P3.3, plan §2).
  *
  * These are **not** decorators and must never become decorators. This layer is decorator-agnostic
  * (DEC-012): the same descriptor is consumed by the legacy per-parameter adapter, by a
- * method-level `@Contract({...})`, and by every projection. Wiring these into the existing
- * decorators is P1.3 and is deliberately not done here.
+ * method-level `@Contract({...})`, and by every projection.
  *
- * ## Semantics are ported verbatim
+ * Every constraint here is a reified descriptor whose predicate is **derived from its params**
+ * (DEC-010). There is no `predicate` input anywhere in this file, and adding one would reopen the
+ * descriptor/enforcement drift Q-4 exists to prevent.
  *
- * Each predicate below reproduces the *exact* condition of the closure it replaces in
- * `src/ParameterDecorators/Constraints.ts`, including two behaviours that look like defects:
+ * ---
  *
- * 1. **`Positive` accepts `0`.** It rejects only `value < 0`, so `min` is inclusive at zero and
- *    the name disagrees with the semantics. This is deliberate and is tracked as ISSUES.md **Q-1**
- *    (see also DEC-001); it is not silently "corrected" here, because settling it is a behavioural
- *    break that must be applied across `Positive`, `Verify.positive`, and a future `Negative`
- *    together, with a release note.
+ * ## P3.3 settled three things the P1.0 port deliberately left open
  *
- * 2. **`NaN` satisfies every numeric constraint.** The originals test `value < min` / `value > max`,
- *    and every comparison with `NaN` is `false`, so `NaN` never triggers a violation. The
- *    derivations below are therefore written as `!(value < min)` rather than the more obvious
- *    `value >= min` — those two agree on every input except `NaN`. Writing `>=` here would have
- *    been a silent behavioural change smuggled in under a refactor. Flagged as a new open question;
- *    the type guards planned for P3.3 are the right place to settle it.
+ * ### 1. Predicates are now **total** (ISSUES.md BUG-4)
+ *
+ * Every derivation below opens with {@link isNumeric}. A predicate returns `false` for `null`,
+ * `undefined`, strings, objects, symbols — anything that is not a number — rather than relying on
+ * JavaScript's relational coercion. It never throws.
+ *
+ * This is not only about error-message quality. A non-total predicate is a hazard for *any*
+ * projection that evaluates it, and a fuzzer feeds it `null` in the first hundred cases. It also
+ * closes a real hole: `!(undefined < 5)` is `true`, so before this change **`undefined` satisfied
+ * every numeric constraint**, exactly as `NaN` did.
+ *
+ * ### 2. `NaN` now **violates** every numeric constraint (ISSUES.md Q-7)
+ *
+ * The originals tested `value < min`, and every comparison with `NaN` is `false`, so `NaN` never
+ * triggered a violation. P1.0 preserved that as `!(value < min)` rather than smuggle a behaviour
+ * change into a refactor, and pinned it with a test. P3.3 settles it: **`NaN` is rejected.**
+ *
+ * Three reasons, in order of weight:
+ *
+ * - `NaN` is not a number that fails to satisfy a bound; it is the *absence* of a numeric result —
+ *   the residue of `parseInt('abc')`, `0/0`, or arithmetic on `undefined`. It is the single most
+ *   common numeric corruption in JavaScript, and a guard that lets it through has failed at
+ *   precisely the job the guard exists for.
+ * - Under DEC-006 a descriptor is projected into artifacts. `{min: 0}` emits JSON Schema
+ *   `{"minimum": 0}`, which `NaN` cannot even be expressed in, and a generator built from that
+ *   range would never produce `NaN`. So the old predicate disagreed with its own params on this one
+ *   input — Q-4 drift, arrived at by preservation rather than by carelessness, but drift all the same.
+ * - Every alternative is worse. Leaving `NaN` accepted keeps the vocabulary self-inconsistent the
+ *   moment `Negative` lands, because `NaN` would satisfy `positive` **and** `negative`.
+ *
+ * `Infinity` is deliberately **not** rejected: `Infinity > 5` is genuinely true and the ordering is
+ * coherent, so `GreaterThan(5)` accepting it is correct. (`Descriptor.normalizeParams` separately
+ * refuses non-finite *params*, so no bound can be infinite.) `NaN` is excluded because it has no
+ * ordering at all, not because it is exotic.
+ *
+ * ### 3. `positive` is now strict (ISSUES.md Q-1, DEC-001) — **user-visible break**
+ *
+ * `Positive()` rejected only `value < 0`, so `0` passed despite the name. That is now `> 0`.
+ * Callers wanting the old behaviour use {@link NonNegative}.
+ *
+ * The forcing argument is `Negative()`, which lands in this same file. Under the lax reading, `0`
+ * satisfies `positive` *and* `nonPositive`, and the pair `Positive`/`Negative` has an overlapping
+ * boundary that no reader would predict. The plan recommends strictness for exactly this reason
+ * (P2.2: "it matches the mathematical reading and avoids a confusing pair"), and P3.3 is the last
+ * point at which the change is cheap.
+ *
+ * The consequence in the *data* is the good part: `positive` stops being an inclusive lower bound
+ * of zero and becomes an **exclusive** one, so its params change from `{min: 0}` to
+ * `{exclusiveMin: 0}` and a schema projection emits `exclusiveMinimum` instead of `minimum`. The
+ * boundary is visible in the artifact rather than buried in a name.
+ *
+ * ---
+ *
+ * ## Identity is distinct even where derivation is shared
+ *
+ * `positive` shares `above` with `greaterThan`; `nonNegative` shares `atLeast` with `min`;
+ * `between` is literally `atLeast ∧ atMost`. Sharing the derivation is what makes them unable to
+ * disagree. Keeping the *identity* separate is what lets documentation say "a positive number"
+ * where a schema says `{"exclusiveMinimum": 0}` — the identity is what a projection prints, the
+ * params are what it reads.
+ *
+ * ## `schema()` may under-claim, never over-claim
+ *
+ * A fragment is a **necessary** condition, not always a sufficient one: JSON Schema cannot express
+ * everything a predicate can. The rule applied throughout `src/Contracts/` is that a fragment must
+ * never reject a value the predicate accepts — a generated client refusing valid input is a silent
+ * failure, while a generated client accepting input the runtime then rejects is a loud one.
+ *
+ * ## `arbitrary` is still shape-only
+ *
+ * `fast-check` is not a dependency (ISSUES.md IDEA-3), so no generator is supplied here. `schema`
+ * is populated wherever it is cheap and exact.
  */
 
 import {defineConstraint, JsonObject, Predicate} from '../Core/Descriptor';
@@ -41,21 +103,120 @@ export interface MaxParams extends JsonObject {
     max: number;
 }
 
+/** Exclusive lower bound. */
+export interface ExclusiveMinParams extends JsonObject {
+    exclusiveMin: number;
+}
+
+/** Exclusive upper bound. */
+export interface ExclusiveMaxParams extends JsonObject {
+    exclusiveMax: number;
+}
+
+/** Inclusive range. */
+export interface RangeParams extends JsonObject {
+    min: number;
+    max: number;
+}
+
+/** Divisor. Always strictly positive — see {@link MultipleOf}. */
+export interface MultipleOfParams extends JsonObject {
+    multipleOf: number;
+}
+
+// ---------------------------------------------------------------------------
+// Totality (BUG-4) and the NaN decision (Q-7)
+// ---------------------------------------------------------------------------
+
+/**
+ * The single gate every numeric predicate passes through.
+ *
+ * Excluding `NaN` here rather than in each derivation is what makes the Q-7 decision *uniform* by
+ * construction: a numeric constraint cannot accidentally admit `NaN`, because there is no route to
+ * a comparison that does not cross this function.
+ */
+function isNumeric(value: unknown): value is number {
+    return typeof value === 'number' && !Number.isNaN(value);
+}
+
 // ---------------------------------------------------------------------------
 // Derivations — the single source each predicate comes from (DEC-010)
 // ---------------------------------------------------------------------------
 
-/**
- * `min` is inclusive. Shared by `min` and `positive` so the two cannot diverge: `Positive()` is
- * literally an inclusive lower bound of zero, which is precisely what makes Q-1 visible in the
- * data rather than buried in a closure.
- */
+/** `min` is inclusive. Shared by `min` and `nonNegative`. */
 const atLeast = (params: Readonly<MinParams>): Predicate =>
-    (value: unknown) => !((value as number) < params.min);
+    (value: unknown) => isNumeric(value) && value >= params.min;
 
-/** `max` is inclusive. */
+/** `max` is inclusive. Shared by `max` and `nonPositive`. */
 const atMost = (params: Readonly<MaxParams>): Predicate =>
-    (value: unknown) => !((value as number) > params.max);
+    (value: unknown) => isNumeric(value) && value <= params.max;
+
+/** `exclusiveMin` is excluded. Shared by `greaterThan` and `positive`. */
+const above = (params: Readonly<ExclusiveMinParams>): Predicate =>
+    (value: unknown) => isNumeric(value) && value > params.exclusiveMin;
+
+/** `exclusiveMax` is excluded. Shared by `lessThan` and `negative`. */
+const below = (params: Readonly<ExclusiveMaxParams>): Predicate =>
+    (value: unknown) => isNumeric(value) && value < params.exclusiveMax;
+
+/**
+ * Both bounds inclusive.
+ *
+ * Composed from {@link atLeast} and {@link atMost} rather than written out, so `Between(a, b)`
+ * cannot disagree with `GreaterThanEqual(a)` ∧ `LessThanEqual(b)` — there is one implementation of
+ * "inclusive lower bound" in this file, not two.
+ */
+const within = (params: Readonly<RangeParams>): Predicate => {
+    const lower = atLeast(params);
+    const upper = atMost(params);
+    return (value: unknown) => lower(value) && upper(value);
+};
+
+/** No params: the rule is fully determined by its identity. */
+const whole = (): Predicate =>
+    (value: unknown) => isNumeric(value) && Number.isInteger(value);
+
+/**
+ * Exact for integer operands; tolerant for fractional ones.
+ *
+ * `0.3 % 0.1` is `0.09999999999999998`, not `0`, so a naive `%` reports that `0.3` is not a
+ * multiple of `0.1`. Binary floating point cannot represent either operand exactly and no
+ * implementation escapes this — JSON Schema's own `multipleOf` has the same ambiguity and
+ * validators disagree on it. The compromise here is stated rather than hidden: integers are exact,
+ * fractional divisors compare the quotient against its nearest integer within a *relative*
+ * tolerance, so the check degrades predictably with magnitude instead of failing outright.
+ *
+ * `Infinity` falls out as `false`: `Infinity / n` is `Infinity`, and `Infinity - Infinity` is `NaN`,
+ * which fails the comparison. That is the right answer — infinity is not a multiple of anything.
+ */
+const multipleOf = (params: Readonly<MultipleOfParams>): Predicate => {
+    const divisor = params.multipleOf;
+    return (value: unknown) => {
+        if (!isNumeric(value)) return false;
+        if (Number.isInteger(value) && Number.isInteger(divisor)) return value % divisor === 0;
+
+        const quotient = value / divisor;
+        const nearest = Math.round(quotient);
+        return Math.abs(quotient - nearest) <= Number.EPSILON * Math.abs(quotient) * 8;
+    };
+};
+
+// ---------------------------------------------------------------------------
+// Schema fragments
+// ---------------------------------------------------------------------------
+
+/**
+ * `type: 'number'` is only truthful because the predicates are type-guarded (BUG-4). Before P3.3 a
+ * numeric constraint accepted `undefined` and `NaN`, so claiming a type in a generated schema would
+ * have been a claim enforcement did not back.
+ */
+const numeric = (fragment: JsonObject): JsonObject => {
+    const schema: JsonObject = {type: 'number'};
+    Object.keys(fragment).forEach(key => {
+        schema[key] = fragment[key];
+    });
+    return schema;
+};
 
 // ---------------------------------------------------------------------------
 // Definitions
@@ -66,6 +227,7 @@ export const minConstraint = defineConstraint<MinParams>({
     constraint: 'min',
     derive: atLeast,
     describe: params => `a number greater than or equal to ${params.min}`,
+    schema: params => numeric({minimum: params.min}),
 });
 
 export const maxConstraint = defineConstraint<MaxParams>({
@@ -73,47 +235,208 @@ export const maxConstraint = defineConstraint<MaxParams>({
     constraint: 'max',
     derive: atMost,
     describe: params => `a number less than or equal to ${params.max}`,
+    schema: params => numeric({maximum: params.max}),
+});
+
+export const greaterThanConstraint = defineConstraint<ExclusiveMinParams>({
+    kind: 'number',
+    constraint: 'greaterThan',
+    derive: above,
+    describe: params => `a number greater than ${params.exclusiveMin}`,
+    schema: params => numeric({exclusiveMinimum: params.exclusiveMin}),
+});
+
+export const lessThanConstraint = defineConstraint<ExclusiveMaxParams>({
+    kind: 'number',
+    constraint: 'lessThan',
+    derive: below,
+    describe: params => `a number less than ${params.exclusiveMax}`,
+    schema: params => numeric({exclusiveMaximum: params.exclusiveMax}),
+});
+
+export const betweenConstraint = defineConstraint<RangeParams>({
+    kind: 'number',
+    constraint: 'between',
+    derive: within,
+    describe: params => `a number between ${params.min} and ${params.max} (inclusive)`,
+    schema: params => numeric({minimum: params.min, maximum: params.max}),
 });
 
 /**
- * A distinct identity from `min`, despite sharing its derivation and params.
+ * A distinct identity from `greaterThan`, despite sharing its derivation and params shape.
  *
- * The identity is what a documentation projection *names* ("must be positive"), while `params.min`
- * is what a schema projection *reads* (`{"minimum": 0}`). Collapsing `Positive()` into
- * `min({min: 0})` would lose the former; giving it its own hand-written predicate would reopen the
- * drift risk. Sharing `atLeast` keeps one source for the check and preserves the original message.
+ * The identity is what a documentation projection *names* ("a positive number"), while
+ * `params.exclusiveMin` is what a schema projection *reads* (`{"exclusiveMinimum": 0}`). Collapsing
+ * `Positive()` into `greaterThan({exclusiveMin: 0})` would lose the former; giving it its own
+ * hand-written predicate would reopen the drift risk. Sharing `above` keeps one source for the check.
+ *
+ * **Strict since P3.3** — `0` is rejected. See the module note on Q-1.
  */
-export const positiveConstraint = defineConstraint<MinParams>({
+export const positiveConstraint = defineConstraint<ExclusiveMinParams>({
     kind: 'number',
     constraint: 'positive',
-    derive: atLeast,
+    derive: above,
     describe: () => 'a positive number',
+    schema: params => numeric({exclusiveMinimum: params.exclusiveMin}),
 });
+
+/** The mirror of `positive`, and strict for the same reason. */
+export const negativeConstraint = defineConstraint<ExclusiveMaxParams>({
+    kind: 'number',
+    constraint: 'negative',
+    derive: below,
+    describe: () => 'a negative number',
+    schema: params => numeric({exclusiveMaximum: params.exclusiveMax}),
+});
+
+/** What `Positive()` used to mean. Shares `atLeast` with `min`. */
+export const nonNegativeConstraint = defineConstraint<MinParams>({
+    kind: 'number',
+    constraint: 'nonNegative',
+    derive: atLeast,
+    describe: () => 'a non-negative number',
+    schema: params => numeric({minimum: params.min}),
+});
+
+/** The mirror of `nonNegative`. Shares `atMost` with `max`. */
+export const nonPositiveConstraint = defineConstraint<MaxParams>({
+    kind: 'number',
+    constraint: 'nonPositive',
+    derive: atMost,
+    describe: () => 'a non-positive number',
+    schema: params => numeric({maximum: params.max}),
+});
+
+export const integerConstraint = defineConstraint<JsonObject>({
+    kind: 'number',
+    constraint: 'integer',
+    derive: whole,
+    describe: () => 'an integer',
+    // The one fragment that narrows rather than annotates: `integer` *is* a JSON Schema type.
+    schema: () => ({type: 'integer'}),
+});
+
+export const multipleOfConstraint = defineConstraint<MultipleOfParams>({
+    kind: 'number',
+    constraint: 'multipleOf',
+    derive: multipleOf,
+    describe: params => `a multiple of ${params.multipleOf}`,
+    schema: params => numeric({multipleOf: params.multipleOf}),
+});
+
+// ---------------------------------------------------------------------------
+// Params validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Guards the *authoring* side, which `Descriptor.normalizeParams` does not: it rejects a non-finite
+ * bound, but `'5'` is valid JSON and would sail through, producing `value >= '5'` — a string
+ * comparison silently masquerading as a numeric one.
+ *
+ * A bad bound is an author error, so it throws at construction rather than at call time.
+ */
+function requireFiniteNumber(constraint: string, name: string, value: number): number {
+    if (typeof value !== 'number' || !isFinite(value)) {
+        throw new TypeError(
+            `${constraint}: \`${name}\` must be a finite number, received ${describeValue(value)}`,
+        );
+    }
+    return value;
+}
+
+function describeValue(value: unknown): string {
+    if (typeof value === 'string') return `the string '${value}'`;
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+    return String(value);
+}
 
 // ---------------------------------------------------------------------------
 // Constraint factories — the authoring surface
 // ---------------------------------------------------------------------------
 
-/**
- * Rejects values below `min`; `min` itself passes.
- * Ports `GreaterThanEqual` from `src/ParameterDecorators/Constraints.ts`.
- */
+/** Rejects values below `min`; `min` itself passes. */
 export function GreaterThanEqual(min: number) {
-    return minConstraint({min});
+    return minConstraint({min: requireFiniteNumber('GreaterThanEqual', 'min', min)});
 }
 
-/**
- * Rejects values above `max`; `max` itself passes.
- * Ports `LessThanEqual` from `src/ParameterDecorators/Constraints.ts`.
- */
+/** Rejects values above `max`; `max` itself passes. */
 export function LessThanEqual(max: number) {
-    return maxConstraint({max});
+    return maxConstraint({max: requireFiniteNumber('LessThanEqual', 'max', max)});
+}
+
+/** Rejects values at or below `bound`. */
+export function GreaterThan(bound: number) {
+    return greaterThanConstraint({exclusiveMin: requireFiniteNumber('GreaterThan', 'bound', bound)});
+}
+
+/** Rejects values at or above `bound`. */
+export function LessThan(bound: number) {
+    return lessThanConstraint({exclusiveMax: requireFiniteNumber('LessThan', 'bound', bound)});
 }
 
 /**
- * Rejects values below zero. **Accepts `0`** — see the module note and ISSUES.md Q-1.
- * Ports `Positive` from `src/ParameterDecorators/Constraints.ts`.
+ * Rejects values outside `[min, max]`. **Both bounds are inclusive.**
+ *
+ * Inclusive because it composes the two existing inclusive bounds, so `Between` is exactly
+ * `GreaterThanEqual ∧ LessThanEqual` with one identity instead of two — which is the whole reason
+ * to have it. An exclusive variant would need its own derivation and is not built until something
+ * asks for it (plan risk 10).
+ *
+ * `min === max` is allowed and pins the value; `min > max` is an author error and throws, because
+ * the alternative is a constraint nothing can satisfy that reads as valid in generated docs.
+ */
+export function Between(min: number, max: number) {
+    requireFiniteNumber('Between', 'min', min);
+    requireFiniteNumber('Between', 'max', max);
+    if (min > max) {
+        throw new RangeError(
+            `Between: \`min\` (${min}) must not exceed \`max\` (${max}) — no value could satisfy it`,
+        );
+    }
+    return betweenConstraint({min, max});
+}
+
+/**
+ * Rejects values at or below zero.
+ *
+ * **BREAKING since P3.3: `0` no longer passes.** Use {@link NonNegative} for the previous
+ * behaviour. See the module note on Q-1.
  */
 export function Positive() {
-    return positiveConstraint({min: 0});
+    return positiveConstraint({exclusiveMin: 0});
+}
+
+/** Rejects values at or above zero. `0` does not pass — the mirror of {@link Positive}. */
+export function Negative() {
+    return negativeConstraint({exclusiveMax: 0});
+}
+
+/** Rejects values below zero; `0` passes. This is what `Positive()` meant before P3.3. */
+export function NonNegative() {
+    return nonNegativeConstraint({min: 0});
+}
+
+/** Rejects values above zero; `0` passes. The mirror of {@link NonNegative}. */
+export function NonPositive() {
+    return nonPositiveConstraint({max: 0});
+}
+
+/** Rejects non-integers, and any non-number. `1.0` is an integer; `1.5`, `Infinity`, `NaN` are not. */
+export function Integer() {
+    return integerConstraint({});
+}
+
+/**
+ * Rejects values that are not an exact multiple of `divisor`. `0` is a multiple of everything.
+ *
+ * `divisor` must be strictly positive: `0` admits nothing, and a negative divisor describes the
+ * same set as its absolute value while producing a confusing `{"multipleOf": -2}` in a schema.
+ */
+export function MultipleOf(divisor: number) {
+    requireFiniteNumber('MultipleOf', 'divisor', divisor);
+    if (divisor <= 0) {
+        throw new RangeError(`MultipleOf: \`divisor\` must be greater than zero, received ${divisor}`);
+    }
+    return multipleOfConstraint({multipleOf: divisor});
 }

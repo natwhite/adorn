@@ -106,11 +106,69 @@ Follow-on consequences:
 ---
 
 ## DEC-008 — Production toggling semantics
-**Status:** OPEN
+**Status:** ACCEPTED · landed in P3.2
 
 **Context.** `Configuration` exists but is never consulted (**SMELL-4**). Every mature contract system makes checks toggleable — but a single boolean is unsafe.
 
-**Open question.** Preconditions guarding *untrusted external* input generally must **not** be stripped; internal self-checks and invariants commonly can be. This requires per-contract or per-category semantics rather than one global switch. Tracked as **Q-2**.
+**Open question (now answered).** Preconditions guarding *untrusted external* input generally must **not** be stripped; internal self-checks and invariants commonly can be. This requires per-contract or per-category semantics rather than one global switch. Tracked as **Q-2**.
+
+**Decision.** Classify each contract by **trust**, in `src/Core/Configuration.ts`:
+
+- `guard` — validates untrusted or external input. **Not removed by the production switch.** The only way to disable these is `disableGuardEnforcement({confirm: true, reason})`, which throws without both fields and logs a loud one-time warning when it succeeds. No environment variable, config file, or plain setter reaches it.
+- `assert` — an internal self-check. Stripped in production by default, exactly like a C `assert`. `setAssertEnforcement(true | false | 'auto')` pins it either way; `'auto'` follows the mode.
+
+`guard` is the default, so an author who says nothing gets a check that survives production and must *downgrade* deliberately. Trust is declared on the enforcement site — `@Contract({trust})` for a class, `@Validate({trust})` for one method — and resolved at install time. The gate is evaluated **once per call at the top of the wrapper**, not once per predicate, so a method with eight constraints pays for one boolean test.
+
+Violation routing is separate from the gate: `setViolationPolicy('throw' | 'warn' | handler)`. `'warn'` logs and **proceeds into the method**, which is what makes it usable for staging a new contract over live traffic. A handler that returns suppresses; one that throws escalates. A failure thrown by the *method itself* never enters this path.
+
+**Granularity, deliberately limited.** Trust is per enforcement site, not per constraint. Trust answers *why a check exists* — "this method sits at a boundary and is handed input it did not produce" — which is a property of the method's role, not of any individual `min: 0` within it; a method whose first parameter is a `guard` and second an `assert` describes a half-trusted boundary, which is not a thing. Per-constraint trust is a pure extension (record a trust alongside the constraint, take the strictest on the path) and should wait for real demand. The plan's `categories: {parameter, field, postcondition, concern}` axis is likewise **not built**: `parameter` is the only category that exists, so three of its four keys would be dead configuration nothing could set meaningfully and no test could exercise. Plan risk 10 names this layer specifically.
+
+**Consequences.** `DecoratorConfiguration.ErrorOnFieldConstraintMismatch` is superseded and now documented as inert; the file is retained only as a migration shim and should be deleted once the field path (P2.1) is rebuilt on the real configuration. Trust becomes authoring surface, so it is semver-relevant alongside the registry reads (Q-6). Enforcement is now *conditional*, which means a generated document should eventually say whether a contract survives production — currently it does not, and that is a gap rather than a disagreement.
+
+---
+
+## DEC-016 — Installation implies enumeration: `@Validate()` registers its class
+**Status:** ACCEPTED · source: **Q-12** · landed alongside P3.2
+
+**Context.** `@Contract()` called `registerContractedClass`; `@Validate()` did not. A class using only the per-method form was therefore **enforced at runtime yet absent from `getContractedClasses()`** — invisible to documentation and, later, to fuzzing. Both readings were defensible: enumeration could mean *"deliberately published"*, which made `@Validate()` a fine-grained opt-in that opted out of visibility too; or any installation could imply enumeration.
+
+**Decision.** **Any installation implies enumeration.** `@Validate()` registers its owning class, resolved from the constructor for a static member and from `target.constructor` for an instance member. `getContractedClasses()` now means *"classes adorn has installed enforcement on"*.
+
+**Rationale.** The deciding argument is not ergonomics, it is that the two failure modes are not symmetric. An unenforced contract eventually surfaces — something gets through and the bug is found. A contract that is enforced but **missing from a generated artifact** never surfaces: nothing throws, and the artifact looks complete. The plan calls that out as strictly the worse of the two (§8), and under DEC-006 the artifacts are the product. Adorn must not guarantee something at runtime that it will not admit to in a document.
+
+There is also no real use case on the other side. Nobody wants "enforced but undocumented" as a *property*; they want fine-grained installation, which `@Validate()` still provides. Excluding a class from a generated artifact is a projection-level filter, and an enforcement decorator is the wrong lever for it.
+
+**Consequences.** A class carrying `@Validate()` on one method now appears in documentation with its *uncovered* sibling methods listed and flagged `installed: false`. That is a more useful document than one silently omitting the class, and it is exactly the recorded-but-unenforced case the docs renderer already surfaces loudly. Registration is unconditional — it does not wait for there to be something to install — matching `@Contract()`, which already enumerated a constraint-free class. The strong-reference cost of DEC-011 now extends to `@Validate()`-only classes; `setClassEnumerationEnabled(false)` remains the opt-out.
+
+**Test changed:** `test/contract-installation.test.ts` — *"does NOT register the class for projection"* asserted the opposite and was inverted, with the reasoning recorded inline. Two tests were added covering registration with no constraints yet, and the uncovered-sibling case.
+
+---
+
+## DEC-017 — Constraint order is normalised at record time, not plan time
+**Status:** ACCEPTED · source: **SMELL-13** · supersedes the residue of DEC-015
+
+**Context.** DEC-015 normalised enforcement to declaration order inside `buildParameterEnforcement`, by reversing the arrays at install time. That fixed what *ran* but not what was *stored*: the `ContractRegistry` array stayed in arrival order, which `__decorate`'s back-to-front application makes the reverse of source order. So `@GreaterThanEqual(100) @LessThanEqual(1000) n` **enforced GTE-first and documented LTE-first**.
+
+**Decision.** Normalise as the constraint is recorded, not as the plan is built. `recordParameterConstraint` gains an optional `position: 'append' | 'prepend'` argument, defaulting to `'append'`; the legacy adapter passes `'prepend'`, and the adapter-local staging table for `CreateSimpleDecorator` closures `unshift`s for the same reason. Both `.reverse()` calls in `planChecks` are gone.
+
+**Rationale.** There is no *semantic* disagreement here — it is not Q-4 drift, and nothing enforced differently from what it claimed to. But enforcement and documentation describing one declaration in two different orders is precisely the trust the flagship goal is built on: under "one declaration, four artifacts" a reader has no way to distinguish a cosmetic reordering from a real one, so the artifact has to be right for the reader to rely on any of it.
+
+Recording correctly rather than reversing later also keeps the layering honest. Knowledge of `__decorate`'s application order stays in the adapter — at the two record sites, which is the only place entitled to it (DEC-015) — while the registry remains the single definition of what its own ordering means. A standard-decorator adapter, whose decorators arrive in declaration order, simply takes the default. The alternative considered and rejected was having the installer mutate the registry's arrays, which would have put emitter knowledge inside the core.
+
+**Consequences.** Registry order now equals enforcement order, so a projection can render stacked constraints in the order they will fire. `src/Projections/docs.test.ts` needed **no change** — it records directly, in declaration order, and takes the default `'append'`.
+
+---
+
+## DEC-018 — `getContractsForClass` owns the two-key-band rule
+**Status:** ACCEPTED · source: **Q-9** · raised by the docs projection
+
+**Context.** A class's contracts live on two objects: instance-method constraints on `Class.prototype`, static-method constraints on the constructor itself, because that is the object the decorator is handed. `getContractedClasses()` returns only `Function[]`, so every projection had to know to walk both — and **getting it wrong does not fail**. It silently emits an artifact missing every static method.
+
+**Decision.** `getContractsForClass(ctor)` returns both bands as a flat, deterministically ordered list of `{key, contract, isStatic, target}` — instance methods first, then statics. This is the API projections should walk.
+
+**Rationale.** The failure mode is the argument. A rule that must be re-derived by four independent consumers, where forgetting it produces a plausible-looking incomplete document rather than an error, belongs in the registry once. The flat shape with an `isStatic` tag was chosen over returning two maps because the tag *is* the knowledge being centralised, and it is what the consumer needs to render anyway.
+
+**Consequences.** `src/Projections/docs.ts` still hand-rolls `collectMethods(prototype) ++ collectMethods(constructor)` and should be refactored onto this — a behaviour-neutral change, not made here only because that file is owned elsewhere. Registry introspection surface grows, which is semver-relevant (**Q-6**).
 
 ---
 

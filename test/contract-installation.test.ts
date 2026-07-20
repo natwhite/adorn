@@ -28,6 +28,12 @@ import {
 } from '../src/ParameterDecorators/Constraints';
 import {ParameterDecoratorFactory} from '../src/Core/ParameterDecoratorFactory';
 import {getContract, getContractedClasses} from '../src/Core/ContractRegistry';
+import {
+    resetConfiguration,
+    setAssertEnforcement,
+    setEnforcementMode,
+    setViolationPolicy,
+} from '../src/Core/Configuration';
 
 describe('the missing-@Contract() diagnostic (mandatory, plan top risk 1)', () => {
     let warnings: string[];
@@ -324,17 +330,51 @@ describe('@Validate() per-method opt-in (plan P1.3, option A2)', () => {
         expect(warnings[0]).not.toContain('covered,');
     });
 
-    it('does NOT register the class for projection — that is @Contract()\'s job', () => {
+    it('registers the class for projection — installation implies enumeration (Q-12)', () => {
+        // CHANGED, and deliberately: this previously asserted the OPPOSITE, that
+        // `@Validate()` enforced without enumerating. That made a class using only
+        // the per-method form enforced-but-undocumented — adorn guaranteeing
+        // something at runtime that it would not admit to in a generated artifact.
+        // Silently missing from an artifact people trust is the failure the plan
+        // calls worse than being unenforced, because nothing ever throws to reveal
+        // it (plan §8). Settled as: anything adorn installs, it also enumerates.
         class ValidatedOnly {
             @Validate()
             run(@Positive() n: number) { return n; }
         }
         void ValidatedOnly;
 
-        // Enforced but invisible to documentation and fuzzing (DEC-011). This is
-        // the trade `@Validate()` makes and the reason `@Contract()` is the
-        // recommended form.
-        expect(getContractedClasses()).not.toContain(ValidatedOnly as unknown as Function);
+        expect(getContractedClasses()).toContain(ValidatedOnly as unknown as Function);
+    });
+
+    it('registers a class whose validated method carries no constraints yet', () => {
+        // Enumeration marks intent to be visible, so it does not depend on there
+        // being anything to install — same rule `@Contract()` already followed for
+        // a constraint-free class.
+        class NothingYet {
+            @Validate()
+            run(n: number) { return n; }
+        }
+        void NothingYet;
+
+        expect(getContractedClasses()).toContain(NothingYet as unknown as Function);
+    });
+
+    it('leaves a sibling method visible but flagged as not installed', () => {
+        // The consequence of enumerating from a per-method decorator: the class is
+        // in the artifact, and an uncovered sibling shows up as recorded-but-not-
+        // enforced rather than vanishing with the whole class.
+        class Mixed {
+            @Validate()
+            covered(@Positive() n: number) { return n; }
+
+            uncovered(@Positive() n: number) { return n; }
+        }
+        void Mixed;
+
+        expect(getContractedClasses()).toContain(Mixed as unknown as Function);
+        expect(getContract(Mixed.prototype, 'covered')!.installed).toBe(true);
+        expect(getContract(Mixed.prototype, 'uncovered')!.installed).toBe(false);
     });
 
     it('composes with @Contract() without double-wrapping', () => {
@@ -362,5 +402,111 @@ describe('@Validate() per-method opt-in (plan P1.3, option A2)', () => {
 
         expect(new Task().run(5)).toBe(5);
         expect(Task.prototype.run.length).toBe(1); // never wrapped
+    });
+});
+
+describe('production toggling by trust (P3.2 / DEC-008)', () => {
+    afterEach(resetConfiguration);
+
+    it('keeps guards enforced in production and strips asserts', () => {
+        // The assertion the whole trust model exists for. `@Contract()` with no
+        // trust option defaults to `guard`, so a contract an author said nothing
+        // about survives production — the safe direction to be wrong in.
+        @Contract()
+        class Boundary {
+            handle(@Positive() n: number) { return n; }
+        }
+
+        @Contract({trust: 'assert'})
+        class Internal {
+            check(@Positive() n: number) { return n; }
+        }
+
+        setEnforcementMode('production');
+
+        expect(() => new Boundary().handle(-1)).toThrow(/positive/);
+        expect(new Internal().check(-1)).toBe(-1); // stripped
+
+        setEnforcementMode('development');
+
+        expect(() => new Boundary().handle(-1)).toThrow(/positive/);
+        expect(() => new Internal().check(-1)).toThrow(/positive/);
+    });
+
+    it('applies trust per method through @Validate()', () => {
+        class Mixed {
+            @Validate()
+            boundary(@Positive() n: number) { return n; }
+
+            @Validate({trust: 'assert'})
+            internal(@Positive() n: number) { return n; }
+        }
+
+        setEnforcementMode('production');
+
+        const mixed = new Mixed();
+        expect(() => mixed.boundary(-1)).toThrow(/positive/);
+        expect(mixed.internal(-1)).toBe(-1);
+    });
+
+    it('resolves trust at install time, but reads the gate per call', () => {
+        // Flipping the switch after the class is decorated still takes effect —
+        // the gate is evaluated on the hot path, not baked into the wrapper.
+        @Contract({trust: 'assert'})
+        class Internal {
+            check(@Positive() n: number) { return n; }
+        }
+
+        expect(() => new Internal().check(-1)).toThrow(/positive/);
+
+        setAssertEnforcement(false);
+        expect(new Internal().check(-1)).toBe(-1);
+
+        setAssertEnforcement(true);
+        expect(() => new Internal().check(-1)).toThrow(/positive/);
+    });
+
+    it("routes violations without throwing under onViolation: 'warn', and still runs the method", () => {
+        @Contract()
+        class Task {
+            run(@Positive() n: number) { return `ran:${n}`; }
+        }
+
+        const seen: string[] = [];
+        setViolationPolicy(violation => { seen.push((violation as Error).message); });
+
+        // Suppressed, so the call proceeds — which is the point of 'warn': stage a
+        // new contract over live traffic before letting it reject anything.
+        expect(new Task().run(-1)).toBe('ran:-1');
+        expect(seen).toHaveLength(1);
+        expect(seen[0]).toMatch(/positive/);
+    });
+
+    it('tells a custom handler which class, method, and trust level violated', () => {
+        @Contract({trust: 'assert'})
+        class Task {
+            run(@Positive() n: number) { return n; }
+        }
+
+        const sites: Array<{owner: string; member: string; trust: string}> = [];
+        setViolationPolicy((_violation, site) => { sites.push({...site}); });
+
+        new Task().run(-1);
+
+        expect(sites).toEqual([{owner: 'Task', member: 'run', trust: 'assert'}]);
+    });
+
+    it('does not route a failure thrown by the method itself', () => {
+        // Only contract checks go through the policy. A method's own exception is
+        // the caller's business and must propagate untouched even when violations
+        // are being suppressed.
+        @Contract()
+        class Task {
+            run(@Positive() n: number): number { throw new Error(`method blew up on ${n}`); }
+        }
+
+        setViolationPolicy(() => undefined);
+
+        expect(() => new Task().run(1)).toThrow(/method blew up on 1/);
     });
 });

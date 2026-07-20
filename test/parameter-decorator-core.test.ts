@@ -52,6 +52,7 @@
 import {
     GreaterThanEqual,
     LessThanEqual,
+    NonNegative,
     Positive,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
@@ -216,6 +217,46 @@ describe('multiple decorators', () => {
         // 75 violates BOTH (< 100 and > 50) — the first-declared one is reported,
         // which is the assertion that actually pins the ordering.
         expect(() => new Task().test(75)).toThrow(/greater than or equal to 100/);
+    });
+
+    it('records stacked constraints in the SAME order it enforces them (SMELL-13)', () => {
+        // CHANGED: the registry array used to be in arrival order, i.e. reversed.
+        // Enforcement was normalised at plan time but the store was not, so
+        // `@GreaterThanEqual(100) @LessThanEqual(1000)` enforced GTE-first while
+        // every projection reading the registry documented LTE-first.
+        //
+        // No semantic disagreement — but enforcement and documentation describing
+        // one declaration two different ways is exactly what erodes trust in a
+        // generated artifact, which is the thing DEC-006 is built on. Both record
+        // sites now normalise as they write.
+        @Contract()
+        class Bounded {
+            clamp(@GreaterThanEqual(100) @LessThanEqual(1000) n: number) { return n; }
+        }
+
+        const recorded = getContract(Bounded.prototype, 'clamp')!.params[0].constraints
+            .map(constraint => constraint.constraint);
+
+        // declaration order: GTE (`min`) first, LTE (`max`) second
+        expect(recorded).toEqual(['min', 'max']);
+
+        // ...and enforcement agrees: the first-listed constraint is the one that
+        // reports, so the document and the runtime tell the same story.
+        expect(() => new Bounded().clamp(50)).toThrow(/greater than or equal to 100/);
+    });
+
+    it('records constraints across parameters in declaration order too', () => {
+        @Contract()
+        class Task {
+            test(@StringMinLength(10) message: string, @GreaterThanEqual(1) @LessThanEqual(9) n: number) {
+                return `${message}${n}`;
+            }
+        }
+
+        const contract = getContract(Task.prototype, 'test')!;
+        expect(contract.params.map(p => p.index)).toEqual([0, 1]);
+        expect(contract.params[0].constraints.map(c => c.constraint)).toEqual(['minLength']);
+        expect(contract.params[1].constraints.map(c => c.constraint)).toEqual(['min', 'max']);
     });
 });
 
@@ -490,34 +531,74 @@ describe('__decorate / Object.defineProperty interaction (DEC-005)', () => {
 });
 
 describe('known defects pinned', () => {
-    it('CHARACTERIZATION: known defect BUG-4 — a null argument raises TypeError, not a contract violation', () => {
-        // `minLength`'s derived predicate dereferences `.length` with no guard,
-        // so a null argument produces a bare TypeError from inside adorn instead
-        // of the contract violation the caller should see. Preserved verbatim
-        // through the P1.0 descriptor port; P3.3 adds uniform null/type guards.
+    it('BUG-4 FIXED BY P3.3 — a null argument is a contract violation, not a TypeError', () => {
+        // FLIPPED BY P3.3. This previously pinned the defect: `minLength`'s derived
+        // predicate dereferenced `.length` with no guard, so a null argument produced
+        // a bare TypeError from inside adorn instead of the violation the caller
+        // should see, and asserted `.not.toThrow(/parameter 'message'/)`.
+        //
+        // Every predicate in `src/Contracts/` now opens with a type guard and is
+        // total: it answers `false` for anything outside its domain rather than
+        // throwing. That matters beyond the message — a predicate that can throw is
+        // a hazard for any projection that evaluates it, and a fuzzer feeds it null
+        // in the first hundred cases.
         @Contract()
         class Task {
             test(@StringMinLength(10) message: string) { return 'ok'; }
         }
 
-        expect(() => new Task().test(null as any)).toThrow(TypeError);
-        expect(() => new Task().test(null as any)).toThrow(/Cannot read properties of null/);
-        // note what it is NOT: a message naming the parameter or the constraint
-        expect(() => new Task().test(null as any)).not.toThrow(/parameter 'message'/);
+        expect(() => new Task().test(null as any)).toThrow(Error);
+        expect(() => new Task().test(null as any)).not.toThrow(TypeError);
+        // what it now IS: a violation naming the parameter and the expectation
+        expect(() => new Task().test(null as any)).toThrow(/parameter 'message'/);
+        expect(() => new Task().test(null as any)).toThrow(/expected a string of length greater than 10/);
+        // and the same for undefined, and for a value of the wrong type entirely
+        expect(() => new Task().test(undefined as any)).toThrow(/parameter 'message'/);
+        expect(() => new Task().test(12345 as any)).toThrow(/parameter 'message'/);
     });
 
-    it('CHARACTERIZATION: known defect Q-1 / DEC-001 — @Positive accepts zero', () => {
-        // `Positive` rejects only `value < 0`, so 0 passes despite the name. Q-1
-        // is the open decision on whether to make it strict or rename it; either
-        // resolution changes this assertion.
+    it('Q-1 SETTLED BY P3.3 — @Positive rejects zero; @NonNegative is the old behaviour', () => {
+        // FLIPPED BY P3.3, and a deliberate user-visible break. This previously
+        // pinned `expect(new Task().test(0)).toBe(0)`, because `Positive` rejected
+        // only `value < 0` and so accepted 0 despite its name (Q-1 / DEC-001).
+        //
+        // Settled strictly because `@Negative()` ships in the same change: under the
+        // lax reading 0 would satisfy `positive` *and* `nonPositive`, and the
+        // Positive/Negative pair would share a boundary no reader would predict.
+        // The descriptor's params moved from {min: 0} to {exclusiveMin: 0}, so the
+        // boundary is now visible in generated artifacts rather than buried in a name.
         @Contract()
         class Task {
             test(@Positive() n: number) { return n; }
+            atLeastZero(@NonNegative() n: number) { return n; }
         }
 
-        expect(new Task().test(0)).toBe(0);
+        expect(() => new Task().test(0)).toThrow(/expected a positive number/);
         expect(new Task().test(1)).toBe(1);
         expect(() => new Task().test(-1)).toThrow(/expected a positive number/);
+
+        // the migration path for callers who relied on 0 passing
+        expect(new Task().atLeastZero(0)).toBe(0);
+        expect(() => new Task().atLeastZero(-1)).toThrow(/expected a non-negative number/);
+    });
+
+    it('Q-7 SETTLED BY P3.3 — NaN violates numeric constraints instead of satisfying them', () => {
+        // NEW IN P3.3. The originals tested `value < min`, and every comparison with
+        // NaN is false, so NaN never triggered a violation — and neither did
+        // `undefined`, which coerces to NaN. P1.0 preserved that as `!(value < min)`
+        // rather than smuggle a behaviour change into a refactor and pinned it in
+        // `src/Contracts/constraints.test.ts`; this is the decorator-level evidence
+        // that the settlement reaches actual call sites.
+        @Contract()
+        class Task {
+            test(@GreaterThanEqual(100) n: number) { return n; }
+        }
+
+        expect(() => new Task().test(NaN)).toThrow(/parameter 'n'/);
+        expect(() => new Task().test(undefined as any)).toThrow(/parameter 'n'/);
+        expect(() => new Task().test('500' as any)).toThrow(/parameter 'n'/);
+        // Infinity is left alone: its ordering is coherent, unlike NaN's
+        expect(new Task().test(Infinity)).toBe(Infinity);
     });
 
     it('a non-Error throw now propagates unchanged (SMELL-2 fixed)', () => {

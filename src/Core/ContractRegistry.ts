@@ -81,7 +81,20 @@ export interface MethodContract {
     readonly pre: ReadonlyArray<ConstraintDescriptor>;
     /** Reserved — postconditions (Tier 2, top priority per plan §9). */
     readonly post: ReadonlyArray<ConstraintDescriptor>;
-    /** Whether an installer has wrapped this method yet. Drives P1.3's missing-`@Contract()` warning. */
+    /**
+     * Whether an installer has wrapped this method yet.
+     *
+     * **This does not drive the missing-`@Contract()` warning** (Q-13), contrary to what this
+     * comment used to claim. It cannot: a contract authored with `CreateSimpleDecorator` is a bare
+     * closure, which the registry refuses by design (see {@link recordParameterConstraint}), so such
+     * methods have no entry here at all. A sweep over `installed === false` would therefore silently
+     * skip exactly the classes most likely to be broken — the ones using the older authoring form —
+     * which is the opposite of what a mandatory diagnostic is for (SMELL-14).
+     *
+     * The warning is driven by an adapter-side pending set in `ContractDiagnostics`, which is told
+     * about every authoring form. This flag is still maintained accurately for the methods the
+     * registry does hold, and is what a projection reads to mark a contract as recorded-but-unenforced.
+     */
     readonly installed: boolean;
 }
 
@@ -147,6 +160,9 @@ export function getContract(target: ContractTarget, key: MethodKey): MethodContr
  * **Limitation, inherent to runtime introspection (DEC-007):** this reflects only what has been
  * *imported and evaluated*. A documentation generator needs an entry point that enumerates the
  * modules to scan; a class nothing imports is invisible here.
+ *
+ * Note this returns constructors, which is only half of where contracts live — see
+ * {@link getContractsForClass}, which is what a projection should actually walk.
  */
 export function getContractedClasses(): Function[] {
     const classes: Function[] = [];
@@ -154,19 +170,103 @@ export function getContractedClasses(): Function[] {
     return classes;
 }
 
+/** One method's contract, tagged with which key band it was recorded on. */
+export interface ClassMethodContract {
+    readonly key: MethodKey;
+    readonly contract: MethodContract;
+    /** `true` when recorded against the constructor — i.e. a `static` method. */
+    readonly isStatic: boolean;
+    /** The object it is recorded against: `constructor` for statics, `constructor.prototype` otherwise. */
+    readonly target: ContractTarget;
+}
+
+/**
+ * Every contract on a class, from **both** key bands.
+ *
+ * ## Why this exists (Q-9)
+ *
+ * A class's contracts do not live in one place. Instance-method constraints are recorded against
+ * `Class.prototype`; static-method constraints are recorded against the constructor itself, because
+ * that is the object the decorator is handed. {@link getContractedClasses} returns only
+ * `Function[]`, so every consumer had to know to look in both — and *getting it wrong does not
+ * fail*. It silently emits an artifact that is missing every static method, which under DEC-006 is
+ * the worst failure shape available: a generated document that looks complete and is not.
+ *
+ * That knowledge belongs here, once, rather than being re-derived by the documentation, schema,
+ * arbitrary, and fuzz projections independently. This is the API they should walk.
+ *
+ * Ordering is deterministic — instance methods first, then statics, each in registry insertion
+ * order — so a regenerated artifact does not produce spurious diffs.
+ *
+ * Returns an empty array for a class with nothing recorded, so callers iterate unconditionally.
+ */
+export function getContractsForClass(constructor: Function): ClassMethodContract[] {
+    if (typeof constructor !== 'function') {
+        throw new TypeError('getContractsForClass: expected a constructor function');
+    }
+
+    const entries: ClassMethodContract[] = [];
+
+    // Guard the prototype read: `Class.prototype` is absent on an arrow function or a bound
+    // function, and a class with only statics still has contracts worth reporting.
+    const prototype = constructor.prototype;
+    if (prototype) {
+        getContracts(prototype).forEach((contract, key) => {
+            entries.push({key, contract, isStatic: false, target: prototype});
+        });
+    }
+
+    getContracts(constructor).forEach((contract, key) => {
+        entries.push({key, contract, isStatic: true, target: constructor});
+    });
+
+    return entries;
+}
+
 // ---------------------------------------------------------------------------
 // Writes — called by adapters and installers
 // ---------------------------------------------------------------------------
 
 /**
- * Record a constraint against a parameter position. Appends; a parameter may carry several
- * constraints, and the same position may be written more than once.
+ * Where a newly recorded constraint goes within its parameter's list.
+ *
+ * `'append'` is the default and is what a caller recording in declaration order wants. `'prepend'`
+ * exists for an adapter whose decorators arrive in *reverse* declaration order — see
+ * {@link recordParameterConstraint}.
+ */
+export type ConstraintPosition = 'append' | 'prepend';
+
+/**
+ * Record a constraint against a parameter position. A parameter may carry several constraints, and
+ * the same position may be written more than once.
+ *
+ * ## Why `position` exists (SMELL-13)
+ *
+ * Parameters are kept index-sorted, so *across* parameters the registry is already in declaration
+ * order. Within a single parameter it was not: constraints were appended in arrival order, and the
+ * legacy adapter's decorators arrive bottom-up because `__decorate` applies its array back-to-front.
+ * So `@GreaterThanEqual(100) @LessThanEqual(1000) n` **enforced GTE first** — the installer
+ * normalises (DEC-015) — while the registry, and therefore every generated document, **listed LTE
+ * first**.
+ *
+ * No semantic disagreement, so not the descriptor/predicate drift of Q-4. But it is enforcement and
+ * documentation describing one declaration two different ways, which is precisely the trust the
+ * flagship goal is built on (DEC-006). Under "one declaration, four artifacts", a reader has no way
+ * to tell a cosmetic reordering from a real one.
+ *
+ * The fix is a `position` argument rather than the installer reaching in and reversing the
+ * registry's arrays. An adapter that knows its own decorators arrive backwards passes `'prepend'`
+ * and the store is correct *as recorded* — so knowledge of `__decorate`'s application order stays in
+ * the adapter (the only layer entitled to it, DEC-015), while the registry stays the single place
+ * that defines what its own ordering means. A standard-decorator adapter, whose decorators arrive
+ * in declaration order, simply takes the default.
  */
 export function recordParameterConstraint(
     target: ContractTarget,
     key: MethodKey,
     index: number,
     constraint: ConstraintDescriptor,
+    position: ConstraintPosition = 'append',
 ): void {
     if (!constraint || typeof constraint.predicate !== 'function') {
         throw new TypeError(
@@ -175,7 +275,15 @@ export function recordParameterConstraint(
             '(DEC-006).',
         );
     }
-    parameterEntry(methodEntry(target, key), index).constraints.push(constraint);
+    if (position !== 'append' && position !== 'prepend') {
+        throw new TypeError(
+            `recordParameterConstraint: position must be 'append' or 'prepend', received ${String(position)}`,
+        );
+    }
+
+    const constraints = parameterEntry(methodEntry(target, key), index).constraints;
+    if (position === 'prepend') constraints.unshift(constraint);
+    else constraints.push(constraint);
 }
 
 /**

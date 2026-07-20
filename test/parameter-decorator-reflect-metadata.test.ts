@@ -164,7 +164,8 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
             test(@StringMinLength(10) message: string, @LessThanEqual(1000) someNumber: number) { return 'ok'; }
         }
 
-        // registry order is still arrival order, index-sorted
+        // registry order is declaration order on this branch too (SMELL-13):
+        // parameters index-sorted, and stacked constraints as written
         const contract = getContract(Task2.prototype, 'test')!;
         expect(contract.params.map(p => p.index)).toEqual([0, 1]);
 

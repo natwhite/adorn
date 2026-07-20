@@ -44,10 +44,17 @@
  * arrive bottom-up. The old design inherited that ordering implicitly into enforcement, so with
  * several arguments invalid it was the *highest-index* parameter that got reported.
  *
- * {@link buildParameterEnforcement} normalises to **declaration order** — parameters left to right,
- * and within a parameter top to bottom. That is the order a reader of the signature expects, and it
- * is the order documentation will list constraints in, so enforcement and projection agree. This is
- * a deliberate behavioural change, not an inherited accident.
+ * Both record sites therefore normalise to **declaration order** as they write — the registry via
+ * `recordParameterConstraint(..., 'prepend')`, the staging table via `unshift`. That is the order a
+ * reader of the signature expects, and it is the order documentation lists constraints in, so
+ * enforcement and projection agree. This is a deliberate behavioural change, not an inherited
+ * accident.
+ *
+ * **SMELL-13, and why normalisation moved from plan time to record time.** P1.3 originally reversed
+ * at plan time inside {@link buildParameterEnforcement}, which fixed enforcement but left the stored
+ * arrays backwards — so `@GreaterThanEqual(100) @LessThanEqual(1000)` enforced GTE-first while every
+ * projection reading the registry documented LTE-first. Normalising as we record fixes both from one
+ * place, and `__decorate`'s ordering stays known only to this adapter, exactly as DEC-015 requires.
  */
 
 import {ConstraintDescriptor} from './Descriptor';
@@ -84,7 +91,7 @@ interface StagedCheck {
 }
 
 interface StagedMethod {
-    /** Arrival order, i.e. reverse declaration order. Normalised at plan time. */
+    /** Declaration order — see {@link stageCheck}, which unshifts rather than pushes. */
     readonly checks: StagedCheck[];
     installed: boolean;
 }
@@ -147,7 +154,11 @@ export class ParameterDecoratorFactory {
         }
 
         return function (target: any, propertyKey: string, parameterIndex: number) {
-            recordParameterConstraint(target, propertyKey, parameterIndex, constraint);
+            // `'prepend'`, not the default append: decorators stacked on one parameter arrive here
+            // bottom-up, so prepending each one lands them in declaration order in the registry.
+            // That is SMELL-13 — the registry used to document `@GTE @LTE` as LTE-first while
+            // enforcing GTE-first. Recording correctly is why `planChecks` no longer reverses.
+            recordParameterConstraint(target, propertyKey, parameterIndex, constraint, 'prepend');
             notePendingContract(target, propertyKey);
         };
     }
@@ -239,13 +250,17 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
         signature: signatureFor(index),
     });
 
-    // --- declaration order (SMELL-11) ---------------------------------------
+    // --- declaration order (SMELL-11, SMELL-13) -----------------------------
     //
-    // Registry params are already sorted ascending by index. Within one parameter, both the
-    // registry array and the staging array are in *arrival* order, which `__decorate`'s
-    // back-to-front application makes the reverse of declaration order; `.slice().reverse()`
-    // restores it. Reversing here rather than at record time keeps the knowledge of `__decorate`'s
-    // application order in the adapter, which is the only layer entitled to know about it.
+    // Both stores are now in declaration order *as recorded*, so this loop only has to interleave
+    // them by index. It used to `.reverse()` both, because both were in arrival order — which
+    // `__decorate`'s back-to-front application makes the reverse of declaration order.
+    //
+    // Reversing at plan time fixed enforcement but left the registry itself backwards, so a
+    // generated document listed stacked constraints in the opposite order to the one enforced
+    // (SMELL-13). Recording in the right order instead fixes both at once, and keeps the knowledge
+    // of `__decorate`'s ordering where DEC-015 put it — in the adapter, at the two record sites
+    // (`CreateConstraintDecorator` prepends; `stageCheck` unshifts) rather than in the core.
 
     const indices = new Set<number>();
     if (contract) contract.params.forEach(param => indices.add(param.index));
@@ -257,17 +272,14 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
     for (const index of ordered) {
         const parameter = contract && contract.params.filter(p => p.index === index)[0];
         if (parameter) {
-            const declarationOrder = parameter.constraints.slice().reverse();
-            for (const constraint of declarationOrder) {
+            for (const constraint of parameter.constraints) {
                 plan.push(descriptorCheck(constraint, index, signatureFor, paramNames));
             }
         }
 
         if (stagedMethod) {
-            const declarationOrder = stagedMethod.checks
-                .filter(check => check.index === index)
-                .reverse();
-            for (const check of declarationOrder) {
+            const atIndex = stagedMethod.checks.filter(check => check.index === index);
+            for (const check of atIndex) {
                 plan.push(args => check.decorator(paramObjectFor(index, args)));
             }
         }
@@ -317,5 +329,9 @@ function stageCheck(target: object, propertyKey: MethodKey, index: number, decor
         staged.set(propertyKey, entry);
     }
 
-    entry.checks.push({index, decorator});
+    // `unshift`, mirroring the registry's `'prepend'`: decorators arrive bottom-up, so pushing to
+    // the front lands them in declaration order. Across parameters this is equally correct — the
+    // whole method's decorator array is applied back-to-front, so reversing the arrival sequence
+    // yields source order, and `planChecks` then filters by index without disturbing it.
+    entry.checks.unshift({index, decorator});
 }

@@ -2,6 +2,7 @@ import {
     getContract,
     getContractedClasses,
     getContracts,
+    getContractsForClass,
     isClassEnumerationEnabled,
     markInstalled,
     recordParameterConstraint,
@@ -304,6 +305,116 @@ describe('enumeration (DEC-011)', () => {
         recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
 
         expect(getContract(Task.prototype, 'send')).toBeDefined();
+    });
+});
+
+describe('constraint position within a parameter (SMELL-13)', () => {
+    it('appends by default', () => {
+        const target = {};
+        const first = min({min: 1});
+        const second = min({min: 2});
+
+        recordParameterConstraint(target, 'send', 0, first);
+        recordParameterConstraint(target, 'send', 0, second);
+
+        expect(getContract(target, 'send')!.params[0].constraints).toEqual([first, second]);
+    });
+
+    it('prepends on request, so an adapter receiving decorators bottom-up records source order', () => {
+        const target = {};
+        const declaredFirst = min({min: 1});
+        const declaredSecond = min({min: 2});
+
+        // `__decorate` applies its array back-to-front, so the SECOND-declared
+        // decorator arrives first. Prepending each one restores declaration order
+        // in the store itself, rather than leaving the registry reversed and
+        // compensating at enforcement time.
+        recordParameterConstraint(target, 'send', 0, declaredSecond, 'prepend');
+        recordParameterConstraint(target, 'send', 0, declaredFirst, 'prepend');
+
+        expect(getContract(target, 'send')!.params[0].constraints)
+            .toEqual([declaredFirst, declaredSecond]);
+    });
+
+    it('rejects an unknown position', () => {
+        expect(() => recordParameterConstraint({}, 'send', 0, min({min: 0}), 'sideways' as any))
+            .toThrow(/position must be/);
+    });
+});
+
+describe('getContractsForClass — both key bands (Q-9)', () => {
+    it('returns instance and static contracts together, each tagged', () => {
+        class Task {
+            send(_message: string) { /* no-op */ }
+
+            static parse(_input: string) { /* no-op */ }
+        }
+
+        recordParameterConstraint(Task.prototype, 'send', 0, min({min: 0}));
+        recordParameterConstraint(Task, 'parse', 0, min({min: 1}));
+
+        const entries = getContractsForClass(Task);
+
+        expect(entries.map(entry => ({key: entry.key, isStatic: entry.isStatic}))).toEqual([
+            {key: 'send', isStatic: false},
+            {key: 'parse', isStatic: true},
+        ]);
+        expect(entries[0].target).toBe(Task.prototype);
+        expect(entries[1].target).toBe(Task);
+    });
+
+    it('finds statics even when the class has no instance contracts at all', () => {
+        // This is the case a projection walking only `constructor.prototype`
+        // silently drops — producing an artifact that looks complete and is
+        // missing every static method, with nothing thrown to reveal it.
+        class StaticsOnly {
+            static parse(_input: string) { /* no-op */ }
+        }
+
+        recordParameterConstraint(StaticsOnly, 'parse', 0, min({min: 0}));
+
+        const entries = getContractsForClass(StaticsOnly);
+        expect(entries).toHaveLength(1);
+        expect(entries[0].isStatic).toBe(true);
+        expect(entries[0].contract.params[0].constraints).toHaveLength(1);
+    });
+
+    it('returns an empty array for a class with nothing recorded', () => {
+        class Bare {
+        }
+
+        expect(getContractsForClass(Bare)).toEqual([]);
+    });
+
+    it('is own-scoped, exactly as the per-target reads are', () => {
+        class Base {
+            run(_n: number) { /* no-op */ }
+        }
+
+        class Sub extends Base {
+        }
+
+        recordParameterConstraint(Base.prototype, 'run', 0, min({min: 0}));
+
+        expect(getContractsForClass(Base)).toHaveLength(1);
+        expect(getContractsForClass(Sub)).toEqual([]);
+    });
+
+    it('carries the same MethodContract the per-target read returns', () => {
+        class Task {
+            run(_n: number) { /* no-op */ }
+        }
+
+        recordParameterConstraint(Task.prototype, 'run', 0, min({min: 0}));
+        markInstalled(Task.prototype, 'run');
+
+        const entry = getContractsForClass(Task)[0];
+        expect(entry.contract).toBe(getContract(Task.prototype, 'run'));
+        expect(entry.contract.installed).toBe(true);
+    });
+
+    it('rejects a non-constructor', () => {
+        expect(() => getContractsForClass({} as any)).toThrow(/constructor/);
     });
 });
 
