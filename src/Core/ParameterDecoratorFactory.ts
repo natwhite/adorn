@@ -73,6 +73,7 @@ import {ConstraintDescriptor} from './Descriptor';
 import {
     getContract,
     getEffectiveContract,
+    getParameterSensitivity,
     MethodContract,
     MethodKey,
     recordParameterConstraint,
@@ -81,6 +82,7 @@ import {
 import {notePendingContract} from './ContractDiagnostics';
 import {DecoratorFactory} from './common';
 import {InvocationContext} from './MethodDecoratorFactory';
+import {shouldDiscloseValue} from './redaction';
 
 /**
  * Object handed to a {@link ParamDeco} closure. Unchanged from the original design — this is public
@@ -380,8 +382,12 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
         // the order DEC-021 chose for fields.
         const parameter = contract && contract.params.filter(p => p.index === index)[0];
         if (parameter) {
+            // Resolved once at plan time (install time) — a `@Sensitive` marking is fixed after
+            // decoration, so only the *global* disclosure switch needs reading per call. Redaction
+            // itself is safe with no marking at all; this bit only ever strengthens it (DEC-PII-1).
+            const sensitive = isParameterSensitive(target, propertyKey, index);
             for (const constraint of parameter.constraints) {
-                plan.push(descriptorCheck(constraint, index, signatureFor, paramNames));
+                plan.push(descriptorCheck(constraint, index, signatureFor, paramNames, sensitive));
             }
         }
 
@@ -399,6 +405,7 @@ function descriptorCheck(
     index: number,
     signatureFor: (index: number) => string,
     paramNames: string[],
+    sensitive: boolean,
 ): PlannedCheck {
     return function (args: any[]) {
         const value = args[index];
@@ -408,9 +415,27 @@ function descriptorCheck(
                 value,
                 signature: signatureFor(index),
                 paramName: paramNames[index],
+                // Redaction is the default (BUG-19); `disclose` is `true` only when a developer
+                // opted in via setValueDisclosure('all') AND this parameter is not `@Sensitive`.
+                // Read live so a later disclosure change takes effect without reinstalling.
+                disclose: shouldDiscloseValue(sensitive),
             }),
         );
     };
+}
+
+/**
+ * Whether parameter `index` of `target[key]` carries a `@Sensitive` marking, walking the prototype
+ * chain so an inherited marking on a base-class parameter is honoured for an override too (the
+ * sensitivity band is own-scoped, like the constraint bands). Read-only consumption of the registry's
+ * sensitivity band — defence-in-depth, never load-bearing: a miss only ever *under*-vetoes an
+ * explicit disclosure opt-in, and the default with disclosure off is redacted regardless.
+ */
+function isParameterSensitive(target: object, key: MethodKey, index: number): boolean {
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        if (getParameterSensitivity(cursor, key, index)) return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------

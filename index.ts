@@ -41,6 +41,11 @@ import {
     disableGuardEnforcement, enableGuardEnforcement, setViolationPolicy,
 } from './src/Core/Configuration';
 
+// --- Value disclosure (DEC-030) -------------------------------------------
+// adorn's own emissions (@Log, violation messages) redact values by default; this is the
+// opt-in to turn them back on for local debugging. @Sensitive always vetoes (DEC-025).
+import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
+
 // --- Registry introspection (Q-6: this surface is now semver-relevant) -----
 // Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,
 // setParameterMetadata, setFieldMetadata, markInstalled, ...) are deliberately NOT
@@ -137,6 +142,10 @@ export {
     // stripped by default. Guards are only removable via disableGuardEnforcement({confirm, reason}).
     setEnforcementMode, setAssertEnforcement, setDefaultTrust,
     disableGuardEnforcement, enableGuardEnforcement, setViolationPolicy,
+
+    // Value disclosure (DEC-030). @Log and violation messages redact values by default;
+    // setValueDisclosure('all') opts in for local debugging. @Sensitive always vetoes.
+    setValueDisclosure, getValueDisclosure,
 
     // Registry introspection — what the projections read
     getContracts, getContract, getContractedClasses, getContractsForClass,

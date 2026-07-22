@@ -135,7 +135,8 @@ describe('core pipeline behaves identically on the Reflect.decorate branch', () 
         }
         expect(message).toBe(
             "Value Error: Task.test(message, someNumber) parameter 'message' " +
-                "expected a string of length greater than 10 but received 'short' instead",
+                // Value redacted by default (BUG-19); the signature/formatting is the subject here.
+                'expected a string of length greater than 10 but received [REDACTED] instead',
         );
     });
 

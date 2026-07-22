@@ -22,8 +22,12 @@ const legacy = {
         `Value Error: ${SIGNATURE} expected a string of length greater than ${constraint} but received '${value}' instead`,
 };
 
+// These fixtures pin the message *wording* — the `legacy.*` strings include the received value. Since
+// BUG-19 / DEC-PII-1 the value is redacted by default, so this helper opts into disclosure
+// (`disclose: true`) to assert the wording is unchanged under the local-debugging path. The redacted
+// default is pinned separately in `Descriptor.test.ts`.
 const messageFor = (descriptor: ConstraintDescriptor, value: unknown) =>
-    descriptor.message({value, signature: SIGNATURE});
+    descriptor.message({value, signature: SIGNATURE, disclose: true});
 
 /** Everything a predicate must survive without throwing, and reject. */
 const HOSTILE: unknown[] = [null, undefined, NaN, '', 'abc', {}, [], () => 0, true, false, Symbol('s')];

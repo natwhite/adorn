@@ -401,14 +401,15 @@ describe('violation message formatting', () => {
         );
     });
 
-    it('reports the full message including expectation and actual value', () => {
-        // Byte-for-byte identical to the pre-refactor message. P1.3 rebuilt the
-        // constraints on top of P1.0 descriptors; `Descriptor.formatMessage`
-        // reproduces the original wording exactly so that wiring the descriptor
-        // model in was not also a silent change to every error string.
+    it('reports the full message, with the received value redacted by default (BUG-19)', () => {
+        // The expectation clause is byte-for-byte identical to the pre-refactor message — P1.3 rebuilt
+        // the constraints on P1.0 descriptors without changing the wording. What DID change is the
+        // received value: it is now `[REDACTED]` by default (BUG-19 / DEC-PII-1), because routing a
+        // violation anywhere must not leak the value through the message. `setValueDisclosure('all')`
+        // restores the raw value for local debugging.
         expect(messageFor(() => new Task().test('short', 500))).toBe(
             "Value Error: Task.test(message, someNumber) parameter 'message' " +
-                "expected a string of length greater than 10 but received 'short' instead",
+                'expected a string of length greater than 10 but received [REDACTED] instead',
         );
     });
 

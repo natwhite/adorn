@@ -138,8 +138,9 @@ describe('descriptors survive round-trip retrieval', () => {
         expect(retrieved.params).toEqual({min: 10});
         expect(retrieved.predicate(10)).toBe(true);
         expect(retrieved.predicate(9)).toBe(false);
+        // No `disclose` passed, so the received value redacts by default (BUG-19 / DEC-PII-1).
         expect(retrieved.message({value: 9, paramName: 'count'})).toBe(
-            'Value Error: count expected a number greater than or equal to 10 but received 9 instead',
+            'Value Error: count expected a number greater than or equal to 10 but received [REDACTED] instead',
         );
     });
 

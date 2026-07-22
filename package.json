@@ -4,12 +4,16 @@
   "description": "A collection of convinient TypeScript decorators and simplified decorator creation wrapper",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "adorn": "dist/src/cli/main.js"
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.cli.json",
+    "build:cli": "tsc -p tsconfig.cli.json",
     "rebuild": "npm run clean && npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",

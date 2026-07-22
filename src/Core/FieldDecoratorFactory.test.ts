@@ -247,7 +247,8 @@ describe('the accessor — BUG-1', () => {
         expect(() => {
             widget.label = 'ab';
         }).toThrow(
-            "Value Error: Widget.label expected a string of length greater than 3 but received 'ab' instead",
+            // Value redacted by default (BUG-19); this test pins the field naming in the message.
+            'Value Error: Widget.label expected a string of length greater than 3 but received [REDACTED] instead',
         );
     });
 

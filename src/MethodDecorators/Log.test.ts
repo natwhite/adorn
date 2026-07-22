@@ -1,11 +1,16 @@
 import {Log} from './Log';
+import {setValueDisclosure, resetValueDisclosure} from '../Core/redaction';
+import {Sensitive} from '../Sensitive/Sensitive';
+import {resetRegistry} from '../Core/ContractRegistry';
 
 /**
- * Tests for `@Log` — BUG-13.
+ * Tests for `@Log` — BUG-13 (totality/identity) and BUG-18 (safe-by-default emission).
  *
  * Moved from `promise/Memoize.test.ts` when `@Memoize` was removed with the `rxjs` dependency.
- * Every assertion below is carried over unchanged; only the `@Memoize` halves of the shared
- * identity block were dropped, since that decorator no longer exists.
+ * The BUG-13 identity/totality assertions are carried over; the value-rendering assertions changed
+ * with BUG-18 — `@Log` no longer emits raw values by default — and the cases that exercise
+ * `safeStringify`'s cycle/BigInt handling now do so under `setValueDisclosure('all')`, which is the
+ * only path on which a raw value is rendered at all.
  */
 
 // ---------------------------------------------------------------------------
@@ -55,9 +60,16 @@ describe('Log', () => {
         });
     });
 
-    afterEach(() => spy.mockRestore());
+    afterEach(() => {
+        spy.mockRestore();
+        resetValueDisclosure();
+    });
 
     it('returns a circular value intact instead of throwing out of the logger', () => {
+        // The circular-safety of `safeStringify` (BUG-13) is exercised on the only path that renders
+        // a raw value — disclosure on. The method-does-not-break guarantee holds on every path.
+        setValueDisclosure('all');
+
         class Store {
             @Log()
             build(): any {
@@ -98,6 +110,8 @@ describe('Log', () => {
     });
 
     it('does not mislabel a value shared by two siblings as circular', () => {
+        setValueDisclosure('all');
+
         class Store {
             @Log()
             build(): any {
@@ -115,6 +129,8 @@ describe('Log', () => {
     });
 
     it('survives a BigInt, which JSON.stringify also refuses', () => {
+        setValueDisclosure('all');
+
         // Reached through `globalThis` because the project targets es2019, whose lib has no
         // `BigInt` declaration; the runtime has had it since Node 10.
         const makeBigInt: (v: string) => any = (globalThis as any).BigInt;
@@ -130,7 +146,23 @@ describe('Log', () => {
         expect(lines[0]).toContain('9007199254740993n');
     });
 
-    it('logs the call and its return value', () => {
+    it('logs the call as structure with values redacted by default (BUG-18)', () => {
+        class Store {
+            @Log()
+            add(a: number, b: number): number {
+                return a + b;
+            }
+        }
+
+        // The method still returns normally; the log carries the parameter *names* and a redacted
+        // placeholder for every value — no raw argument or return leaves the process by default.
+        expect(new Store().add(2, 3)).toBe(5);
+        expect(lines).toEqual(['Call: add(a=[REDACTED], b=[REDACTED]) => [REDACTED]']);
+    });
+
+    it('discloses argument and return values under setValueDisclosure(all)', () => {
+        setValueDisclosure('all');
+
         class Store {
             @Log()
             add(a: number, b: number): number {
@@ -139,10 +171,12 @@ describe('Log', () => {
         }
 
         expect(new Store().add(2, 3)).toBe(5);
-        expect(lines).toEqual(['Call: add(2,3) => 5']);
+        expect(lines).toEqual(['Call: add(a=2, b=3) => 5']);
     });
 
-    it('reports an undefined argument rather than swallowing it', () => {
+    it('reports every parameter position by name, so an undefined argument cannot vanish', () => {
+        setValueDisclosure('all');
+
         class Store {
             @Log()
             take(_a: any, _b: any): string {
@@ -152,9 +186,9 @@ describe('Log', () => {
 
         new Store().take(undefined, 1);
 
-        // `[undefined, 1].map(JSON.stringify).join()` renders as ',1' — the argument silently
-        // vanished from the line.
-        expect(lines[0]).toBe('Call: take(undefined,1) => "x"');
+        // The old failure: `[undefined, 1].map(JSON.stringify).join()` rendered ',1' and the first
+        // argument silently vanished. Naming every position makes that impossible.
+        expect(lines[0]).toBe('Call: take(_a=undefined, _b=1) => "x"');
     });
 
     it('logs a throw and re-throws it unchanged', () => {
@@ -212,5 +246,84 @@ describe('Log', () => {
         expect(() => (Log() as any)({}, 'notAMethod', {value: undefined} as PropertyDescriptor)).toThrow(
             TypeError,
         );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// @Log — safe-by-default emission (BUG-18, DEC-025 / DEC-PII-1)
+// ---------------------------------------------------------------------------
+
+describe('Log — redaction (BUG-18, DEC-PII-1)', () => {
+    let lines: string[];
+    let spy: jest.SpyInstance;
+
+    beforeEach(() => {
+        lines = [];
+        spy = jest.spyOn(console, 'log').mockImplementation((line: any) => {
+            lines.push(String(line));
+        });
+    });
+
+    afterEach(() => {
+        spy.mockRestore();
+        resetValueDisclosure();
+        resetRegistry();
+    });
+
+    it('is safe by default with NO @Sensitive anywhere — the annotation is not load-bearing (DEC-025)', () => {
+        // The load-bearing test. This class marks nothing. Its argument values still never appear in
+        // the log by default — safety does not depend on anyone remembering `@Sensitive`.
+        class Accounts {
+            @Log()
+            transfer(amount: number, accountId: string, ssn: string): string {
+                return `${accountId}:${ssn}`;
+            }
+        }
+
+        new Accounts().transfer(500, 'ACC-1', '123-45-6789');
+
+        expect(lines[0]).not.toContain('123-45-6789');
+        expect(lines[0]).not.toContain('ACC-1');
+        expect(lines[0]).not.toContain('500');
+        expect(lines[0]).toBe(
+            'Call: transfer(amount=[REDACTED], accountId=[REDACTED], ssn=[REDACTED]) => [REDACTED]',
+        );
+    });
+
+    it('keeps a @Sensitive parameter redacted even with disclosure ON — @Sensitive vetoes disclosure', () => {
+        setValueDisclosure('all');
+
+        class Accounts {
+            @Log()
+            transfer(amount: number, @Sensitive() ssn: string): string {
+                return `ok`;
+            }
+        }
+
+        new Accounts().transfer(500, '123-45-6789');
+
+        // Non-sensitive value is disclosed; the @Sensitive one stays redacted despite disclosure.
+        expect(lines[0]).toContain('amount=500');
+        expect(lines[0]).toContain('ssn=[REDACTED]');
+        expect(lines[0]).not.toContain('123-45-6789');
+    });
+
+    it('keeps every value of a @Sensitive class redacted with disclosure ON', () => {
+        setValueDisclosure('all');
+
+        @Sensitive()
+        class PaymentInstrument {
+            @Log()
+            charge(pan: string, amount: number): string {
+                return 'charged';
+            }
+        }
+
+        new PaymentInstrument().charge('4111111111111111', 42);
+
+        expect(lines[0]).toContain('pan=[REDACTED]');
+        expect(lines[0]).toContain('amount=[REDACTED]');
+        expect(lines[0]).toContain('=> [REDACTED]');
+        expect(lines[0]).not.toContain('4111111111111111');
     });
 });

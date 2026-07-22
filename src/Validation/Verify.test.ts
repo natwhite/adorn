@@ -19,8 +19,10 @@ describe('Verify.that — the general form', () => {
     });
 
     it('throws with the descriptor message when it is not', () => {
+        // The received value is redacted by default (BUG-19 / DEC-PII-1) — an imperative Verify call
+        // has no `@Sensitive` site, so disclosure follows the global switch, which ships off.
         expect(() => Verify.that(Between(1, 10), 'retries', 42)).toThrow(
-            'Value Error: retries expected a number between 1 and 10 (inclusive) but received 42 instead',
+            'Value Error: retries expected a number between 1 and 10 (inclusive) but received [REDACTED] instead',
         );
     });
 
@@ -65,14 +67,14 @@ describe('the named helpers', () => {
     it('lessThanEqual takes (keyName, value, max) — normalised argument order', () => {
         expect(Verify.lessThanEqual('n', 10, 10)).toBe(10);
         expect(() => Verify.lessThanEqual('n', 11, 10)).toThrow(
-            'Value Error: n expected a number less than or equal to 10 but received 11 instead',
+            'Value Error: n expected a number less than or equal to 10 but received [REDACTED] instead',
         );
     });
 
     it('greaterThanEqual takes (keyName, value, min) — normalised argument order', () => {
         expect(Verify.greaterThanEqual('n', 10, 10)).toBe(10);
         expect(() => Verify.greaterThanEqual('n', 9, 10)).toThrow(
-            'Value Error: n expected a number greater than or equal to 10 but received 9 instead',
+            'Value Error: n expected a number greater than or equal to 10 but received [REDACTED] instead',
         );
     });
 

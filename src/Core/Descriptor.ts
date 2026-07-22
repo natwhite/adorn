@@ -32,6 +32,8 @@
  * Cross-parameter relationships (Tier 2) will extend this model under real demand.
  */
 
+import {REDACTED} from './redaction';
+
 // ---------------------------------------------------------------------------
 // Serialisable value types
 // ---------------------------------------------------------------------------
@@ -80,6 +82,18 @@ export interface ViolationContext {
     readonly signature?: string;
     /** Fallback subject when no full signature is available. */
     readonly paramName?: string;
+    /**
+     * Whether the received value may appear in the rendered message — **pre-resolved by the
+     * enforcement layer as plain data** (DEC-012, DEC-PII-4). This layer never sees a decorator, the
+     * registry, or `@Sensitive`; it only ever sees this boolean, exactly as it only ever sees a
+     * composed `signature` rather than a `target`/`propertyKey`.
+     *
+     * **Absent means redact.** The safe default lives here, so a *new* enforcement path that forgets
+     * to forward this gets the redacted rendering rather than the leak — the DEC-PII-1 principle
+     * applied to adorn's own internals: neither the annotation nor remembering to forward it is
+     * load-bearing. `true` discloses the value; anything else (including `undefined`) redacts it.
+     */
+    readonly disclose?: boolean;
 }
 
 /**
@@ -304,23 +318,35 @@ function createDescriptor<P extends ConstraintParams>(
 }
 
 /**
- * Message shape, preserved verbatim from the original constraint closures in
- * `src/ParameterDecorators/Constraints.ts` so that wiring this model up (P1.3) is not also a
- * silent change to every error string.
+ * Message shape. The constraint and the subject are always stated in full; the **received value is
+ * redacted by default** (BUG-19, DEC-PII-4).
  *
- * P3.1 replaces this with a structured `ContractViolation`; the formatting lives in one place
- * here so that change is a single edit rather than four.
+ * BUG-19 was that this function embedded the raw value, so *routing* a violation anywhere —
+ * `setViolationPolicy(handler)`, an error tracker, a crash report — leaked it through the back door,
+ * further than `console.log` ever travels. Redacting here closes it at the source: the value is not
+ * in `Error.message`, `String(err)`, `JSON.stringify(err)`, `util.inspect(err)`, or a spread of it.
+ *
+ * `context.disclose` is the pre-resolved decision (see {@link ViolationContext.disclose}); it is the
+ * only thing that turns the value back on, and it is `true` only when a developer opted in *and* the
+ * site is not `@Sensitive`. The message still names the constraint and the parameter, which is what
+ * a reader needs first — and for most built-in constraints the value is largely redundant with the
+ * constraint's own dimension (a length violation is diagnosed by the length, a range by the number).
  */
 function formatMessage(kind: ConstraintKind, expectation: string, context: ViolationContext): string {
     const subject = context.signature || context.paramName || 'value';
     return (
         `Value Error: ${subject} expected ${expectation} but received ` +
-        `${formatReceived(kind, context.value)} instead`
+        `${formatReceived(kind, context.value, context.disclose)} instead`
     );
 }
 
-/** String constraints quote the received value; numeric ones do not. Matches current behaviour. */
-function formatReceived(kind: ConstraintKind, value: unknown): string {
+/**
+ * Render the received value for a message. Redacts unless disclosure was explicitly resolved to
+ * `true` by the enforcement layer — the safe default (DEC-PII-1). When disclosed, string constraints
+ * quote the value and numeric ones do not, matching the pre-BUG-19 behaviour.
+ */
+function formatReceived(kind: ConstraintKind, value: unknown, disclose?: boolean): string {
+    if (disclose !== true) return REDACTED;
     return kind === 'string' ? `'${String(value)}'` : String(value);
 }
 

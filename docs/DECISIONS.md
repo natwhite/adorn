@@ -560,6 +560,8 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 - **Q-17 and Q-20 move from resolved-in-principle to built; SMELL-19's instruction is discharged in the shipped tool.** Q-18 (the real-code recall ratio) is now *measurable* against a real `@Log`/`@Enforce` codebase but remains unmeasured.
 - **The sink set is a maintenance obligation.** A future value-rendering method decorator that is not added to the emitting set becomes a silent hole; the `@Time`-is-not-a-sink test is the pin that a decorator emitting no argument value stays excluded.
 
+**Amendment (IDEA-9 CLI).** `adorn check` needs the detector at *runtime*, so the CLI build emits a compiled copy to `dist/tools/sensitive-flow/`. This is consistent with this decision's "same core, different wrapper" and does **not** violate the placement rule: the detector remains absent from `index.ts` and the runtime library export surface — it ships only as the `adorn check` wrapper's dependency. Blessed explicitly so the compiled-detector-in-`dist` is a decision, not drift.
+
 
 ---
 
@@ -579,4 +581,26 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 4. **`installed`-state is out of scope** — schema projects the *declaration*; enforcement state is the docs projection's concern.
 
 **Consequences.** `schema()` returns a bare `JsonObject` with no dialect tag, so the `2020-12` label is asserted by the projection, not by the fragments; a future draft-07-shaped fragment would be silently mislabelled (tracked on IDEA-12, currently satisfied). This is the first confirmation that the descriptor's `schema()` hook — added speculatively in P1.0 — carries real weight: the projection invents no schema of its own, exactly as the docs projection invents no prose.
+
+
+---
+
+## DEC-030 — Safe-by-default emission: adorn redacts its own output, `@Sensitive` only vetoes
+**Status:** ACCEPTED · closes BUG-18/BUG-19 · discharges the observability plan's O0 redaction prerequisite
+
+**Context.** Two of adorn's own emitters leaked argument values in shipped code: `@Log` stringified every argument to `console.log` (BUG-18), and violation messages embedded the received value, so anything routing a violation inherited the leak (BUG-19). DEC-025 had already set the boundary (adorn secures its *own* emissions); this is that boundary implemented, and it is the surface the observability plan requires *before* any feature emits values.
+
+**Decision.** Every adorn emission path redacts values **by default, without consulting any annotation.**
+- The decision is a pure function, `shouldDiscloseValue(sensitive) = disclosure === 'all' && !sensitive`, in a new `src/Core/redaction.ts`. It **never reads the registry**, so the safe default holds with zero `@Sensitive` anywhere.
+- **Opt-in:** `setValueDisclosure('none' | 'all')` (default `'none'`), in the established single-setter/live-read config shape. `'all'` turns raw values back on for local debugging.
+- **`@Sensitive` only ever vetoes** — a marked parameter/field/class stays redacted even under `'all'`. It is defence-in-depth, never the primary control. The proof-of-record test is a class with **no** `@Sensitive` still being safe.
+- Placeholder is a single fixed `[REDACTED]`. No length-masks, no hashes (the plan flags hashing as a GDPR trap).
+
+**How it reaches `Descriptor` without breaking DEC-012.** `ViolationContext` gains a pre-resolved `disclose?: boolean` — plain data, the shape `signature` already uses. `Descriptor` imports only the `REDACTED` constant; it never reads the registry, the config, or `@Sensitive`. **Absent means redact**, so an enforcement path that forgets to forward the flag still renders safely — the default is fail-safe, not fail-open. The `disclose` boolean is resolved at the three enforcement sites (`ParameterDecoratorFactory`, `FieldDecoratorFactory`, `Verify`), each composing the global switch with a per-site `sensitive` bit from the sensitivity band.
+
+**Consequences.**
+- **Breaking:** `@Log` output and violation-message text lost their embedded values by default; ~a dozen test files updated their pinned messages to `[REDACTED]`. Each of those tests' actual subject was parameter/class/field *naming*, which they still pin — and they now additionally witness safe-by-default on every path.
+- **O0 discharged:** the redaction surface exists, so a future logging/telemetry feature may emit values behind it without shipping a breaking change plus a retroactive security advisory.
+- **Gap (Q-23):** a method *return* cannot be marked `@Sensitive`, so it is redacted-by-default (safe) but not selectively disclosable.
+- Exports `setValueDisclosure`/`getValueDisclosure`; `REDACTED`/`resetValueDisclosure` stay internal (test-only, matching `resetConfiguration`).
 

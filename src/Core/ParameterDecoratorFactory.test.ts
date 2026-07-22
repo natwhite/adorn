@@ -83,7 +83,8 @@ describe('BUG-14 — parameter names reach the registry from the real decorator 
         // consistent-with-itself.
         expect(thrown).toBe(
             "Value Error: Order.place(sku, quantity) parameter 'sku' " +
-                "expected a string of length greater than 3 but received 'ab' instead",
+                // Value redacted by default (BUG-19 / DEC-PII-1); the parameter naming is the subject here.
+                'expected a string of length greater than 3 but received [REDACTED] instead',
         );
     });
 

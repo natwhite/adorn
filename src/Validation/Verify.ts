@@ -69,6 +69,7 @@
 
 import {ConstraintDescriptor} from '../Core/Descriptor';
 import {GreaterThanEqual, LessThanEqual} from '../Contracts/number';
+import {shouldDiscloseValue} from '../Core/redaction';
 
 export class Verify {
     /**
@@ -81,7 +82,11 @@ export class Verify {
     static that<T>(constraint: ConstraintDescriptor, keyName: string | symbol, value: T): T {
         if (constraint.predicate(value)) return value;
 
-        const error = new Error(constraint.message({value, signature: String(keyName)}));
+        // Redacted by default (BUG-19), like every violation message. An imperative call has no
+        // `@Sensitive` site to consult, so disclosure follows the global switch alone.
+        const error = new Error(
+            constraint.message({value, signature: String(keyName), disclose: shouldDiscloseValue(false)}),
+        );
         // Cut the stack at this frame so the trace points at the caller's line rather than at
         // adorn's internals — the same boundary technique as `DecoratorFactory.attributeToCaller`,
         // applied at construction because the Error originates here. V8-only; a no-op elsewhere.

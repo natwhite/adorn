@@ -143,6 +143,7 @@ import {DecoratorFactory} from './common';
 import {
     FieldContract,
     getEffectiveFieldConstraints as registryEffectiveFieldConstraints,
+    getEffectiveFieldSensitivity,
     getFieldContract,
     getFieldContracts as registryFieldContracts,
     markFieldInstalled,
@@ -150,6 +151,7 @@ import {
     registerContractedClass,
     setFieldMetadata,
 } from './ContractRegistry';
+import {shouldDiscloseValue} from './redaction';
 
 /** A field name. Symbols are supported because a class may declare `[sym] = value`. */
 export type FieldKey = string | symbol;
@@ -601,12 +603,18 @@ function assertFieldValue(owner: object, key: FieldKey, value: unknown, boundary
     // constraints *and* every ancestor's — which is what makes an inherited constraint impossible to
     // shed by redeclaring.
     const constraints = getEffectiveFieldConstraints(owner, key);
+    if (constraints.length === 0) return;
+
+    // Resolved once per assignment, not per constraint. The effective read honours inheritance and a
+    // class-level `@Sensitive` (DEC-021), so a subclass cannot un-mark an inherited sensitive field.
+    // Redaction is the default regardless (BUG-19); this only ever *strengthens* it (DEC-PII-1).
+    const disclose = shouldDiscloseValue(!!getEffectiveFieldSensitivity(owner, key));
 
     for (let i = 0; i < constraints.length; i++) {
         const constraint = constraints[i];
         if (constraint.predicate(value)) continue;
 
-        const error = new Error(constraint.message({value, signature: describeField(owner, key)}));
+        const error = new Error(constraint.message({value, signature: describeField(owner, key), disclose}));
         DecoratorFactory.attributeToCaller(error, boundary);
         throw error;
     }

@@ -277,14 +277,14 @@ describe('@Contract() installation', () => {
         // which is what made the discrepancy easy to miss.
         expect(() => Task.parse('ab')).toThrow(
             "Value Error: Task.parse(input) parameter 'input' " +
-                "expected a string of length greater than 3 but received 'ab' instead",
+                'expected a string of length greater than 3 but received [REDACTED] instead',
         );
 
         // The instance form is asserted alongside it, so the two bands are pinned as agreeing rather
         // than as two independent facts.
         expect(() => new Task().run('ab')).toThrow(
             "Value Error: Task.run(input) parameter 'input' " +
-                "expected a string of length greater than 3 but received 'ab' instead",
+                'expected a string of length greater than 3 but received [REDACTED] instead',
         );
     });
 

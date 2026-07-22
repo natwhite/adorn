@@ -268,7 +268,7 @@ describe('message formatting', () => {
             }),
         ).toBe(
             "Value Error: Task.test(count) parameter 'count' expected a number greater than or " +
-                'equal to 5 but received 2 instead',
+                'equal to 5 but received [REDACTED] instead',
         );
     });
 
@@ -276,15 +276,45 @@ describe('message formatting', () => {
         const descriptor = numeric({min: 5});
 
         expect(descriptor.message({value: 2, paramName: 'count'})).toBe(
-            'Value Error: count expected a number greater than or equal to 5 but received 2 instead',
+            'Value Error: count expected a number greater than or equal to 5 but received [REDACTED] instead',
         );
         expect(descriptor.message({value: 2})).toBe(
-            'Value Error: value expected a number greater than or equal to 5 but received 2 instead',
+            'Value Error: value expected a number greater than or equal to 5 but received [REDACTED] instead',
         );
     });
 
-    it('quotes the received value for string constraints and not for numeric ones', () => {
-        expect(stringy({}).message({value: 'ab', paramName: 'message'})).toContain("received 'ab' instead");
-        expect(numeric({min: 5}).message({value: 2, paramName: 'count'})).toContain('received 2 instead');
+    // --- BUG-19 / DEC-PII-1: the received value is redacted by default ------
+
+    it('REDACTS the received value by default — nothing extra needs forwarding for safety', () => {
+        // The default lives in `formatMessage`, so a caller (or a future enforcement path) that
+        // supplies no `disclose` gets the safe rendering rather than the leak. This is why routing a
+        // violation anywhere (setViolationPolicy, an error tracker) can no longer leak the value.
+        expect(stringy({}).message({value: 'hunter2', paramName: 'password'})).toBe(
+            'Value Error: password expected a string of length greater than 3 but received [REDACTED] instead',
+        );
+        expect(numeric({min: 5}).message({value: 2, paramName: 'count'})).toContain(
+            'received [REDACTED] instead',
+        );
+        // The raw value appears nowhere in the rendered string.
+        expect(stringy({}).message({value: 'hunter2', paramName: 'password'})).not.toContain('hunter2');
+    });
+
+    it('discloses the value only when `disclose: true` — quoting strings, not numerics', () => {
+        // The opt-in path (setValueDisclosure('all') resolves this boolean at the enforcement site).
+        expect(stringy({}).message({value: 'ab', paramName: 'message', disclose: true})).toContain(
+            "received 'ab' instead",
+        );
+        expect(numeric({min: 5}).message({value: 2, paramName: 'count', disclose: true})).toContain(
+            'received 2 instead',
+        );
+    });
+
+    it('treats a non-true `disclose` as redact — the safe default is sticky', () => {
+        expect(stringy({}).message({value: 'ab', paramName: 'm', disclose: false})).toContain(
+            'received [REDACTED] instead',
+        );
+        expect(numeric({min: 5}).message({value: 2, paramName: 'c', disclose: undefined})).toContain(
+            'received [REDACTED] instead',
+        );
     });
 });

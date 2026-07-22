@@ -1,0 +1,16 @@
+{
+  "//": "CLI build step (IDEA-9). The main `tsc` build compiles the library AND src/cli/** into dist/ — the docs/schema commands share the dist Core singleton that way, which is what makes a loaded entry's decorators visible to the projection (DEC-007). This second pass emits ONLY the sensitive-flow detector core into dist/tools/, so the compiled `adorn check` can require it at runtime. The detector's SOURCE stays build-time tooling (tsconfig.json still excludes `tools`, and index.ts never imports it), so this does not put the detector on the library's runtime export surface — it ships a compiled copy solely as the CLI wrapper's dependency (DEC-028 point 2: the CLI is the same core with a different wrapper). Only the files `check` transitively needs are listed; rule.ts (and its @typescript-eslint/utils dependency) is deliberately left out.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": [
+    "tools/sensitive-flow/analysis.ts",
+    "tools/sensitive-flow/report.ts",
+    "tools/sensitive-flow/legality.ts",
+    "tools/sensitive-flow/compilerHost.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

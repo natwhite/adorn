@@ -68,7 +68,10 @@ describe('a decorated field behaves like a field (BUG-1)', () => {
     it('reports the class and field in the message', () => {
         expect(() => {
             new Basket().itemCount = 0;
-        }).toThrow('Value Error: Basket.itemCount expected a number greater than 0 but received 0 instead');
+            // Value redacted by default (BUG-19); the class/field naming is the subject here.
+        }).toThrow(
+            'Value Error: Basket.itemCount expected a number greater than 0 but received [REDACTED] instead',
+        );
     });
 
     it('survives JSON round-tripping like an undecorated object', () => {
