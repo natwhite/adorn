@@ -11,7 +11,10 @@
     // `examples/` is excluded from the *build* (it must not reach `dist/`) but it still has to
     // compile — a demo that no longer typechecks is a broken demo nobody notices. This config
     // is what `npm run typecheck` runs, so the demo is covered without being emitted.
-    "examples/**/*.ts"
+    "examples/**/*.ts",
+    // `tools/` (the sensitive-flow detector) is likewise excluded from the build but must typecheck.
+    // Its tests run under jest; this keeps `npm run typecheck` covering the detector too.
+    "tools/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

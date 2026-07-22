@@ -158,6 +158,35 @@ export interface FieldContract {
     readonly installed: boolean;
 }
 
+/**
+ * The level of a sensitivity marking (DEC-PII-2).
+ *
+ * Only `'sensitive'` exists today, and this is a single-member union **deliberately**. The
+ * pii-redaction plan (§3.2, §6.1, DEC-PII-2) proposes a three-valued lattice after Palantir
+ * `safe-logging` — roughly `'safe' | 'sensitive' | 'never'`, where `'never'` overrides even an
+ * explicit `@Telemetry.value()` opt-in. That *behaviour* is a later piece (the redaction runtime,
+ * BUG-18/BUG-19) and is not built here. Widening this union is forward-compatible: the stored shape
+ * ({@link SensitivityMarking}) does not change, only the set of admissible values, so the later
+ * runtime extends it with no data migration.
+ */
+export type SensitivityLevel = 'sensitive';
+
+/**
+ * A **record-only** marking that a field, parameter, or class holds sensitive data (DEC-PII-1).
+ *
+ * Record-only is the whole of it at this layer: the marking declares intent and feeds the build-time
+ * detector and a future exposure report; it does **not** redact. Redaction (safe-by-default emission)
+ * is a separate, later piece. It is stored as a small object rather than a bare boolean so the
+ * three-valued design can grow into it without a migration — see {@link SensitivityLevel}.
+ *
+ * Layering is unchanged (DEC-012): the registry learns that a field/parameter/class *is sensitive*,
+ * never that a decorator named `@Sensitive` produced the marking. An imperative caller, a
+ * standard-decorator adapter, or a schema import could record the same datum.
+ */
+export interface SensitivityMarking {
+    readonly level: SensitivityLevel;
+}
+
 // --- internal mutable twins -------------------------------------------------
 
 interface MutableParameterContract {
@@ -192,6 +221,29 @@ let fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContr
 
 /** Companion enumerable store. Strong references; see the header note. */
 let contractedClasses = new Set<Function>();
+
+/**
+ * The sensitivity band (DEC-PII-1/2). Own-scoped and keyed **exactly** as the constraint bands are,
+ * so the inheritance-safety a privacy marking needs — a subclass may not un-mark an inherited
+ * sensitive field (DEC-021) — falls out of the *same* prototype-walk union mechanism the field band
+ * already uses, rather than a parallel one. See {@link getEffectiveFieldSensitivity}.
+ *
+ * These are separate maps rather than a `sensitivity` field on {@link FieldContract}/
+ * {@link ParameterContract} for one concrete reason: a `@Sensitive` field is record-only and must
+ * never cause an accessor to be installed, but any key that appears in `fieldsByTarget` is a field
+ * an installer (`@Contract()` / `installFieldContracts`) will attach a validating accessor to. Keeping
+ * the marking out of the enforcement band keeps the marker record-only.
+ */
+let fieldSensitivityByTarget = new WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>();
+
+/** Parameter sensitivity: target → method key → parameter index → marking. */
+let parameterSensitivityByTarget = new WeakMap<
+    ContractTarget,
+    Map<MethodKey, Map<number, SensitivityMarking>>
+>();
+
+/** Class-level sensitivity — `@Sensitive` on a class marks the whole type (and its subclasses). */
+let classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
 
 let classEnumerationEnabled = true;
 
@@ -863,6 +915,143 @@ export function markFieldInstalled(target: ContractTarget, key: FieldKey): void 
     fieldEntry(target, key).installed = true;
 }
 
+// --- sensitivity band writes (DEC-PII-1/2) ---------------------------------
+//
+// Record-only. None of these install anything or touch the enforcement bands. Writes stay
+// own-scoped exactly as the constraint bands do — which is the entire mechanism that makes a
+// subclass unable to un-mark an inherited sensitive field: there is no write API that reaches an
+// ancestor, so resolution ({@link getEffectiveFieldSensitivity}) can only ever *find* a marking on
+// the chain, never remove one. Weakening is unexpressible, not rejected (the DEC-021 move).
+
+/** Record that `target[key]` is sensitive. `target` is a prototype (instance field) or constructor. */
+export function recordFieldSensitivity(
+    target: ContractTarget,
+    key: FieldKey,
+    marking: SensitivityMarking,
+): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('recordFieldSensitivity: target must be an object (a prototype or constructor)');
+    }
+    let fields = fieldSensitivityByTarget.get(target);
+    if (!fields) {
+        fields = new Map<FieldKey, SensitivityMarking>();
+        fieldSensitivityByTarget.set(target, fields);
+    }
+    fields.set(key, marking);
+}
+
+/** Record that parameter `index` of `target[key]` is sensitive. Index-keyed, so minification-safe. */
+export function recordParameterSensitivity(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+    marking: SensitivityMarking,
+): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError(
+            'recordParameterSensitivity: target must be an object (a prototype or constructor)',
+        );
+    }
+    if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
+        throw new TypeError(
+            `recordParameterSensitivity: parameter index must be a non-negative integer, received ${String(index)}`,
+        );
+    }
+    let methods = parameterSensitivityByTarget.get(target);
+    if (!methods) {
+        methods = new Map<MethodKey, Map<number, SensitivityMarking>>();
+        parameterSensitivityByTarget.set(target, methods);
+    }
+    let params = methods.get(key);
+    if (!params) {
+        params = new Map<number, SensitivityMarking>();
+        methods.set(key, params);
+    }
+    params.set(index, marking);
+}
+
+/** Record that a whole class is sensitive — `@Sensitive` on the class marks every field it holds. */
+export function recordClassSensitivity(constructor: Function, marking: SensitivityMarking): void {
+    if (typeof constructor !== 'function') {
+        throw new TypeError('recordClassSensitivity: expected a constructor function');
+    }
+    classSensitivityByTarget.set(constructor, marking);
+}
+
+// --- sensitivity band reads (DEC-PII-1/2) ----------------------------------
+
+/** The marking declared **directly** on `target[key]`, or `undefined`. Own-scoped. */
+export function getFieldSensitivity(target: ContractTarget, key: FieldKey): SensitivityMarking | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const fields = fieldSensitivityByTarget.get(target);
+    return fields ? fields.get(key) : undefined;
+}
+
+/** The marking on parameter `index` of `target[key]`, or `undefined`. Own-scoped. */
+export function getParameterSensitivity(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): SensitivityMarking | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const params = parameterSensitivityByTarget.get(target)?.get(key);
+    return params ? params.get(index) : undefined;
+}
+
+/** The class-level marking declared directly on `constructor`, or `undefined`. Own-scoped. */
+export function getClassSensitivity(constructor: Function): SensitivityMarking | undefined {
+    if (typeof constructor !== 'function') return undefined;
+    return classSensitivityByTarget.get(constructor);
+}
+
+/**
+ * The marking **in force** on `target[key]`, honouring inheritance (DEC-021). Returns a marking when
+ * *any* level of the prototype chain marks the field, or when *any* class in the hierarchy is marked
+ * at the class level — never when a subclass merely fails to restate an inherited marking.
+ *
+ * This reuses the field band's exact resolution shape (a prototype-chain walk over own-scoped
+ * storage): a marking found anywhere on the chain wins, and there is no way to express its removal,
+ * so a subclass cannot un-mark an inherited sensitive field. Over-marking is the safe direction for a
+ * privacy marking (DEC-PII-1: never load-bearing, so a spurious mark costs nothing), which is why a
+ * class-level marking anywhere on the chain sensitises every field read through it.
+ */
+export function getEffectiveFieldSensitivity(
+    target: ContractTarget,
+    key: FieldKey,
+): SensitivityMarking | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const own = fieldSensitivityByTarget.get(cursor)?.get(key);
+        if (own) return own;
+        // A class-level marking on the class owning this prototype level sensitises all its fields.
+        const owner = (cursor as {constructor?: Function}).constructor;
+        if (typeof owner === 'function') {
+            const classMark = classSensitivityByTarget.get(owner);
+            if (classMark) return classMark;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * The class-level marking in force on `constructor`, honouring inheritance: a subclass of a
+ * `@Sensitive` class is itself sensitive and cannot shed it. Walks the constructor chain
+ * (`Object.getPrototypeOf(ctor)` is the parent constructor for an ES class).
+ */
+export function getEffectiveClassSensitivity(constructor: Function): SensitivityMarking | undefined {
+    if (typeof constructor !== 'function') return undefined;
+    for (
+        let cursor: unknown = constructor;
+        typeof cursor === 'function';
+        cursor = Object.getPrototypeOf(cursor)
+    ) {
+        const mark = classSensitivityByTarget.get(cursor as Function);
+        if (mark) return mark;
+    }
+    return undefined;
+}
+
 /**
  * Add a class to the enumerable registry. Called by the `@Contract()` installer (P1.3) — *not* by
  * constraint recording, so `getContractedClasses()` reports exactly the classes that were
@@ -916,6 +1105,12 @@ export function resetRegistry(): void {
     contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>();
     fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
     contractedClasses = new Set<Function>();
+    fieldSensitivityByTarget = new WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>();
+    parameterSensitivityByTarget = new WeakMap<
+        ContractTarget,
+        Map<MethodKey, Map<number, SensitivityMarking>>
+    >();
+    classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
     classEnumerationEnabled = true;
 }
 

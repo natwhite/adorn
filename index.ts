@@ -12,6 +12,12 @@ import {
 import {Enforce} from './src/FieldDeocrators/Enforce';
 import {CreateFieldDecorator, installFieldContracts} from './src/Core/FieldDecoratorFactory';
 
+// --- Sensitive marker (DEC-PII-1/2) ---------------------------------------
+// Record-only: marks a field/parameter/class as holding sensitive data; it does NOT redact.
+// Redaction (safe-by-default emission) is a separate, later piece. See docs/sensitive.md.
+import {Sensitive} from './src/Sensitive/Sensitive';
+export type {SensitiveOptions} from './src/Sensitive/Sensitive';
+
 // --- Imperative assertion (for call sites with no decoration point) --------
 import {Verify} from './src/Validation/Verify';
 
@@ -53,6 +59,7 @@ import {
 
 // --- Projections ----------------------------------------------------------
 import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
+import {schemaForClass, schemaForContracts, serializeSchema, generateSchema} from './src/Projections/schema';
 
 // The projection's model types, so a consumer can actually type a variable holding one.
 // `ClassDoc.fields` is deliberately required, not optional: an optional band is one a future
@@ -65,6 +72,7 @@ export type {
     FieldDoc,
     MarkdownOptions,
 } from './src/Projections/docs';
+export type {ClassSchema, SchemaOptions} from './src/Projections/schema';
 
 // --- Constraint descriptors, namespaced -----------------------------------
 // `src/Contracts/*` exports `GreaterThan`, `Between`, `GreaterThanEqual`, ... under the SAME
@@ -93,6 +101,10 @@ export {
     Enforce,
     CreateFieldDecorator,
     installFieldContracts,
+
+    // Sensitive marker (record-only; DEC-PII-1/2). Marks data as sensitive for the build-time
+    // detector and a future exposure report — it does not redact. See docs/sensitive.md.
+    Sensitive,
 
     // Imperative assertion
     Verify,
@@ -144,6 +156,9 @@ export {
 
     // Projections: documentation generated from recorded contracts
     documentClass, documentContracts, renderMarkdown, generateMarkdown,
+
+    // Projections: JSON Schema (draft 2020-12) generated from recorded contracts
+    schemaForClass, schemaForContracts, serializeSchema, generateSchema,
 
     // Constraint descriptors (data, not decorators)
     NumberContracts, StringContracts,

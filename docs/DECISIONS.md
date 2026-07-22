@@ -533,3 +533,50 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Consequences.** A new *kind* of false-confidence surface is what settles it. Partial marking already exists in the ratified design, but that coverage is **declarative and enumerable from `ContractRegistry`**; Option A's coverage is an execution property the design cannot report. Recommendation carried forward: extend the one-pass detector **intraprocedurally** (+6 of 17, zero FP, no extra rounds) and ship the emission-position report. One case is caught by nothing at any budget — the permanent floor, and it should be documented as such rather than chased.
 
+---
+
+## DEC-028 — `@Sensitive` and the one-pass intraprocedural detector are built; the full-chain interprocedural version stays deferred
+**Status:** ACCEPTED · **source:** this build · **implements:** DEC-025, DEC-026, DEC-027, DEC-PII-1/2/5 · **relates to:** DEC-012, DEC-021, DEC-023, IDEA-9, IDEA-11, SMELL-19
+
+**Context.** DEC-023's iterated single-hop propagation was rejected twice (DEC-024 under the broad model, DEC-026 under DEC-025's narrowed one); runtime observation and a full interprocedural taint engine were both rejected (DEC-027). What survived all of it is a specific, small design — spike §15's recommendation — and DEC-026/DEC-027 ratified it *as a recommendation*. This entry records the **build** of that recommendation, and pins what was and was not built.
+
+**Decision — what shipped.**
+
+1. **`@Sensitive`, a record-only marker (Part 1).** A new public export (`Sensitive`, +1 on the runtime surface, now 50). It records a marking into `ContractRegistry`'s new **sensitivity band** — a datum the registry learns *decorator-agnostically* (DEC-012): a field/parameter/class is *sensitive*, not that a decorator named `@Sensitive` said so. It applies to fields, parameters, and classes, stores `{level: 'sensitive'}` (forward-compatible with the three-valued DEC-PII-2 design — the shape grows, no migration), and is **inheritance-safe by reusing the field band's own-scoped-storage + prototype-union resolution unchanged** (DEC-021): a subclass cannot un-mark an inherited sensitive field, because weakening is unexpressible, not merely rejected. It is record-only — it installs no accessor and does **not** redact. Redaction (safe-by-default emission, BUG-18/BUG-19) is a separate, later piece.
+
+2. **A one-pass, report-only, source→adorn-sink detector, extended intraprocedurally (Part 2).** In `tools/sensitive-flow/`, **build-time tooling that never enters `dist/` or the runtime surface** (excluded from the library build; typechecked by `tsconfig.test.json`; tested by `npm test`). The sink set is the closed one DEC-026 fixed (`@Log` params S1; adorn-constraint params S2; proposed `@Telemetry.value()` S3; `@Time` explicitly **not** a sink). The intraprocedural propagator (DEC-027) follows a value through same-function `const` aliases, template interpolation, literal element access, and destructuring. It is **report-only, permanently** (no `--fix`, ever — the fix target is cross-file). Delivered as an **ESLint rule over a shared analysis core**; the core takes a `ts.Program`, so a future `adorn check` CLI (IDEA-9) is the same core with a different wrapper.
+
+3. **The scope report is a shipping condition, met (DEC-026 point 4).** The detector prints its own scope on every run: what it analysed (the denominator, so clean ≠ never-run), the leaks, and every `@Sensitive` value it saw flowing to a non-adorn receiver and therefore did **not** analyse. A clean `Leaks: none` never masquerades as a clean bill of health.
+
+4. **Legality from compiled probes (SMELL-19), met.** Decorator-host legality is derived from a compiled probe table, not from AST node kinds, so a `@Log` on a class-*expression* method (TS1206) is correctly **not** treated as a sink.
+
+**Decision — what stays deferred, explicitly.** The **full-chain interprocedural version stays on the backlog** as **IDEA-11**. This build is the accepted path; whole-program reachability that follows a value across function boundaries is not built, and the *full taint engine with a sanitizer policy* remains rejected outright (DEC-027) — deciding whether `.slice(-4)` sanitises an SSN is a regulatory judgement, not a library's.
+
+**Consequences.**
+
+- **The primitive-parameter gap (DEC-PII-5) stands unweakened.** `transfer(ssn: string)` is closed only by a hand-written `@Sensitive()` on the parameter. The detector can now tell you where one is missing *at an emission position*, and still cannot tell you where one is missing anywhere else.
+- **The permanent floor is documented, not chased.** `s.ssn.slice(-4)` is caught by nothing; `docs/sensitive.md` records it as an accepted limit and a test pins it as *not caught*, so it cannot be silently "fixed" into a sanitizer policy.
+- **The DEC-025 false-confidence surface is named for users, in plain words.** `docs/sensitive.md` states that adorn secures its own emissions and a raw `console.log` of a sensitive value is the developer's responsibility — the risk DEC-025 required be surfaced, not buried.
+- **Q-17 and Q-20 move from resolved-in-principle to built; SMELL-19's instruction is discharged in the shipped tool.** Q-18 (the real-code recall ratio) is now *measurable* against a real `@Log`/`@Enforce` codebase but remains unmeasured.
+- **The sink set is a maintenance obligation.** A future value-rendering method decorator that is not added to the emitting set becomes a silent hole; the `@Time`-is-not-a-sink test is the pin that a decorator emitting no argument value stays excluded.
+
+
+---
+
+## DEC-029 — JSON Schema projection: conjunctive merge, under-claim on degradation
+**Status:** ACCEPTED · source: `src/Projections/schema.ts` (IDEA-12)
+
+**Context.** The schema projection emits JSON Schema (draft 2020-12) from the same registry reads the docs projection uses. Two policies had to be settled: how several constraints on one parameter/field compose, and what to emit when a constraint has no faithful schema.
+
+**Decisions.**
+
+1. **Stacked constraints compose as conjunction (AND)** — the same AND enforcement applies, and the same union DEC-021/DEC-022 resolve across inheritance. Disjoint keywords coexist (`minimum` beside `maxLength`); a repeated bound takes the *tighter* value (max of the minimum-family, min of the maximum-family — the exact intersection); `type` narrows (`integer` ⊂ `number`). Anything not combinable in place (two distinct `pattern`s, two `multipleOf`s, a genuine type contradiction) falls back to `allOf`, which *is* conjunction and is therefore always exact — the flat merge is only a readability optimisation for the common case.
+
+2. **Degradation always goes toward the weaker true statement** (the emitted schema must accept a superset of what enforcement accepts — never reject a value enforcement allows). A constraint with no `schema()` hook contributes `{}`; the projection never emits `required`, `additionalProperties`, `minItems`/`maxItems`, or `items:false`, because a value-constraint bounds a value *when present* and asserts nothing about presence, exclusivity, or arity. Descriptor-level degradations (`matches`+flags → `{type:'string'}`, `url` → `format:'uri'`) are inherited unchanged and never re-tightened. **A schema that over-claims is worse than none**, because a consumer validates against it — this is the whole ethic, and tests assert it by evaluating each descriptor's own `predicate` and showing the schema does not reject what the predicate accepts.
+
+3. **Root validates an instance** (fields → `properties`); methods and static members ride under annotation keywords (`methods`, `staticMethods`, `staticProperties`) that an instance validator ignores but which are each themselves well-formed subschemas.
+
+4. **`installed`-state is out of scope** — schema projects the *declaration*; enforcement state is the docs projection's concern.
+
+**Consequences.** `schema()` returns a bare `JsonObject` with no dialect tag, so the `2020-12` label is asserted by the projection, not by the fragments; a future draft-07-shaped fragment would be silently mislabelled (tracked on IDEA-12, currently satisfied). This is the first confirmation that the descriptor's `schema()` hook — added speculatively in P1.0 — carries real weight: the projection invents no schema of its own, exactly as the docs projection invents no prose.
+

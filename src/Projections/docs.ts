@@ -34,7 +34,7 @@
  * | Projection      | Reads from the descriptor        | Blocked on                       |
  * |-----------------|----------------------------------|----------------------------------|
  * | docs (here)     | `constraint`, `params`, `describe()` | nothing                      |
- * | schema          | `schema()` (optional hook)       | no built-in supplies one yet     |
+ * | schema          | `schema()` (optional hook)       | built: src/Projections/schema.ts |
  * | arbitraries     | `arbitrary()` (optional hook)    | `fast-check` is not a dependency |
  * | fuzz            | `arbitrary()` + `post`           | postconditions (IDEA-4)          |
  *

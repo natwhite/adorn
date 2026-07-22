@@ -37,6 +37,10 @@
     // `spike/` is throwaway feasibility-spike code (docs/sensitive-flow-spike.md). It must
     // never reach `dist/` — the same rule `examples/` is excluded under, for the same reason.
     "spike",
+    // `tools/` is build-time tooling (the sensitive-flow detector, docs/sensitive.md). It is
+    // NOT library code and must never reach `dist/` or the runtime export surface — same rule as
+    // `spike/` and `examples/`. It is typechecked by tsconfig.test.json and tested by jest.
+    "tools",
     // `examples/` is demonstration code, not library code. Before P0.4 the demo lived at
     // `src/Tests.ts` and was compiled into `dist/src/Tests.js` — the published package shipped
     // a demo script. Excluded here so that cannot happen again; `npm run demo` runs it through
