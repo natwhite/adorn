@@ -34,6 +34,8 @@ export type MethodBehavior = (context: InvocationContext, proceed: () => any) =>
 
 ## 1. The `Observation` model — `src/Core/Observation.ts` (new)
 
+> **⟳ Revised by [Revision (Q-24)](#revision-q-24-per-call-payload-channel).** The shapes below are the *original* design and are retained as the record the adversarial review critiques. `Observation` gains a `kind: SpanKind` field (F3); `ObservationEvent` gains a per-call payload channel — `values?: EmittedValue[]`, `error?: ErrorFacts`, `attributes?` — on `completed`/`violation`/`message` (F1); `AttributeValue` stays the low-cardinality attribute type but is **no longer** the only value carrier. See the Revision for the frozen replacements.
+
 A new file in `Core/`, **decorator-agnostic (DEC-012) and with zero third-party imports (DEC-OBS-1)**. It sits beside `Descriptor.ts` and `redaction.ts` in the same import-nothing-outside-`Core/` tier, so a projection and an adapter may both read it.
 
 Two shapes, deliberately separate, mirroring the split `@Time` already discovered (`TimingRecord` is a point event; the *scope* is ambient):
@@ -114,6 +116,8 @@ Notes that make this concrete rather than aspirational:
 ---
 
 ## 2. The around-shaped sink — signature, no-op, adapter, composition
+
+> **⟳ Revised by [Revision (Q-24)](#revision-q-24-per-call-payload-channel).** `scope` is re-typed from `scope?<T>(observation, proceed)` to `scope?<T>(call: ObservationCall, proceed)` so the adapter sees the per-call pre-disclosed values, not only install-time facts (F2). The adapter sketch below is superseded by the corrected one in the Revision, which does `span.recordException(realError)`, sets span kind, and attaches disclosed values as attributes.
 
 Same file. This is the load-bearing detail (DEC-OBS-1): the sink is **around-shaped, not fire-and-forget**, because a span must be the *active* context while the body runs or nested work is orphaned into flat, unparented spans.
 
@@ -202,6 +206,8 @@ index.ts                         ← new exports.                               
 ---
 
 ## 4. `ObservationBehavior` — the one `MethodBehavior`
+
+> **⟳ Revised by [Revision (Q-24)](#revision-q-24-per-call-payload-channel).** The scope+settle body below uses an under-specified `settle` callback (`(outcome, durationMs, settled)`, which disagrees with §2's `(outcome, settled)` — the review's evidence the seam was unpinned). The Revision pins **one** callback: `settle(result, (s: Settlement<T>) => …)`, carrying the settled value / thrown error, and shows where `ObservationBehavior` renders the per-parameter `EmittedValue[]` from the resolved disclosures.
 
 `src/Core/ObservationBehavior.ts`. This is the machinery `@Observe`, `@Log`, and `@Time` all become sugar over. Two properties are **requirements, not optimisations** (design §8 risk 1):
 
@@ -317,6 +323,8 @@ A `CreateSimpleDecorator` closure throws an arbitrary error with no reified iden
 ---
 
 ## 7. The `@Telemetry` declaration surface, and its interplay with DEC-030
+
+> **⟳ Revised by [Revision (Q-24)](#revision-q-24-per-call-payload-channel).** The resolver below is correct and unchanged — but §1/§2 gave the value it resolves nowhere to go (F1). The Revision adds the transport (`EmittedValue`) the resolved `'value'`/`{redact}` renders into, and settles Fr2 (`@Sensitive` overriding an explicit opt-in now **warns** and is surfaced as `vetoed`, rather than being silent).
 
 DEC-030 gave a **global** debug switch (`setValueDisclosure('all')`) and a **veto** (`@Sensitive`). It deliberately did *not* give a **per-parameter production opt-in** — the thing that lets `amount` emit its value in production telemetry while `memo` never does. That is O1's `@Telemetry`, and it is the surface the design says must be settled *before* anything emits values (DEC-010 lesson: settle the shape first).
 
@@ -449,6 +457,8 @@ The telemetry-disclosure registry band, `Telemetry.value/redact/result`, the ins
 
 ## 11. Honest hard parts (not hand-waved)
 
+> **⟳ Revised by [Revision (Q-24)](#revision-q-24-per-call-payload-channel).** Point 1 says `settle.ts` is extracted in O1a "so the seam has to exist before the adapter can be correct" — the review's F2 showed the extracted seam was the **wrong arity** (no value, no error), which would bake the defect into the foundation phase. The Revision fixes `settle`'s callback in O1a as a precondition of the extraction, so the seam extracted is the correct one.
+
 1. **Async/Observable results through a span scope — the central difficulty.** A span must be the active context while the body runs *and* must end when the work *settles*, not when it *returns*. `scope`'s job is the active-context nesting (it wraps the synchronous portion of `proceed`, which is when nested sync calls and the promise's creation happen; OTel then propagates context across `await` boundaries via the SDK's `AsyncLocalStorage`). The span's *end* and *status* need the settle signal, which lives in adorn's classifier — so **the O2 adapter ends the span using adorn's exported `settle`, never its own reimplementation.** This is the concrete mechanism that prevents the "flat, early-ended spans" failure the design flags as the most likely way a first implementation gets it wrong. It is why `settle.ts` is extracted in O1a even though O1 itself ships no spans: the seam has to exist before the adapter can be correct.
 2. **Context propagation is the SDK's job, and adorn must not touch it.** adorn opens an active scope; propagating it across process/async boundaries is `AsyncLocalStorage` in the SDK. Deliberately not scheduled (design §6). A design that tried to own propagation would be reinventing the SDK.
 3. **The no-op path is cheap, not free — and this is the *adapter's* cost, not core's.** When `@adorn/otel` is installed but no SDK is registered, `startActiveSpan` still allocates a `NonRecordingSpan`, a context object, and a `context.with` call per span (verified from `NoopTracer` source; unquantified — no published benchmark). adorn *core* has no such cost (its no-op is `NOOP_SINK`, one `===`). This must be documented so nobody attributes the adapter's per-call allocation to adorn.
@@ -557,5 +567,260 @@ Reported honestly, because a failed attack is signal:
 ### Where it sits: paternalistic vs trusting, over vs under
 
 **Under-configurable, decisively — and concentrated in the primitive, not the periphery.** The delegated axes (sampling, retention, export, batching) are correctly refused; that is delegation, not paternalism, and the argument in §8 holds. The paternalism that does exist is narrow: value disclosure is deny-by-default (right, per DEC-030) but the `@Sensitive` veto is un-overridable and un-surfaced (Fr2), and — the real story — the value *transport* is simply missing (F1/F2), so the model reads as "values hard to turn on" when it is actually "values have nowhere to go." That distinction matters for the fix: this is not a philosophy that over-protects developers, it is a model that was built permission-first and forgot the payload. Against the user's "trust developers" stance the plan is *almost* aligned; it withholds exactly one thing developers will reach for on day one — a value or an error on a span — and withholds it by omission rather than by policy. Fix F1 and F2 and the model becomes as trusting as the philosophy asks, without loosening a single safe default.
+
+---
+
+## Revision (Q-24): Per-Call Payload Channel
+
+*Appended 2026-07-22, resolving the adversarial review above. The review section is preserved verbatim as the record of why this revision exists; §1/§2/§4/§7/§11 above carry forward-pointer change-markers to here. Nothing in this revision weakens DEC-012 (decorator-agnostic), the zero-core-dependency guarantee (DEC-OBS-1/DEC-019), or safe-by-default (DEC-030/DEC-025); §R9 proves each still holds. This edits the plan only — the tracker update (Q-24) is reported for the orchestrator to reconcile, and a new decision (proposed **DEC-OBS-7**, "the per-call payload channel is disclosure-gated on the record path and outcome-passing on the around path") should record §R1's principle.*
+
+### R0. The one principle that makes the fix safe: **seeing ≠ emitting**
+
+The review is exactly right that the model was built "permission-first and forgot the payload." But the fix is *not* "let raw values into the sink." It is the recognition that the sink has **two surfaces with two different trust levels**, and the payload belongs to them differently:
+
+- **The `record` surface (fire-and-forget structured events).** This is the exported, reviewable, privacy-projected surface — the one §12's acceptance criteria and §7's sixth projection bind. It carries **only pre-disclosed data**: never a raw argument or return value. The disclosure resolver (§7) runs at install time; `ObservationBehavior` renders the outcome per call; the event carries the *rendering*, which is `[REDACTED]` by default. This is the channel F1 said was missing, added **without** a hole in the discipline.
+- **The `scope` surface (the around-wrapper).** An around-behaviour *is definitionally inside the call*: it wraps `proceed()`, so it already sees the raw return value and the raw thrown error — exactly as `@Time` sees every return value today and is safe because it does not *emit* them. Handing the adapter the settled value/error is therefore **not a new exposure**; it is making explicit what around-shape already grants. What adorn adds on this surface is the *ergonomic safe default* — the pre-disclosed `values` — so the easy path is the safe path and the raw outcome is reached only where ending a span correctly genuinely requires it.
+
+This distinction is the whole resolution: **disclosure governs what becomes a structured, exported attribute; it does not govern what the wrapper may observe while wrapping.** With that stated, every one of F1/F2/F3 becomes a concrete, safe shape change.
+
+### R1. `settle` — the corrected, single, value-and-error-carrying callback *(fixes F2)*
+
+`settle.ts` is extracted in O1a (§11.1). The review proved the extracted callback was the wrong arity — `Report = (durationMs, kind, outcome, settled)` carries neither value nor error, and the plan itself called it with two different arities in §2 and §4. **The extracted seam is re-pinned now, as a precondition of O1a**, to one object-shaped, discriminated callback so `value` and `error` are mutually exclusive and type-narrowed, and so a later field is an additive change, never an arity break (Q-6):
+
+```ts
+// src/Core/settle.ts — extracted from Time.ts, zero third-party imports.
+
+export type SettleKind = 'sync' | 'promise' | 'observable';
+
+/** The one settlement fact, discriminated on outcome. `value` XOR `error`. */
+export type Settlement<T> =
+    | {readonly outcome: 'returned'; readonly value: T;      readonly durationMs: number;
+       readonly kind: SettleKind; readonly settled: boolean}
+    | {readonly outcome: 'threw';    readonly error: unknown; readonly durationMs: number;
+       readonly kind: SettleKind; readonly settled: boolean};
+
+/**
+ * Classify how `result` settles and invoke `onSettle` exactly once when it does, passing the
+ * settled value or the thrown error. Returns the value/promise/wrapped-observable to the caller,
+ * preserving @Time's existing normalisation (SMELL-15) and rxjs-absent honest refusal (SMELL-16).
+ */
+export function settle<T>(result: T, onSettle: (s: Settlement<T>) => void): T;
 ```
+
+**The exact callback signature, stated as the task requires:** `settle`'s callback becomes `(settlement: Settlement<T>) => void`, where `settlement.outcome === 'returned'` narrows to a `value: T` and `settlement.outcome === 'threw'` narrows to an `error: unknown`, both alongside `durationMs`, `kind`, and `settled`. There is exactly one arity, one object, forever.
+
+Mapping the existing classifier onto it, with no behaviour change:
+
+- **sync return:** `{outcome:'returned', value, durationMs, kind:'sync', settled:true}`.
+- **sync throw / rejection / observable error:** `{outcome:'threw', error, durationMs, kind, settled:true}` — the error the classifier already re-throws is now *also* handed to `onSettle` before the re-throw.
+- **promise resolve:** `{outcome:'returned', value, durationMs, kind:'promise', settled:true}`.
+- **observable complete:** `{outcome:'returned', value: undefined, durationMs, kind:'observable', settled:true}` — a stream has no single settled value, so `value` is honestly `undefined`; the adapter ends the span on complete.
+- **observable, rxjs absent (SMELL-16):** `{outcome:'returned', value: source, durationMs:0, kind:'observable', settled:false}` — the unchanged `settled:false` honest refusal; the source is returned unwrapped exactly as today.
+
+`@Time` rebases trivially: its reporter becomes `settle(result, s => report(s))`, building `TimingRecord` from `s.durationMs/kind/outcome/settled` and ignoring `s.value`/`s.error`. `setTimingSink` and the console output are byte-for-byte unchanged (§12 criterion holds).
+
+### R2. New model types — `src/Core/Observation.ts` (interfaces only, DEC-012 intact)
+
+```ts
+// Added to src/Core/Observation.ts. Still: no import of @opentelemetry, rxjs, or any decorator type.
+
+/** OpenTelemetry span kind, as adorn's OWN string union — mapped to the OTel enum by the adapter,
+ *  so core names no OTel symbol (F3). Default 'internal'. */
+export type SpanKind = 'internal' | 'server' | 'client' | 'producer' | 'consumer';
+
+/** Sentinel index for the return value in an EmittedValue. Parameters are index >= 0. */
+export const RETURN_INDEX = -1;
+
+/**
+ * ONE per-call value that has ALREADY passed the §7 disclosure resolver — safe to leave the process.
+ * This is the dedicated payload slot the model lacked (F1). It is deliberately NOT an `Attributes`
+ * entry: `Attributes` stays low-cardinality; `EmittedValue.rendering` is high-cardinality by nature
+ * (that is the point of `@Telemetry.value()`) and lives in its own field so the two are never
+ * conflated. It never carries a raw, ungated value — only the disclosure OUTCOME.
+ */
+export interface EmittedValue {
+    readonly index: number;                 // parameter index, or RETURN_INDEX for the return
+    readonly name?: string;                 // parameter/return name when recoverable (DEC-OBS-4)
+    readonly type?: string;                 // design:paramtypes name when the toolchain emitted it
+    /** `true` → `rendering` is the disclosed value or a surrogate; `false` → it is REDACTED. */
+    readonly disclosed: boolean;
+    /** The resolver's output: REDACTED by default, a rendering under opt-in, a surrogate under redact. */
+    readonly rendering: string | number | boolean | null;
+    /** `true` only when an explicit @Telemetry opt-in was overridden by @Sensitive (Fr2, §R6). */
+    readonly vetoed?: boolean;
+}
+
+/** The thrown error, structured for `span.recordException` and error records (F2 wall 1). */
+export interface ErrorFacts {
+    readonly type: string;      // error.name; 'adorn.<constraint>' for a ViolationError; '_OTHER' fallback
+    readonly message?: string;  // error.message — adorn's own violation messages are ALREADY redacted
+                                //   by default (BUG-19); a user-thrown error's message is developer-authored,
+                                //   exactly as @Log's describeThrown emits it today. No new leak, no new veto.
+    readonly stack?: string;    // error.stack when the platform provides one
+}
+
+/** Everything the AROUND surface (scope) sees for one call. Install-time facts + the pre-disclosed
+ *  per-parameter renderings. Raw args are deliberately NOT here — see §R3/§R7. */
+export interface ObservationCall {
+    readonly observation: Observation;              // install-time facts, incl. `kind` and disclosures
+    readonly thisArg: unknown;
+    /** Pre-disclosed arg renderings (placeholder unless opted in). THE safe span-attribute source. */
+    readonly values: ReadonlyArray<EmittedValue>;
+}
+```
+
+And one field is added to `Observation` (§1), defaulted so nothing else moves:
+
+```ts
+export interface Observation {
+    // ...all existing fields unchanged...
+    readonly kind: SpanKind;   // NEW (F3). Default 'internal'; overridden only by @Observe({kind}).
+}
+```
+
+### R3. Revised `ObservationSink` and `ObservationEvent` — the frozen surface, gotten right now *(fixes F1/F2)*
+
+Because the union is semver-frozen the moment an adapter binds to it (Q-6), it is shaped here for values, errors, span kind, and attributes from the start — not as a later bolt-on. Every new field is **optional**, so `NOOP_SINK`, a record-only sink, and a values-off default all remain the cheap, empty case.
+
+```ts
+export interface ObservationSink {
+    /** AROUND-shaped. Now receives the per-call ObservationCall, not just install-time Observation (F2). */
+    scope?<T>(call: ObservationCall, proceed: () => T): T;
+    /** Fire-and-forget point events. Carries ONLY pre-disclosed data (§R0). */
+    record?(event: ObservationEvent): void;
+}
+
+export type ObservationEvent =
+    | {readonly kind: 'completed'; readonly observation: Observation;
+       readonly durationMs: number; readonly outcome: 'returned' | 'threw'; readonly settled: boolean;
+       readonly values?: ReadonlyArray<EmittedValue>;   // NEW — pre-disclosed arg + return renderings
+       readonly error?: ErrorFacts;                     // NEW — present iff outcome === 'threw'
+       readonly attributes?: Attributes}                // NEW — optional low-cardinality span/log attrs
+    | {readonly kind: 'violation'; readonly observation: Observation;
+       readonly violation: ViolationFacts;              // still value-free — unchanged, that is its point
+       readonly values?: ReadonlyArray<EmittedValue>;   // NEW — the offending parameter, iff opted in
+       readonly error?: ErrorFacts}                     // NEW — the ViolationError (message redacted by default)
+    | {readonly kind: 'message'; readonly observation: Observation;
+       readonly level: LogLevel; readonly message?: string;
+       readonly attributes: Attributes;                 // unchanged — stays the low-cardinality map
+       readonly values?: ReadonlyArray<EmittedValue>};  // NEW — disclosed renderings, SEPARATE from attributes
+```
+
+The design decisions worth stating:
+
+- **`values` is the high-cardinality carrier F1 asked for, and it is not `attributes`.** `Attributes`/`AttributeValue` keep their exact meaning and their "low-cardinality" comment; they were never the value slot and now visibly are not. A disclosed `amount` is `{index, name:'amount', disclosed:true, rendering: 42}`; a redacted `memo` is `{index, name:'memo', disclosed:false, rendering:'[REDACTED]'}`. The review's F1 ambiguity ("values only in the no-sink string, or values in the low-cardinality map — both bad") is dissolved: an **installed** sink now receives the same disclosed renderings the `setValueDisclosure('all')` console string would show, via a slot typed for exactly that. Installing the §10 JSON-console sink no longer *replaces* value-bearing output with value-free facts — it renders `values`.
+- **`error: ErrorFacts` on `completed` and `violation` fixes F2 wall 1.** An adapter's `record` (and its `scope` via §R1's `settle`) now has the real error type, message, and stack — `span.recordException` becomes possible for every throw, contract or not. adorn's own `ViolationError.message` is already redacted at source (BUG-19), so carrying it is safe; a user error's message is the developer's own content, carried exactly as `@Log` carries it today (trust-the-developer, no new policy).
+- **`attributes?` on `completed`** gives an adapter a home for low-cardinality span attributes derived structurally (e.g. `code.function.name`, `outcome`) without abusing `values`.
+
+### R4. The corrected adapter sketch (supersedes §2) — recordException, span kind, disclosed values
+
+```ts
+// @adorn/otel — O2, out of O1 scope. Shown to prove the revised seam is sufficient.
+const otelSink: ObservationSink = {
+    scope(call, proceed) {
+        const {observation, values} = call;
+        return tracer.startActiveSpan(
+            observation.name,
+            {kind: toOtelKind(observation.kind), attributes: codeAttrs(observation)},   // F3: real span kind
+            span => {
+                for (const v of values) if (v.disclosed) span.setAttribute(attrKey(v), v.rendering!);  // F1
+                return settle(proceed(), s => {                                          // F2: the pinned callback
+                    if (s.outcome === 'threw') {
+                        span.recordException(toException(s.error));                       // F2 wall 1: the real error
+                        span.setStatus({code: ERROR});
+                    } else {
+                        span.setAttributes(deriveFromReturn(s.value));                   // F2 wall 2: return-derived attrs
+                    }
+                    span.end();
+                });
+            });
+    },
+    record(event) {
+        if (event.kind === 'violation') {
+            const span = trace.getActiveSpan();
+            span?.recordException?.({name: event.error?.type ?? `adorn.${event.violation.constraint}`,
+                                     message: event.error?.message, stack: event.error?.stack});
+            for (const v of event.values ?? []) if (v.disclosed) span?.setAttribute(attrKey(v), v.rendering!);
+        }
+        // 'completed' → histogram (O3) + optional span attrs from event.values; 'message' → log record.
+    },
+};
+```
+
+`toOtelKind`, `toException`, `deriveFromReturn`, `attrKey`, `codeAttrs` all live in `@adorn/otel`; core names no OTel symbol. `deriveFromReturn` reads the *raw* `s.value` — the around-wrapper's own view (§R0), the same thing `@Time` sees — and is the adapter's chosen behaviour, not a default adorn emission.
+
+### R5. Revised `ObservationBehavior` body (supersedes §4) — where the value is rendered
+
+```ts
+        const emit = () => renderValues(observation, context.args);   // pre-disclosed, once policy is resolved
+        const values = emit();
+        const call: ObservationCall = {observation, thisArg: context.thisArg, values};
+        const run = () => proceed();
+        const scoped = s.scope ? () => s.scope!(call, run) : run;
+        return settle(scoped(), settlement => {
+            const base = {kind: 'completed', observation, durationMs: settlement.durationMs,
+                          outcome: settlement.outcome, settled: settlement.settled} as const;
+            const withReturn = observation.detail /* + result disclosure */
+                ? {...base, values: values.concat(renderReturn(observation, settlement))}
+                : base;
+            s.record?.(settlement.outcome === 'threw'
+                ? {...withReturn, error: toErrorFacts(settlement.error)}
+                : withReturn);
+        });
+```
+
+`renderValues`/`renderReturn` live in `ObservationBehavior.ts` (adapter-side, Core), reusing `shouldDiscloseValue` and `@Log`'s `safeStringify` unchanged. **The sink never receives a raw value on the record path** — only the `EmittedValue` renderings this function produced. The uninstalled fast path (§4a, one `===` compare) is untouched: `renderValues` is never reached when `s === NOOP_SINK`.
+
+### R6. The disclosure path a value now actually travels — `@Telemetry.value() amount`
+
+End to end, staying redacted-by-default at every step:
+
+1. **Install (§7 resolver, unchanged):** `sensitive=false`, `declared='value'`, `global='none'` ⇒ `ObservedParameter.disclosure = 'value'` for `amount`; `memo` with no annotation ⇒ `'deny'` (the default — nothing said, nothing leaves).
+2. **Per call (`renderValues`, §R5):** for `amount`, `disclosure==='value'` ⇒ `{index, name:'amount', type:'Number', disclosed:true, rendering: safeStringify-or-scalar(args[i])}`. For `memo`, `'deny'` ⇒ `{index, name:'memo', disclosed:false, rendering:'[REDACTED]'}`. For a `{redact:'hash'}` parameter ⇒ `disclosed:true, rendering: applyStrategy('hash', value)` (a surrogate). Resolution is read, never recomputed — the per-call path applies the pre-resolved decision.
+3. **Transport:** the `EmittedValue[]` rides `completed.values` (record path) and `ObservationCall.values` (scope path) — the two slots §R2/§R3 added.
+4. **Sink:** the adapter attaches each `disclosed` rendering as a span attribute (§R4); redacted ones it skips or attaches as `[REDACTED]`. `amount`'s value reaches the span; `memo`'s never does.
+
+The default remains values-off: with no `@Telemetry` annotation and `setValueDisclosure('none')`, every `rendering` is `[REDACTED]`, so the fix is precisely "when a developer opts in, the value now has somewhere to go" — not "values flow by default."
+
+### R7. F3 — span kind: decision, default, and where the override lives
+
+**Decision: land the additive option now, do not defer it.** §8 was right that span kind is not *derivable* and that guessing would fabricate — but the review's F3 is also right that deferring it makes O1's entire tracing story `INTERNAL`-only, which under-builds the primitive. Both are satisfied by a **declared** kind with a reasoned default:
+
+- **Default `'internal'`.** Correct for the overwhelming majority of decorated methods (domain logic), and it is OTel's own default — so the default fabricates nothing.
+- **Override lives on `@Observe({kind})`** — the span-producing decorator — and nowhere else. `@Time` (duration) and `@Log` (message) produce no span and carry no `kind`. `@Observe({kind:'client'})` on an outbound call, `{kind:'server'}` on an inbound handler; the value lands on `Observation.kind` at install time and the adapter maps it (`toOtelKind`, §R4). This is one field on the model and one option on one decorator — additive, breaks nothing, and it is exactly the `@Observe({kind})` §8 already named as "additive, not a default," now scheduled into O1c instead of deferred.
+
+### R8. Fr2 — `@Sensitive` overriding an explicit `@Telemetry.value()`: **warn, surface, do not error, do not add a force-override**
+
+The tension is real: a silently-ignored explicit opt-in is a surprise, not a guardrail. The resolution keeps the veto (safe-by-default is non-negotiable for PII, DEC-025) but ends the silence:
+
+- **The veto still wins at emit.** `sensitive ? 'deny'` stays first in the resolver; the value redacts. **No `@Telemetry.value({force:true})`** — a per-parameter switch that defeats `@Sensitive` is precisely the silent-inclusion foot-gun DEC-016/DEC-025 forbid, and it would void the privacy projection's guarantee. This is the one place trust-the-developer yields to safe-by-default, and DEC-025 already ratified that yield for PII.
+- **The collision is no longer silent — three surfaces make it visible:**
+  1. **`EmittedValue.vetoed = true`** (§R2) whenever an explicit `@Telemetry.value()`/`.redact()` was overridden by `@Sensitive`. A sink sees "opted-in but vetoed," not an indistinguishable placeholder — exactly what the review's Fr2 asked the resolver to be able to tell the projection.
+  2. **The sixth projection (§7)** renders that as a distinct row state — *"opted-in, vetoed by @Sensitive"* — so the collision appears in the one artifact meant to surface it, instead of an empty cell.
+  3. **A dev-mode, one-shot diagnostic** at install time, routed through the existing `setContractDiagnosticsSink` (no new surface): *"adorn: @Telemetry.value() on `Accounts.transfer#amount` is overridden by @Sensitive; the value stays redacted."*
+- **Warn, not error.** An error would break the legitimate, common shape of a class-level `@Sensitive` plus one deliberately-opted-in parameter, and erroring on a safe-by-default outcome is heavier than the surprise warrants. A warning informs without obstructing — the trust-the-developer posture, made honest.
+
+### R9. The guarantees that must not have moved — shown, not asserted
+
+- **DEC-012 (decorator-agnostic).** Every added type — `SpanKind`, `EmittedValue`, `ErrorFacts`, `ObservationCall`, `RETURN_INDEX`, the widened events — is a plain interface/union/const in `Observation.ts`, importing only `Descriptor` types as before. No decorator type, no registry write. The *rendering* of values lives in `ObservationBehavior.ts`, which is already adapter-side. ✓
+- **Zero core dependency (DEC-OBS-1/DEC-019).** `SpanKind` is adorn's own string union; the OTel enum is named only in `@adorn/otel`'s `toOtelKind`. `settle` stays pure. There is still no `@opentelemetry/*` specifier anywhere in core — not in an import, a string, or a guarded call. GAP-6 cannot recur; the CI check (§9) is unaffected. ✓
+- **Safe-by-default (DEC-030/DEC-025).** The default resolution is `'deny'` ⇒ `rendering:'[REDACTED]'`; every new event field is optional and empty/redacted by default; `@Sensitive` still vetoes (now visibly, §R8). The `record` path carries no raw value, ever. The around path sees the raw *outcome* only — which around-shape already grants and `@Time` already relies on — and adorn hands it the pre-disclosed `values` as the ergonomic default. Values-off is still the default; the fix only gives an *opted-in* value a destination. ✓
+
+### R10. Does this resolve the adversary's verdict, or only the symptom? — honestly
+
+**It resolves the core verdict, not merely the symptom — because the verdict *was* the symptom.** The review's verdict was specific: "under-configurable, decisively — and concentrated in the primitive," where the under-configurability "lives in the one primitive the whole design rests on," and its named cause was that "the value *transport* is simply missing (F1/F2)." That missing transport is exactly what §R1–§R5 supply. The primitive goes from "too thin to delegate to" to "rich enough to delegate to" — the difference between permission-without-payload and a working delegation surface. The review's own framing ("Fix F1 and F2 and the model becomes as trusting as the philosophy asks, without loosening a single safe default") is the standard, and the revision meets it without loosening a safe default.
+
+What the payload channel honestly does **not** resolve, stated so it is not oversold:
+
+- **It does not touch Fr1** (the DEC-OBS-4 name-hatch is coupled to value disclosure, and the automatic violation path has no name hatch at all). That is a real, separate friction on the O1b headline and should be tracked as its own item; the payload channel neither helps nor worsens it.
+- **It does not touch Fr3** (the `setObservationVerbosity` knob included on principle). Left as the review left it — defensible, flag-not-oppose.
+- **It enlarges the semver-frozen surface (Q-6).** The sink and event union are now the *entire* runtime-configurability risk — which is the flip side of "concentrated in one primitive." That concentration is no longer a *defect* (a rich primitive that delegates correctly is the intended design, per §8), but it does mean this shape is the whole ballgame, which is precisely why the review demanded it be fixed *before building* and why §R1/§R3 pin it as object-shaped and all-optional so future growth is additive.
+
+So: the "concentrated in one primitive" observation remains **true as a description** and is now **resolved as a verdict** — the concentration is the design, and the primitive is no longer thin. The symptom (no transport) is fully fixed; the underlying model is, as the review predicted, sound once the payload lands.
+
+### R11. Acceptance-criteria and sequencing deltas (for §10/§12)
+
+- **O1a precondition (was a latent defect):** `settle`'s extracted callback must be the `Settlement<T>` object of §R1 — carrying value and error — *before* `@Time` rebases onto it. Extracting the old arity would bake the F2 defect into the foundation phase (§11.1). No behaviour change to `@Time`; the criterion is on the seam's shape.
+- **§12 additions:** with a test-spy sink, a `@Telemetry.value()` parameter yields a `completed`/`message` event whose `values` contains a `disclosed:true` `EmittedValue` with the rendered value, while an un-annotated parameter yields `disclosed:false, rendering:'[REDACTED]'`; a throwing method yields `error: ErrorFacts` with a real `type`/`message`/`stack`; a `@Sensitive` parameter carrying an explicit `@Telemetry.value()` yields `disclosed:false, vetoed:true` **and** a one-shot dev diagnostic; every span carries `observation.kind`, defaulting to `'internal'` and settable via `@Observe({kind})`.
+- **Tracker (reported, not edited here):** Q-24 moves to RESOLVED — the payload channel exists (`EmittedValue`/`ErrorFacts` on the events, `ObservationCall` + `Settlement<T>` on the around seam), disclosure-gated on the record path and outcome-passing on the around path; F1/F2/F3 fixed, Fr2 surfaced (warn + `vetoed` + projection), Fr1/Fr3 explicitly left open. Propose **DEC-OBS-7** to record §R0's two-surface principle as the reason the channel is safe.
 
