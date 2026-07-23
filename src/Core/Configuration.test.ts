@@ -24,7 +24,7 @@ import {
     ViolationSite,
 } from './Configuration';
 
-const SITE: ViolationSite = {owner: 'Task', member: 'send', trust: 'guard'};
+const SITE: ViolationSite = {owner: 'Task', member: 'send', trust: 'guard', blame: 'caller'};
 
 beforeEach(resetConfiguration);
 afterEach(resetConfiguration);

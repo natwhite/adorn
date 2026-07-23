@@ -597,14 +597,15 @@ describe('production toggling by trust (P3.2 / DEC-008)', () => {
             }
         }
 
-        const sites: Array<{owner: string; member: string; trust: string}> = [];
+        const sites: Array<{owner: string; member: string; trust: string; blame: string}> = [];
         setViolationPolicy((_violation, site) => {
             sites.push({...site});
         });
 
         new Task().run(-1);
 
-        expect(sites).toEqual([{owner: 'Task', member: 'run', trust: 'assert'}]);
+        // A precondition failure blames the caller (it supplied the bad argument) — plan A §5.1.
+        expect(sites).toEqual([{owner: 'Task', member: 'run', trust: 'assert', blame: 'caller'}]);
     });
 
     it('does not route a failure thrown by the method itself', () => {

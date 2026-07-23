@@ -123,6 +123,36 @@ export interface MethodContract {
 }
 
 /**
+ * The predicate a postcondition evaluates: the (settled) return value first, then the arguments the
+ * method was actually called with. `any[]` deliberately mirrors `InvocationContext.args`, the same
+ * untyped tuple the invocation seam already exposes — a postcondition needs no serialisable value
+ * types, only the runtime values, which is exactly what makes it enforceable but not projectable.
+ */
+export type PostconditionPredicate = (result: unknown, ...args: any[]) => boolean;
+
+/**
+ * One recorded postcondition (Q-11).
+ *
+ * A **closure, not a {@link ConstraintDescriptor}**. Two things make it un-descriptor-shaped, both
+ * fundamental rather than incidental: its predicate relates the *result* to the *arguments*
+ * (`(result, ...args) => boolean`) where a descriptor tests one value, and it carries no identity and
+ * no serialisable params (Q-3) so nothing can be derived from it (DEC-010). It is therefore
+ * enforceable and fuzzable but **not** projectable to docs/schema — the same accepted trade
+ * `CreateSimpleDecorator` makes (SMELL-14), applied to the return value.
+ *
+ * This is why postconditions get their **own band** rather than the reserved
+ * `MethodContract.post: ConstraintDescriptor[]` slot: that slot stays reserved for a future
+ * *descriptor-shaped* postcondition (the reified `Returns(<descriptor>)` tier, deferred), and
+ * `recordParameterConstraint`/`recordFieldConstraint` throw on bare predicates by design — a closure
+ * does not live in the registry as a descriptor.
+ */
+export interface Postcondition {
+    readonly predicate: PostconditionPredicate;
+    /** Optional human phrase for the violation message, e.g. "the balance covers the withdrawal". */
+    readonly description?: string;
+}
+
+/**
  * Everything recorded about one contracted **field** (GAP-9).
  *
  * ## Why the registry needs a field band at all
@@ -219,6 +249,16 @@ let contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethod
 /** The field band's twin of {@link contractsByTarget} (GAP-9). Same keying, same own-scoping. */
 let fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
 
+/**
+ * The postcondition band (Q-11). Own-scoped and keyed exactly like {@link contractsByTarget}, so the
+ * inheritance behaviour a postcondition needs — a subclass **conjoins** its ancestors' postconditions
+ * (covariant strengthening, orthodox Meyer) — falls out of the *same* prototype-walk union the field
+ * band already uses. See {@link getEffectivePostconditions}. A separate band rather than the reserved
+ * `MethodContract.post` slot because a postcondition is a closure, not a {@link ConstraintDescriptor}
+ * (see {@link Postcondition}).
+ */
+let postconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Postcondition[]>>();
+
 /** Companion enumerable store. Strong references; see the header note. */
 let contractedClasses = new Set<Function>();
 
@@ -253,6 +293,9 @@ const EMPTY_FIELD_CONTRACTS: ReadonlyMap<FieldKey, FieldContract> = new Map<Fiel
 
 /** Shared by both bands' effective reads, so neither allocates for the nothing-declared case. */
 const EMPTY_CONSTRAINTS: ReadonlyArray<ConstraintDescriptor> = Object.freeze([]);
+
+/** The postcondition band's twin of {@link EMPTY_CONSTRAINTS}. */
+const NO_POSTCONDITIONS: ReadonlyArray<Postcondition> = Object.freeze([]);
 
 // ---------------------------------------------------------------------------
 // Reads — the public introspection surface
@@ -540,6 +583,111 @@ export function getContractsForClass(constructor: Function): ClassMethodContract
     });
 
     return entries;
+}
+
+// --- postcondition band reads (Q-11, DEC-022 union) ------------------------
+
+/**
+ * Postconditions declared **directly** on `target[key]`. Own-scoped exactly as {@link getContracts}
+ * is: a subclass prototype returns only what was declared on it, never its ancestors'. For what is
+ * actually enforced, use {@link getEffectivePostconditions}.
+ */
+export function getPostconditions(target: ContractTarget, key: MethodKey): ReadonlyArray<Postcondition> {
+    if (!isRegisterableTarget(target)) return NO_POSTCONDITIONS;
+    const list = postconditionsByTarget.get(target)?.get(key);
+    return list ? list : NO_POSTCONDITIONS;
+}
+
+/**
+ * Every postcondition in force on `target[key]`, base-most class first — the read the installer plans
+ * from AND the read the fuzzer's oracle consumes.
+ *
+ * ## Conjunction is orthodox Meyer here, with no tension (DEC-022)
+ *
+ * The mechanism is identical to {@link getEffectiveFieldConstraints}: declarations are only ever
+ * recorded against the object they were written on, and resolution concatenates every list found
+ * walking the prototype chain. A subclass can only add conjuncts to its own list, so the resolved set
+ * grows monotonically as you descend, and union of predicates is logical AND.
+ *
+ * For **postconditions** that AND is *covariant strengthening* — a subclass promises **at least** what
+ * its ancestors promised, and may promise more — which is exactly Meyer's `ensure then`. Note the
+ * contrast: for preconditions DEC-022 had to argue a *departure* from classical contravariance to use
+ * the same union; for postconditions there is no departure and nothing to decide. Weakening is
+ * unexpressible, and here that is precisely the guarantee, not a compromise.
+ *
+ * Base-most first so a violation reports the most general broken guarantee first (DEC-021/DEC-022
+ * ordering). The common case — no contracted ancestor — returns the stored array itself with no copy.
+ */
+export function getEffectivePostconditions(
+    target: ContractTarget,
+    key: MethodKey,
+): ReadonlyArray<Postcondition> {
+    if (!isRegisterableTarget(target)) return NO_POSTCONDITIONS;
+
+    // Collected own-most first; reversed on the way out so the base-most class leads.
+    let nearest: Postcondition[] | undefined;
+    let bands: Postcondition[][] | undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const list = postconditionsByTarget.get(cursor)?.get(key);
+        if (!list || list.length === 0) continue;
+
+        if (!nearest) {
+            nearest = list;
+        } else {
+            if (!bands) bands = [nearest];
+            bands.push(list);
+        }
+    }
+
+    if (!nearest) return NO_POSTCONDITIONS;
+    // No contracted ancestor — hand back the stored array rather than copying it.
+    if (!bands) return nearest;
+
+    const merged: Postcondition[] = [];
+    for (let level = bands.length - 1; level >= 0; level--) {
+        const band = bands[level];
+        for (let i = 0; i < band.length; i++) merged.push(band[i]);
+    }
+    return merged;
+}
+
+/**
+ * Method keys carrying postconditions on `target` (own). Complements {@link getPostconditionKeys}'s
+ * effective twin below and the {@link getStagedMethodKeys} the installer already unions.
+ */
+export function getPostconditionKeys(target: ContractTarget): MethodKey[] {
+    if (!isRegisterableTarget(target)) return [];
+    const byKey = postconditionsByTarget.get(target);
+    if (!byKey) return [];
+    const keys: MethodKey[] = [];
+    byKey.forEach((_list, key) => keys.push(key));
+    return keys;
+}
+
+/**
+ * Method keys carrying postconditions anywhere on `target`'s prototype chain, own-most level first,
+ * deduplicated — the postcondition-band twin of {@link getEffectiveContractKeys}, and needed by the
+ * installer for the same reason: a subclass overriding a method that only its ancestor gives a
+ * postcondition has no own entry, so own-scoped enumeration would let the override escape the check.
+ */
+export function getEffectivePostconditionKeys(target: ContractTarget): MethodKey[] {
+    if (!isRegisterableTarget(target)) return [];
+
+    const keys: MethodKey[] = [];
+    const seen = new Set<MethodKey>();
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const byKey = postconditionsByTarget.get(cursor);
+        if (!byKey) continue;
+        byKey.forEach((_list, key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            keys.push(key);
+        });
+    }
+
+    return keys;
 }
 
 // --- field band reads (GAP-9) ----------------------------------------------
@@ -915,6 +1063,54 @@ export function markFieldInstalled(target: ContractTarget, key: FieldKey): void 
     fieldEntry(target, key).installed = true;
 }
 
+// --- postcondition band writes (Q-11) --------------------------------------
+
+/**
+ * Record a postcondition against `target[key]`. A method may carry several; they are recorded in
+ * declaration order by the adapter (the `@Ensures` decorator passes `'prepend'` to normalise
+ * `__decorate`'s reversal, exactly as `stageCheck` unshifts — DEC-015/DEC-017).
+ *
+ * Unlike {@link recordParameterConstraint}, this accepts a bare `{predicate}`: a postcondition is a
+ * closure by design (see {@link Postcondition}), so the "no bare predicates" rule that guards the
+ * descriptor bands does not apply here — this is its own band precisely so that rule is not violated.
+ */
+export function recordPostcondition(
+    target: ContractTarget,
+    key: MethodKey,
+    postcondition: Postcondition,
+    position: ConstraintPosition = 'append',
+): void {
+    if (!postcondition || typeof postcondition.predicate !== 'function') {
+        throw new TypeError('recordPostcondition: expected a { predicate } object with a function predicate');
+    }
+    if (position !== 'append' && position !== 'prepend') {
+        throw new TypeError(
+            `recordPostcondition: position must be 'append' or 'prepend', received ${String(position)}`,
+        );
+    }
+
+    const list = postconditionEntry(target, key);
+    if (position === 'prepend') list.unshift(postcondition);
+    else list.push(postcondition);
+}
+
+function postconditionEntry(target: ContractTarget, key: MethodKey): Postcondition[] {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('ContractRegistry: target must be an object (a prototype or constructor)');
+    }
+    let byKey = postconditionsByTarget.get(target);
+    if (!byKey) {
+        byKey = new Map<MethodKey, Postcondition[]>();
+        postconditionsByTarget.set(target, byKey);
+    }
+    let list = byKey.get(key);
+    if (!list) {
+        list = [];
+        byKey.set(key, list);
+    }
+    return list;
+}
+
 // --- sensitivity band writes (DEC-PII-1/2) ---------------------------------
 //
 // Record-only. None of these install anything or touch the enforcement bands. Writes stay
@@ -1104,6 +1300,7 @@ export function isClassEnumerationEnabled(): boolean {
 export function resetRegistry(): void {
     contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>();
     fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
+    postconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Postcondition[]>>();
     contractedClasses = new Set<Function>();
     fieldSensitivityByTarget = new WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>();
     parameterSensitivityByTarget = new WeakMap<

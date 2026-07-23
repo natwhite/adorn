@@ -24,6 +24,7 @@ import {Verify} from './src/Validation/Verify';
 // --- Method decorators ----------------------------------------------------
 import {Log} from './src/MethodDecorators/Log';
 import {Time, setTimingSink} from './src/MethodDecorators/Time';
+import {Ensures} from './src/MethodDecorators/Ensures';
 
 // --- Installation & diagnostics -------------------------------------------
 import {Contract, Validate} from './src/Core/ContractInstaller';
@@ -60,7 +61,14 @@ import {
     getFieldContract, getFieldContracts, getFieldContractsForClass,
     getEffectiveFieldConstraints, getEffectiveFieldContract,
     getEffectiveContract, getEffectiveParameterConstraints,
+    getEffectivePostconditions,
 } from './src/Core/ContractRegistry';
+
+// --- Postcondition evaluation (DEC-032) -----------------------------------
+// `evaluatePostconditions` is the SAME function the runtime wrapper calls, so a fuzzer
+// (Phase B) checking the oracle checks exactly what enforcement enforces — no drift.
+import {evaluatePostconditions} from './src/Core/Postconditions';
+export type {PostconditionResult} from './src/Core/Postconditions';
 
 // --- Projections ----------------------------------------------------------
 import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
@@ -117,6 +125,12 @@ export {
     // Method decorators
     Log, Time, setTimingSink,
 
+    // Postconditions (DEC-032). `@Ensures` records; `@Contract()`/`@Validate()` installs. Runs
+    // after the method returns — a throw skips, async awaits-then-checks, inheritance conjoins
+    // (covariant strengthening, free via the DEC-021/022 union). `evaluatePostconditions` below
+    // is the same oracle the fuzzer consumes.
+    Ensures,
+
     /**
      * BREAKING (P1.3) — required on any class using parameter constraints.
      *
@@ -162,6 +176,11 @@ export {
     // and Q-6 makes every registry export semver-relevant.
     getEffectiveFieldConstraints, getEffectiveFieldContract,
     getEffectiveContract, getEffectiveParameterConstraints,
+    getEffectivePostconditions,
+
+    // The postcondition oracle — the same evaluator the runtime wrapper runs, exposed so a
+    // fuzzer (Phase B) checks exactly what enforcement enforces.
+    evaluatePostconditions,
 
     // Projections: documentation generated from recorded contracts
     documentClass, documentContracts, renderMarkdown, generateMarkdown,

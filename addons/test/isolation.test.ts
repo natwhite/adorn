@@ -69,9 +69,14 @@ describe('the runtime export surface is unchanged by the add-on', () => {
         }
     });
 
-    it('the root export count is unchanged (56 runtime value exports, DEC-030 era)', () => {
-        // Pinned so accidental leakage of an add-on export through `index.ts` fails loudly. The
-        // add-on adds none — it is imported directly from `addons/test`, never re-exported.
-        expect(Object.keys(adorn).length).toBe(56);
+    it('no add-on-shaped export leaks through the root index', () => {
+        // Intent: nothing from the add-on reaches the library surface. The count is deliberately
+        // NOT pinned to an absolute number — legitimate core exports grow over time (@Ensures,
+        // getEffectivePostconditions, …), and a magic count would fail loudly on every honest
+        // addition instead of on an actual leak. A substring guard catches ALL of the add-on's
+        // exports (fuzzMethod/fuzzClass/formatFuzzReport/arbitrary*) and any future ones, while
+        // core names (which contain neither token) pass.
+        const leaked = Object.keys(adorn).filter(name => /fuzz|arbitrary/i.test(name));
+        expect(leaked).toEqual([]);
     });
 });

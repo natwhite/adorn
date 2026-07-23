@@ -70,6 +70,17 @@ export type EnforcementMode = 'development' | 'production';
 // Violation routing
 // ---------------------------------------------------------------------------
 
+/**
+ * Which side of the call a violation blames (plan A §5.1, made first-class).
+ *
+ * A **precondition** failure blames the `caller` — it supplied an argument the contract rejects. A
+ * **postcondition** failure blames the `callee` — the method broke its own promise, which is a bug in
+ * the method, not in the call. A handler can therefore split "our callers are misusing us" from "we
+ * shipped a bug" without any new plumbing: it is one more field on the {@link ViolationSite} it
+ * already receives.
+ */
+export type ViolationBlame = 'caller' | 'callee';
+
 /** Where a violation happened. Plain strings: this layer never sees a prototype or a property key. */
 export interface ViolationSite {
     /** The class name, e.g. `Task`. */
@@ -77,6 +88,8 @@ export interface ViolationSite {
     /** The method name, e.g. `send`. */
     readonly member: string;
     readonly trust: ContractTrust;
+    /** Who is at fault — a precondition blames the caller, a postcondition the callee. */
+    readonly blame: ViolationBlame;
 }
 
 /**

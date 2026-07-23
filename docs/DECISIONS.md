@@ -622,3 +622,24 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Consequences.** Some constraints generate only partially (curated `email`/`url`) or not at all (closures); the **report-own-boundary discipline** (DEC-028 point 3, applied here) makes that visible, so a clean fuzz run is never mistaken for a proof. This is the generation-side expression of the project-wide honesty ethic: refuse to lie, in whichever direction the artifact points.
 
+
+---
+
+## DEC-032 — Postconditions v1: a closure band, and the union mechanism vindicated
+**Status:** ACCEPTED · closes Q-11 · source: `postconditions-plan-b-pragmatic.md` (build) + `-a-dbc.md` (semantics)
+
+**Context.** The registry reserved `pre`/`post` slots with no writer (Q-11); the fuzzing oracle needed postconditions. Two independent plans were commissioned from different angles and converged.
+
+**Decisions.**
+- **`@Ensures((result, ...args) => boolean, description?)` records a closure into its own band** (`postconditionsByTarget`), **not** the reserved `ConstraintDescriptor` `post` slot. A postcondition is intrinsically n-ary (relates return to inputs) and hand-written, so it is not a params-derived descriptor (DEC-010) — forcing it into that slot is the drift-adjacent dishonesty the model rejects. The descriptor slot stays reserved for the deferred, *projectable* `Returns(<descriptor>)` tier.
+- **One evaluator, two callers.** `evaluatePostconditions(posts, result, args)` is called by both the runtime wrapper and (Phase B) the fuzz driver. This shared call *is* the no-drift guarantee — the oracle checked equals the oracle enforced — and it is made executable by an integration test asserting the wrapper flags a violation exactly when the evaluator returns `!ok`.
+- **Weave and defaults** (both plans agreed): gate → preconditions → `proceed()` (result captured outside every try) → postconditions. A **throw skips** (no return to check; the exception propagates untouched). **Async awaits the settled value then checks; a rejected Promise skips.** Observables are checked as the raw value (rxjs is gone, DEC-019). Violation messages reuse the DEC-030 `disclose`/`REDACTED` path — redacted by default.
+- **Blame is first-class** (`ViolationSite.blame: 'caller'|'callee'`), and **blame sets the trust default:** a postcondition audits your own output (callee fault) so it defaults to `trust: 'assert'` — stripped in production — while preconditions stay `guard`. Two `shouldEnforce` gates over the one DEC-008 primitive, so in prod `guard` preconditions survive and `assert` postconditions strip.
+
+**The finding worth recording — the union mechanism was principled, not incidental.** Postcondition inheritance is covariant conjunction (`ensure then`): a subclass strengthens. That is **orthodox Meyer with nothing to decide**, and it fell straight out of `getEffectivePostconditions` being a line-for-line copy of the DEC-021 field union. The same union that DEC-022 had to *defend* as a considered departure from Meyer for *preconditions* lands as textbook-correct for *postconditions* — strong evidence that choosing "union / strengthen-only" back in DEC-021/DEC-022 was a principled call, not a convenience that happened to work once.
+
+**Consequences.**
+- Deferred, each with a reason: `old()` state capture (needs a pre-`proceed()` snapshot protocol; relate-to-input covers the oracle need first), invariants (IDEA-5 — a different mechanism, needs a `new`/instantiation hook adorn lacks), the reified `Returns(<descriptor>)` tier + return-value-schema projection (the recommended **next step** — it is where the projection payoff is), `this`-state and per-`@Ensures` trust and exceptional postconditions (all additive).
+- **`@Validate()` + `@Ensures()` is decorator-order-sensitive** (`@Ensures` must sit below `@Validate()`); **class-level `@Contract()` is the order-safe form** — documented and pinned.
+- **Toolchain note:** under this repo's `strict: false`, a `{ok:true}|{ok:false,...}` discriminated union does not narrow (no `strictNullChecks`), so `PostconditionResult` is a flat `{ok; failed?; error?}` interface. Relevant to any future result-shaped return type; folds into SMELL-12's cost-of-strict.
+

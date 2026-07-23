@@ -60,10 +60,15 @@ import {
     getContract,
     getContracts,
     getEffectiveContractKeys,
+    getEffectivePostconditionKeys,
+    getEffectivePostconditions,
+    getPostconditionKeys,
     markInstalled,
     MethodKey,
+    Postcondition,
     registerContractedClass,
 } from './ContractRegistry';
+import {evaluatePostconditions, postconditionMessage} from './Postconditions';
 import {
     applyViolationPolicy,
     ContractTrust,
@@ -169,13 +174,20 @@ export function Validate(options?: TrustOptions): MethodDecorator {
         if (isInstalled(target, propertyKey)) return descriptor;
 
         const enforce = buildParameterEnforcement(target, propertyKey, original);
-        if (!enforce) {
+        // Postconditions are read effectively (inheritance-aware). Note the ordering caveat: because
+        // `@Validate()` runs at member-decoration time, it only sees `@Ensures` clauses that recorded
+        // first — i.e. `@Ensures` must sit *below* `@Validate()` in source. Class-level `@Contract()`
+        // runs last and has no such caveat (see the `@Ensures` docs).
+        const posts = getEffectivePostconditions(target, propertyKey);
+        if (!enforce && posts.length === 0) {
             // Nothing recorded. Returning the descriptor untouched keeps `@Validate()` harmless on
-            // a method that has no parameter constraints (yet).
+            // a method that has neither parameter constraints nor postconditions (yet).
             return descriptor;
         }
 
-        const decorate = CreateMethodDecorator(enforcementBehavior(enforce, target, propertyKey, trust));
+        const decorate = CreateMethodDecorator(
+            enforcementBehavior(enforce, posts, target, propertyKey, trust),
+        );
         const result = decorate(target, propertyKey, descriptor as any) || descriptor;
 
         noteInstalled(target, propertyKey);
@@ -239,12 +251,14 @@ function installOn(host: object, trust: ContractTrust): void {
     const own = new Set<MethodKey>();
     getContracts(host).forEach((_contract, key) => own.add(key));
     getStagedMethodKeys(host).forEach(key => own.add(key));
+    getPostconditionKeys(host).forEach(key => own.add(key));
 
     const keys = new Set<MethodKey>(own);
 
     const inherited = new Set<MethodKey>();
     getEffectiveContractKeys(host).forEach(key => inherited.add(key));
     getEffectiveStagedMethodKeys(host).forEach(key => inherited.add(key));
+    getEffectivePostconditionKeys(host).forEach(key => inherited.add(key));
 
     inherited.forEach(key => {
         if (own.has(key)) return;
@@ -276,53 +290,129 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
     }
 
     const enforce = buildParameterEnforcement(host, key, original);
-    if (!enforce) return;
+    const posts = getEffectivePostconditions(host, key);
+    if (!enforce && posts.length === 0) return;
 
-    installMethodWrapper(host, key, enforcementBehavior(enforce, host, key, trust));
+    installMethodWrapper(host, key, enforcementBehavior(enforce, posts, host, key, trust));
     noteInstalled(host, key);
 }
 
 /**
- * Validation as a `MethodBehavior`: gate, check, route, proceed.
+ * The trust postconditions run under (plan A §5.2, adopted).
  *
- * **The gate is evaluated once per call, at the top** — not once per predicate (plan P3.2). A method
- * carrying eight constraints pays for one `shouldEnforce`, not eight, and a stripped `assert`
- * contract costs a single boolean test rather than the whole check list.
+ * A postcondition audits the method's **own output** against its **own promise** — the definitional
+ * internal self-check, blaming the callee — so it defaults to `assert`: stripped in production, like a
+ * C `assert`. That is the mirror of a precondition, which guards *untrusted input*, blames the caller,
+ * and defaults to `guard` (survives production). The two directions of blame set the two trust
+ * defaults, and both reuse the one `shouldEnforce` gate — no new machinery.
  *
- * The {@link ViolationSite} is built here, at install time, because it is fixed for the life of the
- * wrapper — resolving the class and method names per call would put string work on the hot path for
- * something that only matters when a violation actually fires.
+ * Per-postcondition trust (plan A's `@Ensures({trust})`, e.g. opting a paranoid invariant back up to
+ * `guard`) is deferred; v1 fixes postconditions at `assert`.
+ */
+const POSTCONDITION_TRUST: ContractTrust = 'assert';
+
+/**
+ * The combined enforcement `MethodBehavior`: gate → check preconditions → `proceed()` → check
+ * postconditions. Either half may be absent — a method may carry only parameter constraints, only
+ * postconditions, or both.
  *
- * `proceed()` stays outside the `try` — a failure thrown by the method itself is not adorn's, must
- * not be routed through the violation policy, and must not have its stack rewritten. Only the checks
- * are guarded.
+ * **Each gate is evaluated once per call, not once per predicate** (plan P3.2). Preconditions run
+ * under the method/class `trust`; postconditions run under {@link POSTCONDITION_TRUST}. They are
+ * separate gates so that in production a default class keeps its `guard` preconditions while stripping
+ * its `assert` postconditions — which is the whole point of the blame-sets-trust default.
+ *
+ * The two {@link ViolationSite}s are built here, at install time, because they are fixed for the life
+ * of the wrapper; per-call name resolution would put string work on the hot path for something that
+ * only matters when a violation fires. They differ only in `trust` and `blame`.
+ *
+ * `proceed()` stays **outside** every `try` — a failure thrown by the method itself is not adorn's,
+ * must not be routed through the violation policy, and must not have its stack rewritten. A throw
+ * therefore skips postconditions entirely (there is no return value to check) and propagates
+ * untouched; only the checks are guarded (plan §5).
  */
 function enforcementBehavior(
-    enforce: (context: InvocationContext) => void,
+    enforce: ((context: InvocationContext) => void) | undefined,
+    posts: ReadonlyArray<Postcondition>,
     host: object,
     key: MethodKey,
     trust: ContractTrust,
 ): MethodBehavior {
-    const site: ViolationSite = {
-        owner: ownerNameOf(host),
-        member: typeof key === 'symbol' ? key.toString() : String(key),
-        trust,
-    };
+    const owner = ownerNameOf(host);
+    const member = typeof key === 'symbol' ? key.toString() : String(key);
+
+    const callerSite: ViolationSite = {owner, member, trust, blame: 'caller'};
+    const calleeSite: ViolationSite = {owner, member, trust: POSTCONDITION_TRUST, blame: 'callee'};
+
+    const hasPosts = posts.length > 0;
 
     return function (context, proceed) {
-        if (!shouldEnforce(trust)) return proceed();
-
-        try {
-            enforce(context);
-        } catch (violation) {
-            // Rethrows unless the configured policy suppresses it ('warn', or a custom handler that
-            // returns). Suppression falls through to `proceed()` deliberately: 'warn' exists to
-            // stage a new contract over live traffic, which means the call must still happen.
-            applyViolationPolicy(violation, site);
+        // --- preconditions ---------------------------------------------------
+        if (enforce && shouldEnforce(trust)) {
+            try {
+                enforce(context);
+            } catch (violation) {
+                // Rethrows unless the configured policy suppresses it ('warn', or a handler that
+                // returns). Suppression falls through deliberately: 'warn' stages a contract over
+                // live traffic, so the call must still happen.
+                applyViolationPolicy(violation, callerSite);
+            }
         }
 
-        return proceed();
+        // Nothing to check after the call, or postconditions are stripped in this build.
+        if (!hasPosts || !shouldEnforce(POSTCONDITION_TRUST)) return proceed();
+
+        // Outside the try — see the header. A method throw skips postconditions and propagates.
+        const result = proceed();
+
+        if (isThenable(result)) {
+            // Await the settled value, then check — mirroring `@Time`'s thenable handling. A REJECTED
+            // promise is not caught here, so it skips postconditions and propagates (the async twin of
+            // the sync-throw rule); an async violation surfaces as a rejected Promise carrying the
+            // postcondition Error, which is the correct shape.
+            return Promise.resolve(result).then(value => {
+                checkPostconditions(posts, value, context.args, calleeSite);
+                return value;
+            });
+        }
+
+        // Observables and other non-thenable objects are checked as the raw value (rxjs is gone —
+        // DEC-019; real settling is deferred, plan §5).
+        checkPostconditions(posts, result, context.args, calleeSite);
+        return result;
     };
+}
+
+/**
+ * Evaluate the postconditions against one settled outcome and route a failure through the same
+ * violation policy preconditions use. Returns normally when they hold OR when the policy suppresses
+ * (`'warn'`/handler), so the method's value is still returned to the caller.
+ *
+ * This calls the exact {@link evaluatePostconditions} the fuzz driver will call — one oracle, checked
+ * and enforced through the same function (plan §8).
+ */
+function checkPostconditions(
+    posts: ReadonlyArray<Postcondition>,
+    result: unknown,
+    args: ReadonlyArray<unknown>,
+    site: ViolationSite,
+): void {
+    const outcome = evaluatePostconditions(posts, result, args);
+    if (outcome.ok || !outcome.failed) return;
+
+    const message = postconditionMessage(site.owner, site.member, outcome.failed, result);
+    applyViolationPolicy(new Error(message), site);
+}
+
+/**
+ * The same three-line duck-type `@Time` uses (`Time.ts`). A thenable is checked after it settles, not
+ * as the Promise object — reading `result.id` off a Promise is "a number that looks like an answer".
+ */
+function isThenable(value: unknown): boolean {
+    return (
+        !!value &&
+        (typeof value === 'object' || typeof value === 'function') &&
+        typeof (value as {then?: unknown}).then === 'function'
+    );
 }
 
 function ownerNameOf(host: object): string {

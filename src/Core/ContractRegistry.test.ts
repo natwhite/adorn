@@ -7,14 +7,20 @@ import {
     getEffectiveContractKeys,
     getEffectiveFieldConstraints,
     getEffectiveParameterConstraints,
+    getEffectivePostconditionKeys,
+    getEffectivePostconditions,
     getFieldContract,
     getFieldContracts,
     getFieldContractsForClass,
+    getPostconditionKeys,
+    getPostconditions,
     isClassEnumerationEnabled,
     markFieldInstalled,
     markInstalled,
+    Postcondition,
     recordFieldConstraint,
     recordParameterConstraint,
+    recordPostcondition,
     registerContractedClass,
     resetRegistry,
     setClassEnumerationEnabled,
@@ -744,5 +750,120 @@ describe('resetRegistry', () => {
         // on every assignment, so a field accessor installed before this call silently stops
         // checking. Method enforcement is planned into closures at install time and is unaffected.
         // Any suite that resets must declare its contracted classes inside the test.
+    });
+});
+
+describe('postcondition band — Q-11 (own + effective, DEC-022 conjunction)', () => {
+    // Identified by `description` so the effective-order assertions read clearly.
+    const post = (description: string): Postcondition => ({predicate: () => true, description});
+    const descriptions = (list: ReadonlyArray<Postcondition>) => list.map(p => p.description);
+
+    it('records a postcondition against a method, own-scoped', () => {
+        const target = {};
+        const p = post('the id is positive');
+
+        recordPostcondition(target, 'save', p);
+
+        expect(getPostconditions(target, 'save')).toEqual([p]);
+        expect(getPostconditions(target, 'other')).toEqual([]);
+        expect(getPostconditions({}, 'save')).toEqual([]);
+    });
+
+    it('rejects a non-function predicate', () => {
+        expect(() => recordPostcondition({}, 'm', {predicate: 42 as never})).toThrow(TypeError);
+    });
+
+    it('keeps declaration order as recorded (append) and prepend for the reversed adapter', () => {
+        const target = {};
+        recordPostcondition(target, 'm', post('a'));
+        recordPostcondition(target, 'm', post('b'));
+        // `prepend` is what the @Ensures adapter uses to normalise __decorate's reversal.
+        recordPostcondition(target, 'm', post('z'), 'prepend');
+
+        expect(descriptions(getPostconditions(target, 'm'))).toEqual(['z', 'a', 'b']);
+    });
+
+    it('does not leave the reserved descriptor `post` slot populated (own band only)', () => {
+        const target = {};
+        recordPostcondition(target, 'm', post('a'));
+
+        // The postcondition lives in its own band; the reserved MethodContract.post slot is untouched
+        // — no MethodContract entry is conjured for a postcondition-only method.
+        expect(getContract(target, 'm')).toBeUndefined();
+    });
+
+    it('unions every declaration on the chain, base-most first (3-deep)', () => {
+        const base = {};
+        const middle = Object.create(base) as object;
+        const leaf = Object.create(middle) as object;
+
+        recordPostcondition(base, 'm', post('base'));
+        recordPostcondition(middle, 'm', post('middle'));
+        recordPostcondition(leaf, 'm', post('leaf'));
+
+        expect(descriptions(getEffectivePostconditions(leaf, 'm'))).toEqual(['base', 'middle', 'leaf']);
+        // Each level sees only itself and its ancestors.
+        expect(descriptions(getEffectivePostconditions(middle, 'm'))).toEqual(['base', 'middle']);
+        expect(descriptions(getEffectivePostconditions(base, 'm'))).toEqual(['base']);
+    });
+
+    it('conjoins a subclass override AND the parent, base-most first (the covariant-strengthen case)', () => {
+        const base = {};
+        const sub = Object.create(base) as object;
+
+        recordPostcondition(base, 'm', post('parent promise'));
+        recordPostcondition(sub, 'm', post('subclass promise'));
+
+        // Both are in force on the subclass — strengthening, never replacement (DEC-022 for post).
+        expect(descriptions(getEffectivePostconditions(sub, 'm'))).toEqual([
+            'parent promise',
+            'subclass promise',
+        ]);
+        // The parent's own read is untouched by the subclass.
+        expect(descriptions(getEffectivePostconditions(base, 'm'))).toEqual(['parent promise']);
+    });
+
+    it('skips a level that declares an empty list — neither displaces an ancestor', () => {
+        const base = {};
+        const declaresEmpty = Object.create(base) as object;
+
+        recordPostcondition(base, 'm', post('base'));
+        // Create an entry, then leave it empty (the phantom-entry case).
+        recordPostcondition(declaresEmpty, 'm', post('temp'));
+        (getPostconditions(declaresEmpty, 'm') as Postcondition[]).length = 0;
+
+        expect(descriptions(getEffectivePostconditions(declaresEmpty, 'm'))).toEqual(['base']);
+    });
+
+    it('returns the stored array itself when there is no contracted ancestor', () => {
+        const target = {};
+        recordPostcondition(target, 'm', post('a'));
+
+        // Not merely equal — the same array, so the common case allocates nothing.
+        expect(getEffectivePostconditions(target, 'm')).toBe(getPostconditions(target, 'm'));
+    });
+
+    it('collects keys own and effective, own-most first and deduplicated', () => {
+        const base = {};
+        const sub = Object.create(base) as object;
+
+        recordPostcondition(base, 'shared', post('b'));
+        recordPostcondition(base, 'baseOnly', post('b'));
+        recordPostcondition(sub, 'shared', post('s'));
+        recordPostcondition(sub, 'subOnly', post('s'));
+
+        expect(getPostconditionKeys(sub).sort()).toEqual(['shared', 'subOnly'].sort());
+
+        const effective = getEffectivePostconditionKeys(sub);
+        expect(effective).toEqual(['shared', 'subOnly', 'baseOnly']);
+        expect(effective.filter(k => k === 'shared')).toHaveLength(1);
+    });
+
+    it('is cleared by resetRegistry', () => {
+        const target = {};
+        recordPostcondition(target, 'm', post('a'));
+        resetRegistry();
+        expect(getPostconditions(target, 'm')).toEqual([]);
+        expect(getEffectivePostconditions(target, 'm')).toEqual([]);
     });
 });
