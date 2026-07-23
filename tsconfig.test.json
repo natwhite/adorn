@@ -14,7 +14,10 @@
     "examples/**/*.ts",
     // `tools/` (the sensitive-flow detector) is likewise excluded from the build but must typecheck.
     // Its tests run under jest; this keeps `npm run typecheck` covering the detector too.
-    "tools/**/*.ts"
+    "tools/**/*.ts",
+    // `addons/` (the `@adorn/test` fuzzing add-on) is excluded from the library build but must
+    // typecheck. Its tests run under jest; this keeps `npm run typecheck` covering it too.
+    "addons/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

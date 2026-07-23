@@ -604,3 +604,21 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 - **Gap (Q-23):** a method *return* cannot be marked `@Sensitive`, so it is redacted-by-default (safe) but not selectively disclosable.
 - Exports `setValueDisclosure`/`getValueDisclosure`; `REDACTED`/`resetValueDisclosure` stay internal (test-only, matching `resetConfiguration`).
 
+
+---
+
+## DEC-031 — Generation is sound, or it declines
+**Status:** ACCEPTED · source: `addons/test/arbitraries.ts` (IDEA-3, Phase A) · sibling of DEC-029
+
+**Context.** The fuzzing add-on derives fast-check generators from constraint descriptors. The governing question is what a generator does when it cannot faithfully produce the constraint's accepted set.
+
+**Decision.** A generator must produce **only** values the constraint accepts, or **decline**. This is icontract-hypothesis's "the inferred strategy must satisfy the preconditions" adopted as law, and it is the generation-side twin of DEC-029's "under-claim, never over-claim" for schema:
+- When a faithful parametric generator exists, use it (numerics, lengths, `matches` via `fc.stringMatching`).
+- When it does not, **filter** a tighter base to the accepted set.
+- When filtering would **starve** (measured: `<25%` acceptance warns, `0%` declines rather than hanging — the Hypothesis `filter_too_much` analogue), **decline**.
+- A hand-written closure has no params and no identity (SMELL-14, the Q-3 floor), so it **declines** and is named as gap-filled in the report — never presented as covered.
+
+**Rationale.** *A declined constraint costs coverage; an unsound one costs trust.* An unsound generator produces inputs the contract rejects, so a "failure" it finds may be the generator's fault, not the code's — which poisons the whole tool's credibility. Coverage gaps are honest and reported; unsound generation is a silent lie. Enforced by construction and pinned the way `schema.test.ts` pins under-claim: sample each generator, assert every value satisfies the descriptor's own `predicate` (the single source — no drift, DEC-010).
+
+**Consequences.** Some constraints generate only partially (curated `email`/`url`) or not at all (closures); the **report-own-boundary discipline** (DEC-028 point 3, applied here) makes that visible, so a clean fuzz run is never mistaken for a proof. This is the generation-side expression of the project-wide honesty ethic: refuse to lie, in whichever direction the artifact points.
+
