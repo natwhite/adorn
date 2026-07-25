@@ -19,7 +19,16 @@
     "module": "node16",
     "moduleResolution": "node16",
     "target": "es2019",
+    // SMELL-12: `strict` stays false (strictNullChecks / noImplicitAny /
+    // strictPropertyInitialization carry real, deferred cost). These five strict sub-flags
+    // were re-measured post-@Returns/Fuzzing-B/Observability-O1 and enabled together as the
+    // genuinely-free staged subset — all three build/typecheck paths inherit them from here.
     "strict": false,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true,
+    "alwaysStrict": true,
     "lib": ["es2019", "dom"],
     "declaration": true,
     "declarationMap": true,
