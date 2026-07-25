@@ -1,5 +1,5 @@
 /**
- * `@adorn/test` — contract-driven fuzzing for adorn (Fuzzing Phase A).
+ * `@adorn/test` — contract-driven fuzzing for adorn (Fuzzing Phase A + B).
  *
  * ## What this is, and where it lives (DEC-019, foundation §6.2)
  *
@@ -20,11 +20,14 @@
  * Reproducibility is inherited for free: generators are pure functions of frozen params (DEC-010), so
  * the only randomness is fast-check's seed.
  *
- * ## Phase A scope
+ * ## Scope
  *
  *   - Sound generation from every built-in constraint, or an honest decline (`arbitraries.ts`).
- *   - A **weak invariant oracle** — doesn't-throw + field-invariant preservation — that blocks on
- *     nothing (`oracle.ts`, foundation §5.3). The full postcondition oracle is Phase B (Q-11).
+ *   - The **contract oracle** (`oracle.ts`): Phase A's weak-invariant floor — doesn't-throw +
+ *     field-invariant preservation (foundation §5.3) — PLUS Phase B's full postcondition oracle
+ *     (DEC-034), which checks BOTH postcondition bands exactly as enforcement does (`@Ensures` closures
+ *     via `evaluatePostconditions`, reified `@Returns` via `getEffectiveContract().post`), with async
+ *     twins `fuzzMethodAsync`/`fuzzClassAsync`. No drift: the oracle checked is the oracle enforced.
  *   - A **boundary report** that always states what was and was not covered (`report.ts`, §3).
  *
  * @example
@@ -37,8 +40,11 @@
 export {arbitraryForConstraint, arbitraryForParameter, STARVATION_THRESHOLD} from './arbitraries';
 export type {Arbitrary, ConstraintArbitrary, ParameterArbitrary, GenerationStrategy} from './arbitraries';
 
-// The weak invariant oracle.
-export {fuzzMethod, fuzzClass} from './oracle';
+// The contract oracle — the weak-invariant floor (Phase A) plus the full postcondition oracle
+// (Phase B, DEC-034), consuming BOTH bands exactly as enforcement does. `fuzzMethodAsync`/`fuzzClassAsync`
+// are the async twins (fc.asyncProperty) that await the settled value before checking. These live ONLY
+// here — Phase B adds ZERO symbols to the root `index.ts` (fast-check isolation, DEC-019).
+export {fuzzMethod, fuzzClass, fuzzMethodAsync, fuzzClassAsync} from './oracle';
 export type {FuzzOptions, FuzzResult, FuzzFinding, FindingType, OracleMode} from './oracle';
 
 // The boundary report — a condition of shipping, not a nicety (§3).

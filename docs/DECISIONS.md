@@ -672,3 +672,21 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 - Fuzzing Phase B (next) now has **two oracle sources** to consume, exactly as enforcement does: `getEffectiveReturnConstraints` + each descriptor's `predicate` for the reified band, and `getEffectivePostconditions` + `evaluatePostconditions` for the closure band. Building against one band only would fuzz half the guarantee.
 - Deferred, unchanged: `old()`, invariants (IDEA-5), `this`-state, per-clause trust, exceptional postconditions (the throw-vacuous LSP hole above).
 
+---
+
+## DEC-034 — Fuzzing Phase B: the full postcondition oracle, both bands, no drift
+**Status:** ACCEPTED · builds `next-phase-plan.md` Item 1 · advances IDEA-3/IDEA-4 · stays in `@adorn/test` (DEC-019)
+
+**Context.** Phase A (DEC-031) shipped a *weak invariant* oracle — generate precondition-valid inputs, run, assert doesn't-throw + field-invariant preservation — because no postcondition existed to compare against. DEC-032 (`@Ensures`) and DEC-033 (`@Returns`) closed that gap; Phase B wires the fuzzer to them.
+
+**Decisions.**
+- **The oracle checks both postcondition bands through the EXACT functions enforcement runs** — the reified `@Returns` band via `getEffectiveContract().post` + each `descriptor.predicate` (DEC-033/DEC-010), reified-first, then the `@Ensures` closure band via `getEffectivePostconditions` + `evaluatePostconditions` (DEC-032). The oracle the fuzzer *checks* is byte-for-byte the oracle enforcement *enforces* — **the no-drift guarantee, made executable**: a pinned test asserts the fuzzer's shrunk counterexample makes the installed wrapper throw, and that over a grid `enforcedThrows(input) ⇔ oracle flags input`.
+- **Auto oracle-mode**: `'postcondition'` when either band is non-empty, else the Phase A `'weak-invariant'` floor — which still runs underneath (layering, not replacement; IDEA-4/Q-3). A no-postcondition method is bit-for-bit Phase A.
+- **Async** via `fc.asyncProperty`, awaiting the settled value (mirroring the installer's `isThenable` branch); a rejection is a robustness finding (async twin of a throw). Sync `fuzzMethod` **declines** a thenable-returning method loudly rather than checking the Promise object. `fuzzClassAsync` awaits **sequentially** — see the suppression note.
+- **Obtaining the settled value — the one subtlety.** The fuzzer runs the real `@Contract()`-installed method; under the default policy the wrapper itself throws on a postcondition violation, denying the driver the value it must check independently. So a postcondition-mode run **suppresses assert-trust enforcement** for its duration (`setAssertEnforcement(false)`, restored in `finally`; postconditions are fixed at `assert`), making the wrapper return the raw value un-post-checked. Precondition **guard** enforcement is untouched (the Phase A `contract-violation` finding is preserved). Because the toggle is process-wide, class fuzzing runs sequentially, not `Promise.all`.
+- **Counterexamples redact by default** (DEC-030) — values render through `shouldDiscloseValue(false)`/`REDACTED`, and the report prints fast-check's **seed + shrink path** as the value-free replay coordinate.
+
+**Consequences.**
+- The add-on now imports four `src/Core` internals not on the public root surface — `Descriptor` (`ConstraintDescriptor`), `ContractRegistry`, `redaction` (`REDACTED`/`shouldDiscloseValue`), and `Configuration` (`getAssertEnforcement`, whose setter alone is public). Consistent with the Phase A pattern and fine **in-repo**, but a **publishing-time coupling**: extracting `@adorn/test` as a real package needs these made public (a Q-6 decision) or deep-import handling. Logged against GAP-11.
+- Deferred as Phase C, not attempted (avoids IDEA-6 scope creep): a custom-generator registry, a persisted counterexample corpus, and discovery of nullary pure-`@Ensures` methods (closures live in a parallel band `getContractsForClass` does not surface, so Phase B relies on such methods also carrying a constrained parameter — the realistic case).
+

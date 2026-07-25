@@ -19,6 +19,10 @@
 
 import {FuzzResult} from './oracle';
 import {GenerationStrategy, ParameterArbitrary} from './arbitraries';
+// The same disclosure discipline core uses (DEC-030). A fuzz report is an adorn emission, so the
+// counterexample redacts by default and the value-free seed/path carries replay instead — the raw
+// value returns only under setValueDisclosure('all'), and @Sensitive would still veto (via the switch).
+import {REDACTED, shouldDiscloseValue} from '../../src/Core/redaction';
 
 export interface FuzzReportOptions {
     /** The enumeration basis — how the fuzzed set was chosen — so the report states its own limits. */
@@ -37,8 +41,8 @@ export function formatFuzzReport(
     const batch = Array.isArray(results) ? results : [results];
     const lines: string[] = [];
 
-    lines.push('adorn fuzzing report (weak invariant oracle — Phase A)');
-    lines.push('======================================================');
+    lines.push('adorn fuzzing report (contract oracle — Phase B)');
+    lines.push('================================================');
     if (options.basis) lines.push(`Scope: ${options.basis}`);
     lines.push('');
 
@@ -52,9 +56,10 @@ export function formatFuzzReport(
     const declined = batch.filter(r => r.declined);
     const findings = fuzzed.filter(r => !r.passed);
 
+    // The oracle is named per method (a batch can mix modes), not once for the batch: a method with a
+    // postcondition ran the postcondition oracle, one without ran only the weak-invariant floor.
     lines.push(
-        `Fuzzed ${fuzzed.length} method(s); declined ${declined.length}; ` +
-            `findings ${findings.length}. Oracle: weak-invariant.`,
+        `Fuzzed ${fuzzed.length} method(s); declined ${declined.length}; findings ${findings.length}.`,
     );
 
     for (const result of batch) {
@@ -86,15 +91,20 @@ function renderMethod(result: FuzzResult): string[] {
     }
 
     if (result.passed) {
-        lines.push(
-            `- ${header}: clean — ${result.numRuns} cases, no crash and no field-invariant break` +
-                (result.seed !== undefined ? ` (seed ${result.seed})` : ''),
-        );
+        lines.push(...renderClean(header, result));
     } else {
         const f = result.finding!;
         lines.push(`- ${header}: FOUND (${f.type}) — ${f.message}`);
+        if (f.postconditionDescription) {
+            lines.push(`    broke postcondition: ${f.postconditionDescription}`);
+        }
+        // The counterexample redacts by default (DEC-030); the value-free seed+path is the replay handle.
         lines.push(`    counterexample: ${formatArgs(f.counterexample)}`);
-        lines.push(`    reproduce: seed ${f.seed}${f.numShrinks ? `, shrunk ${f.numShrinks}×` : ''}`);
+        lines.push(
+            `    reproduce: seed ${f.seed}` +
+                (f.path ? `, path ${f.path}` : '') +
+                (f.numShrinks ? `, shrunk ${f.numShrinks}×` : ''),
+        );
     }
 
     lines.push(...renderCoverage(result.coverage, '    '));
@@ -104,6 +114,26 @@ function renderMethod(result: FuzzResult): string[] {
         lines.push('    invariants re-checked: none (class declares no field contracts)');
     }
     return lines;
+}
+
+/**
+ * The clean line, worded so it never over-claims. A postcondition-mode run must say *which*
+ * postconditions it checked (`oraclesChecked`) or a green result over-reads (foundation §8, DEC-028
+ * pt 3). A weak-mode run keeps saying "no crash and no field-invariant break — NOT correctness".
+ */
+function renderClean(header: string, result: FuzzResult): string[] {
+    const seed = result.seed !== undefined ? ` (seed ${result.seed})` : '';
+    if (result.oracle === 'postcondition') {
+        const checked =
+            result.oraclesChecked.length > 0 ? result.oraclesChecked.join('; ') : '(none named)';
+        return [
+            `- ${header}: clean — ${result.numRuns} cases; postcondition oracle, guarantees held: ${checked}${seed}`,
+        ];
+    }
+    return [
+        `- ${header}: clean — ${result.numRuns} cases, no crash and no field-invariant break` +
+            ` (weak-invariant oracle — NOT correctness)${seed}`,
+    ];
 }
 
 /**
@@ -161,7 +191,14 @@ function describeStrategy(plan: ParameterArbitrary): string {
 // ---------------------------------------------------------------------------
 
 function formatArgs(args: ReadonlyArray<unknown>): string {
-    return `[${args.map(safeRender).join(', ')}]`;
+    // Redact every counterexample value by default (DEC-030). The generated input is reproducible from
+    // the seed+path printed on the reproduce line, so a redacted report stays fully replayable without
+    // leaking argument values; setValueDisclosure('all') shows them for local debugging.
+    return `[${args.map(renderArg).join(', ')}]`;
+}
+
+function renderArg(value: unknown): string {
+    return shouldDiscloseValue(false) ? safeRender(value) : REDACTED;
 }
 
 function safeRender(value: unknown): string {

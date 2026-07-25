@@ -60,6 +60,9 @@ describe('the runtime export surface is unchanged by the add-on', () => {
         const addonNames = [
             'fuzzMethod',
             'fuzzClass',
+            // Phase B's async twins (DEC-034) live ONLY in addons/test — the root surface is unchanged.
+            'fuzzMethodAsync',
+            'fuzzClassAsync',
             'formatFuzzReport',
             'arbitraryForConstraint',
             'arbitraryForParameter',
