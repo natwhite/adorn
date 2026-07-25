@@ -720,3 +720,24 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Why it matters.** This is DEC-025/DEC-030 applied to telemetry: adorn secures **its own** emissions. Seeing a value (to time it, to end a span) is not the same act as emitting it (to a telemetry backend), and only the second is disclosure-gated. Recording it as a principle, not just a code path, so O1c/O1d and the future OTel adapter inherit it rather than re-deciding it.
 
+---
+
+## DEC-037 — O1c + O1d: the shared disclosure resolver and telemetry projection (completes O1)
+**Status:** ACCEPTED · completes DEC-035 (O1a–O1d all shipped) · realizes DEC-036 in code
+
+**Context.** O1a/O1b gave the payload *channel*; O1c/O1d give the developer *surface* and the *projection*.
+
+**Decisions (O1c — the surface).**
+- **`@Observe(options?)`** is thin sugar over one `MethodBehavior`: it opens a scope and emits `scope`+`completed` via the installed sink, using `settle` for the raw-outcome path (as `@Time` does); `options.kind` sets `SpanKind` (default `internal`). **`Telemetry`** is the value-disclosure opt-in band (`.value()`/`.redact(strategy)`/`.result()`) — record-only, the `@Sensitive` twin; `.redact` ships `type`/`length` and refuses deferred strategies loudly. **`setObservationVerbosity`** (Fr3) and a zero-dep **`consoleObservationSink`** round out the surface.
+- **One disclosure resolver (`Core/telemetryDisclosure.ts`), decorator-agnostic.** A single function composes `@Sensitive` (veto) + `@Telemetry` (opt-in) + `getValueDisclosure()` (global) into a `ParameterDisclosure` decision, and **both the emitter and the O1d projection call it** — so what a value discloses at runtime and what the report claims about it cannot drift. This is DEC-006's no-drift discipline (descriptor→predicate) extended to disclosure.
+- **The `@Sensitive`-vetoes-an-explicit-`@Telemetry.value()` collision is surfaced, not silent** (Q-24's paternalism corner): the value still redacts (veto wins, DEC-025), and the conflict shows up three ways — an `EmittedValue.vetoed` flag, a one-shot dev diagnostic (`reportDiagnostic`), and a distinct projection row state.
+
+**Decisions (the double-emit reconciliation — the one weave change).** `@Observe` stamps its wrapper with an `OBSERVED_COMPLETION` marker; at **install time** enforcement reads `ownsCompletion(original)` and suppresses **only its own `{kind:'completed'}` emit** (`observeCompletions = observing && !observed`), deferring to `@Observe`'s richer completion. **Violations always still emit** (gated on `observing`, not `observeCompletions`); the check flow, `proceed()`-outside-`try`, throw behaviour, and the Fuzzing-Phase-B no-drift are byte-for-byte unchanged. Pinned: a `@Contract`+`@Observe` call emits `completed` exactly once, one `scope`, still enforces, still emits its violation.
+
+**Decisions (O1d — the projection).** `Projections/telemetry.ts` (`telemetryForClass`/`telemetryForContracts`/`serializeTelemetry`/`generateTelemetryReport` + `TelemetryReport`) reports **what leaves the process**: per-position disclosure state across contract *and* telemetry-marked methods, rendering its scanned denominator and making **no runtime-flow claim** (no false-confidence mode). Pure registry read (DEC-012, guarded by an imports test) — satisfies IDEA-10(a)'s "emission-position report".
+
+**Consequences.**
+- **O1 (DEC-035) is COMPLETE** — O1a–O1d shipped; runtime deps stay `{tslib}`, the OTel binding remains the separate `@adorn/otel` add-on.
+- Q-24 → **RESOLVED/BUILT** end-to-end; IDEA-10(a) third item satisfied; Q-6's frozen surface grows by `TelemetryReport`/`ObserveOptions`/`ObservationVerbosity` (the telemetry-band registry reads stay internal).
+- Deferred, per the plan: the `@Log` → `{kind:'message'}` rebase (sequenced last, not required here — `@Log` untouched); `.redact` deferred strategies; Fr1 (name-hatch). Q-23's *return* veto still only arrives via class-level `@Sensitive` (a return cannot be directly `@Sensitive` — TS signature limit), unchanged.
+

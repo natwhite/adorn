@@ -181,6 +181,19 @@ export function setContractDiagnosticsSink(next: DiagnosticSink | null): void {
 }
 
 /**
+ * Emit a one-off development-mode diagnostic through the same sink the missing-`@Contract()` warning
+ * uses (O1c, DEC-036 / Q-24 R8). Used to *surface, not silently nullify*, an `@Sensitive` veto of an
+ * explicit `@Telemetry.value()` opt-in: the value stays redacted (safe-by-default is non-negotiable for
+ * PII, DEC-025), but the collision is announced rather than swallowed — the paternalism corner the
+ * adversarial review flagged (Fr2). Silenced in production and when diagnostics are disabled, exactly as
+ * the missing-`@Contract()` warning is; guarded so a diagnostic never becomes the failure it reports.
+ */
+export function reportDiagnostic(message: string): void {
+    if (!diagnosticsActive()) return;
+    emit(message);
+}
+
+/**
  * Turn the diagnostic off entirely.
  *
  * Note this is an escape hatch for noise, not a correctness switch: silencing the warning does not

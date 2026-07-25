@@ -69,6 +69,32 @@ export type SpanKind = 'internal' | 'server' | 'client' | 'producer' | 'consumer
 /** Sentinel index for the return value in an {@link EmittedValue}. Parameters are index `>= 0`. */
 export const RETURN_INDEX = -1;
 
+/**
+ * Marker set by `@Observe` on the wrapper it installs, so the enforcement weave can detect — at install
+ * time, once, with zero per-call cost — that an *inner* `@Observe` already owns the `{kind:'completed'}`
+ * emit for this method (plan §5 wrapper-unification). A `@Contract()`+`@Observe()` method installs two
+ * wrappers; without this both would emit `completed`, so enforcement reads this marker off the method it
+ * is about to wrap and **suppresses its own** completed emit, deferring to `@Observe`'s richer completion
+ * (which carries the `scope` and the pre-disclosed `values`). It changes NO contract-check semantics —
+ * violations still emit, checks still run, throws still propagate — only which wrapper reports settlement.
+ */
+export const OBSERVED_COMPLETION: unique symbol = Symbol('adorn.observation.ownsCompletion');
+
+/** Whether `fn` is an `@Observe` wrapper that already owns the `completed` emit (see {@link OBSERVED_COMPLETION}). */
+export function ownsCompletion(fn: unknown): boolean {
+    return typeof fn === 'function' && (fn as any)[OBSERVED_COMPLETION] === true;
+}
+
+/** Stamp `fn` as the `completed`-emit owner. Called by `@Observe` on its installed wrapper. */
+export function markOwnsCompletion(fn: Function): void {
+    Object.defineProperty(fn, OBSERVED_COMPLETION, {
+        value: true,
+        enumerable: false,
+        writable: false,
+        configurable: true,
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Install-time facts of an instrumented method
 // ---------------------------------------------------------------------------

@@ -117,12 +117,28 @@ export type ViolationPolicy = 'throw' | 'warn' | ViolationHandler;
  */
 export type AssertEnforcement = boolean | 'auto';
 
+/**
+ * How much observation a host wants (O1c, DEC-035). Two values only, not the DEC-008 trust ladder:
+ *
+ * - `'normal'` — the default. Only sites declared `detail: 'always'` emit (a boundary worth production
+ *   emission). This is what `@Observe()` gives by default.
+ * - `'detailed'` — additionally emit sites declared `detail: 'detail'` (e.g. `@Observe({detail:'detail'})`).
+ *
+ * It is a knob included on principle — OTel's own guidance is "verbose spans behind a disabled-by-default
+ * option" — and gates emission below "is a sink installed?": a `'detail'` site under `'normal'` verbosity
+ * is silent even with a sink installed.
+ */
+export type ObservationVerbosity = 'normal' | 'detailed';
+
+const DEFAULT_VERBOSITY: ObservationVerbosity = 'normal';
+
 interface ConfigurationState {
     mode: EnforcementMode | 'auto';
     guard: boolean;
     assert: AssertEnforcement;
     defaultTrust: ContractTrust;
     onViolation: ViolationPolicy;
+    observationVerbosity: ObservationVerbosity;
 }
 
 function initialState(): ConfigurationState {
@@ -132,6 +148,7 @@ function initialState(): ConfigurationState {
         assert: 'auto',
         defaultTrust: DEFAULT_TRUST,
         onViolation: 'throw',
+        observationVerbosity: DEFAULT_VERBOSITY,
     };
 }
 
@@ -259,6 +276,29 @@ export function resolveTrust(options?: TrustOptions): ContractTrust {
         return options.trust;
     }
     return state.defaultTrust;
+}
+
+// ---------------------------------------------------------------------------
+// Observation verbosity (O1c, DEC-035)
+// ---------------------------------------------------------------------------
+
+/**
+ * Set the process-wide observation verbosity (see {@link ObservationVerbosity}). Ships `'normal'`, so a
+ * `detail`-level observation is silent until a host opts into `'detailed'`. Read live by the observation
+ * behaviour, so a change takes effect immediately.
+ */
+export function setObservationVerbosity(verbosity: ObservationVerbosity): void {
+    if (verbosity !== 'normal' && verbosity !== 'detailed') {
+        throw new TypeError(
+            `setObservationVerbosity: verbosity must be 'normal' or 'detailed', received ${String(verbosity)}`,
+        );
+    }
+    state.observationVerbosity = verbosity;
+}
+
+/** The current observation verbosity. Read live by `observeBehavior`'s detail gate. */
+export function getObservationVerbosity(): ObservationVerbosity {
+    return state.observationVerbosity;
 }
 
 // ---------------------------------------------------------------------------

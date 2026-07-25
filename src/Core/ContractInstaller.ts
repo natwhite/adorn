@@ -101,6 +101,7 @@ import {
     Observation,
     ObservationEvent,
     ObservationSink,
+    ownsCompletion,
     RETURN_INDEX,
     ViolationFacts,
 } from './Observation';
@@ -201,8 +202,11 @@ export function Validate(options?: TrustOptions): MethodDecorator {
             return descriptor;
         }
 
+        // If an INNER `@Observe` already owns the `{kind:'completed'}` emit, enforcement must not emit a
+        // second one (plan §5). Detected here off the method being wrapped — zero per-call cost.
+        const observed = ownsCompletion(original);
         const decorate = CreateMethodDecorator(
-            enforcementBehavior(enforce, posts, returns, target, propertyKey, trust),
+            enforcementBehavior(enforce, posts, returns, target, propertyKey, trust, observed),
         );
         const result = decorate(target, propertyKey, descriptor as any) || descriptor;
 
@@ -310,7 +314,10 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
     const returns = getEffectiveReturnConstraints(host, key);
     if (!enforce && posts.length === 0 && returns.length === 0) return;
 
-    installMethodWrapper(host, key, enforcementBehavior(enforce, posts, returns, host, key, trust));
+    // An inner `@Observe` (applied before the class decorator ran) already owns the completed emit;
+    // enforcement then defers its own so the sink sees `completed` once (plan §5). Zero per-call cost.
+    const observed = ownsCompletion(original);
+    installMethodWrapper(host, key, enforcementBehavior(enforce, posts, returns, host, key, trust, observed));
     noteInstalled(host, key);
 }
 
@@ -375,6 +382,7 @@ function enforcementBehavior(
     host: object,
     key: MethodKey,
     trust: ContractTrust,
+    observed: boolean = false,
 ): MethodBehavior {
     const owner = ownerNameOf(host);
     const member = typeof key === 'symbol' ? key.toString() : String(key);
@@ -406,10 +414,15 @@ function enforcementBehavior(
         const sink = getObservationSink();
         const observing = sink !== NOOP_SINK;
         // Emitter for a postcondition-band violation, or `undefined` when unobserved so the check
-        // functions run byte-for-byte as before. Allocated only when a sink is installed.
+        // functions run byte-for-byte as before. Allocated only when a sink is installed. Violations
+        // always emit while observing — they are never suppressed by the completed-emit reconciliation.
         const observeViolation = observing
             ? (facts: ViolationFacts, error: unknown) => emitViolation(sink, siteObservation, facts, error)
             : undefined;
+        // Whether THIS wrapper owns the `{kind:'completed'}` emit. Suppressed when an inner `@Observe`
+        // already owns it (plan §5) — the sole thing `observed` changes; checks and violations are
+        // untouched, so contract semantics and the Fuzzing-Phase-B no-drift behaviour are preserved.
+        const observeCompletions = observing && !observed;
 
         // --- preconditions ---------------------------------------------------
         if (enforce && shouldEnforce(trust)) {
@@ -436,7 +449,7 @@ function enforcementBehavior(
 
         // Nothing to check after the call, or postconditions are stripped in this build.
         if (!hasPostChecks || !shouldEnforce(POSTCONDITION_TRUST)) {
-            if (!observing) return proceed();
+            if (!observeCompletions) return proceed();
             // proceed() stays outside every try; the completion is observed without altering the
             // returned value (a sync throw propagates untouched and is not a completed event here).
             const started = now();
@@ -444,7 +457,7 @@ function enforcementBehavior(
             return observeCompletion(sink, siteObservation, started, result);
         }
 
-        const started = observing ? now() : 0;
+        const started = observeCompletions ? now() : 0;
         // Outside the try — see the header. A method throw skips postconditions and propagates.
         const result = proceed();
 
@@ -460,7 +473,7 @@ function enforcementBehavior(
                 return value;
             });
             // Observe the settled outcome of the checked promise without changing what is returned.
-            if (observing) observeSettledPromise(sink, siteObservation, started, checked);
+            if (observeCompletions) observeSettledPromise(sink, siteObservation, started, checked);
             return checked;
         }
 
@@ -468,7 +481,7 @@ function enforcementBehavior(
         // DEC-019; real settling is deferred, plan §5).
         checkReturnConstraints(returns, result, calleeSite, observeViolation);
         checkPostconditions(posts, result, context.args, calleeSite, observeViolation);
-        if (observing) emitCompleted(sink, siteObservation, now() - started, 'returned', true);
+        if (observeCompletions) emitCompleted(sink, siteObservation, now() - started, 'returned', true);
         return result;
     };
 }

@@ -217,6 +217,36 @@ export interface SensitivityMarking {
     readonly level: SensitivityLevel;
 }
 
+/**
+ * What a `@Telemetry` declaration opts a value INTO on the observation `record` path (O1c, DEC-036).
+ *
+ * - `'value'` — emit the value itself (`@Telemetry.value()` / `@Telemetry.result()`).
+ * - `{redact: strategy}` — emit a derived surrogate (`@Telemetry.redact('type'|'length')`). The
+ *   strategy names its own behaviour, so — as with a {@link ConstraintDescriptor} — it cannot document
+ *   one transform and apply another (DEC-010 spirit): `redact('type')` emits the type, always.
+ *
+ * Deny-by-default is NOT a value here: the *absence* of a marking is the default, resolved to `'deny'`
+ * by the disclosure resolver. A recorded marking is always an explicit opt-in.
+ */
+export type TelemetryDisclosure = 'value' | {readonly redact: string};
+
+/**
+ * A **record-only** telemetry-disclosure marking on a parameter or a return (O1c, DEC-036). The exact
+ * twin of {@link SensitivityMarking}: own-scoped, index-keyed (hence minification-safe),
+ * decorator-agnostic (DEC-012), and it installs nothing. It is the per-parameter production opt-in
+ * DEC-030's global switch deliberately did not provide — reviewable and local to the position it
+ * governs. `@Sensitive` still vetoes it (the veto only ever *removes* disclosure).
+ */
+export interface TelemetryMarking {
+    readonly disclose: TelemetryDisclosure;
+    /**
+     * Explicit name for minified builds (DEC-OBS-4): `@Telemetry.value('accountId')`. When present it
+     * overrides the recovered parameter name, which degrades to a single letter under minification in
+     * exactly the production build where telemetry matters.
+     */
+    readonly name?: string;
+}
+
 // --- internal mutable twins -------------------------------------------------
 
 interface MutableParameterContract {
@@ -284,6 +314,19 @@ let parameterSensitivityByTarget = new WeakMap<
 
 /** Class-level sensitivity — `@Sensitive` on a class marks the whole type (and its subclasses). */
 let classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
+
+/**
+ * The telemetry-disclosure band (O1c, DEC-036) — the exact twin of {@link parameterSensitivityByTarget}.
+ * Own-scoped and index-keyed, so a subclass conjoins rather than un-marks, and minification cannot break
+ * the keying. Record-only: no key here ever causes an installer to attach anything.
+ */
+let parameterTelemetryByTarget = new WeakMap<
+    ContractTarget,
+    Map<MethodKey, Map<number, TelemetryMarking>>
+>();
+
+/** Return telemetry: target → method key → marking (`@Telemetry.result()`). The disclosure-side of Q-23. */
+let returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
 
 let classEnumerationEnabled = true;
 
@@ -1241,6 +1284,57 @@ export function recordClassSensitivity(constructor: Function, marking: Sensitivi
     classSensitivityByTarget.set(constructor, marking);
 }
 
+// --- telemetry-disclosure band writes (O1c, DEC-036) -----------------------
+//
+// Record-only, exactly like the sensitivity band above: none of these install anything or touch an
+// enforcement band. Own-scoped, so there is no write API that reaches an ancestor — a subclass can only
+// add its own opt-in, never remove an inherited one.
+
+/** Record that parameter `index` of `target[key]` opts its value into telemetry. Index-keyed. */
+export function recordParameterTelemetry(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+    marking: TelemetryMarking,
+): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('recordParameterTelemetry: target must be an object (a prototype or constructor)');
+    }
+    if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
+        throw new TypeError(
+            `recordParameterTelemetry: parameter index must be a non-negative integer, received ${String(index)}`,
+        );
+    }
+    let methods = parameterTelemetryByTarget.get(target);
+    if (!methods) {
+        methods = new Map<MethodKey, Map<number, TelemetryMarking>>();
+        parameterTelemetryByTarget.set(target, methods);
+    }
+    let params = methods.get(key);
+    if (!params) {
+        params = new Map<number, TelemetryMarking>();
+        methods.set(key, params);
+    }
+    params.set(index, marking);
+}
+
+/** Record that the return of `target[key]` opts into telemetry (`@Telemetry.result()`). */
+export function recordReturnTelemetry(
+    target: ContractTarget,
+    key: MethodKey,
+    marking: TelemetryMarking,
+): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('recordReturnTelemetry: target must be an object (a prototype or constructor)');
+    }
+    let methods = returnTelemetryByTarget.get(target);
+    if (!methods) {
+        methods = new Map<MethodKey, TelemetryMarking>();
+        returnTelemetryByTarget.set(target, methods);
+    }
+    methods.set(key, marking);
+}
+
 // --- sensitivity band reads (DEC-PII-1/2) ----------------------------------
 
 /** The marking declared **directly** on `target[key]`, or `undefined`. Own-scoped. */
@@ -1315,6 +1409,98 @@ export function getEffectiveClassSensitivity(constructor: Function): Sensitivity
     return undefined;
 }
 
+// --- telemetry-disclosure band reads (O1c, DEC-036) ------------------------
+
+/** The marking on parameter `index` of `target[key]`, or `undefined`. Own-scoped. */
+export function getParameterTelemetry(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): TelemetryMarking | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const params = parameterTelemetryByTarget.get(target)?.get(key);
+    return params ? params.get(index) : undefined;
+}
+
+/**
+ * The marking **in force** on parameter `index` of `target[key]`, honouring inheritance: the nearest
+ * declaration on the prototype chain wins (a subclass may add its own opt-in; it cannot un-mark an
+ * inherited one). The read the disclosure resolver and the privacy projection both use.
+ */
+export function getEffectiveParameterTelemetry(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): TelemetryMarking | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const own = parameterTelemetryByTarget.get(cursor)?.get(key)?.get(index);
+        if (own) return own;
+    }
+    return undefined;
+}
+
+/** The return marking declared directly on `target[key]`, or `undefined`. Own-scoped. */
+export function getReturnTelemetry(target: ContractTarget, key: MethodKey): TelemetryMarking | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const methods = returnTelemetryByTarget.get(target);
+    return methods ? methods.get(key) : undefined;
+}
+
+/** The return marking **in force** on `target[key]`, honouring inheritance (nearest declaration wins). */
+export function getEffectiveReturnTelemetry(
+    target: ContractTarget,
+    key: MethodKey,
+): TelemetryMarking | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const own = returnTelemetryByTarget.get(cursor)?.get(key);
+        if (own) return own;
+    }
+    return undefined;
+}
+
+/**
+ * Parameter indices carrying a telemetry marking on `target[key]`, own-scoped. The privacy projection
+ * unions these with the constraint band's parameter indices, so a parameter that opted its value in via
+ * `@Telemetry.value()` but carries no *constraint* is still reported — otherwise a value could leave the
+ * process without appearing in the "what leaves the process" table (the DEC-016 asymmetry).
+ */
+export function getTelemetryParameterIndices(target: ContractTarget, key: MethodKey): number[] {
+    if (!isRegisterableTarget(target)) return [];
+    const params = parameterTelemetryByTarget.get(target)?.get(key);
+    if (!params) return [];
+    const indices: number[] = [];
+    params.forEach((_marking, index) => indices.push(index));
+    return indices;
+}
+
+/**
+ * Method keys carrying **any** telemetry marking (parameter or return) on a class, from both key bands —
+ * instance members on the prototype, statics on the constructor. The privacy projection unions these
+ * with {@link getContractsForClass} so a telemetry-marked method with no contract is not silently
+ * dropped from the "what leaves the process" table.
+ */
+export function getTelemetryMethodKeysForClass(
+    constructor: Function,
+): Array<{key: MethodKey; isStatic: boolean; target: ContractTarget}> {
+    if (typeof constructor !== 'function') {
+        throw new TypeError('getTelemetryMethodKeysForClass: expected a constructor function');
+    }
+    const out: Array<{key: MethodKey; isStatic: boolean; target: ContractTarget}> = [];
+    const collect = (target: ContractTarget, isStatic: boolean) => {
+        const seen = new Set<MethodKey>();
+        const paramMethods = parameterTelemetryByTarget.get(target);
+        if (paramMethods) paramMethods.forEach((_params, key) => seen.add(key));
+        const returnMethods = returnTelemetryByTarget.get(target);
+        if (returnMethods) returnMethods.forEach((_marking, key) => seen.add(key));
+        seen.forEach(key => out.push({key, isStatic, target}));
+    };
+    if (constructor.prototype) collect(constructor.prototype, false);
+    collect(constructor, true);
+    return out;
+}
+
 /**
  * Add a class to the enumerable registry. Called by the `@Contract()` installer (P1.3) — *not* by
  * constraint recording, so `getContractedClasses()` reports exactly the classes that were
@@ -1375,6 +1561,11 @@ export function resetRegistry(): void {
         Map<MethodKey, Map<number, SensitivityMarking>>
     >();
     classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
+    parameterTelemetryByTarget = new WeakMap<
+        ContractTarget,
+        Map<MethodKey, Map<number, TelemetryMarking>>
+    >();
+    returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
     classEnumerationEnabled = true;
 }
 

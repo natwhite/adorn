@@ -26,6 +26,15 @@ import {Log} from './src/MethodDecorators/Log';
 import {Time, setTimingSink} from './src/MethodDecorators/Time';
 import {Ensures} from './src/MethodDecorators/Ensures';
 import {Returns} from './src/MethodDecorators/Returns';
+import {Observe} from './src/MethodDecorators/Observe';
+export type {ObserveOptions} from './src/MethodDecorators/Observe';
+
+// --- Telemetry disclosure opt-in (O1c, DEC-036) ---------------------------
+// Record-only, the twin of @Sensitive: @Telemetry.value()/.redact()/.result() opt a parameter or the
+// return INTO value disclosure on the observation `record` path (redacted-by-default otherwise). It does
+// NOT emit or install — the rendering is @Observe's job, gated by the shared disclosure resolver.
+// @Sensitive still vetoes, and the veto is surfaced (a diagnostic + a `vetoed` flag), not silenced.
+import {Telemetry} from './src/Telemetry/Telemetry';
 
 // --- Installation & diagnostics -------------------------------------------
 import {Contract, Validate} from './src/Core/ContractInstaller';
@@ -36,19 +45,21 @@ import {
 } from './src/Core/ContractDiagnostics';
 
 // --- Enforcement configuration (DEC-008) ----------------------------------
-// Grouped by line: the mode/trust setters, then the guard controls.
+// Grouped by line: the mode/trust setters, then the guard controls, then the O1c verbosity dial.
 // prettier-ignore
 import {
     setEnforcementMode, setAssertEnforcement, setDefaultTrust,
     disableGuardEnforcement, enableGuardEnforcement, setViolationPolicy,
+    setObservationVerbosity,
 } from './src/Core/Configuration';
+export type {ObservationVerbosity} from './src/Core/Configuration';
 
 // --- Value disclosure (DEC-030) -------------------------------------------
 // adorn's own emissions (@Log, violation messages) redact values by default; this is the
 // opt-in to turn them back on for local debugging. @Sensitive always vetoes (DEC-025).
 import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 
-// --- Observability (O1a): the neutral observation seam (DEC-035, DEC-036) --
+// --- Observability (O1): the neutral observation seam (DEC-035, DEC-036) ---
 // A settable, around-shaped sink and the shared settle() classifier. ZERO third-party deps:
 // this is the neutral layer that ENDS where OpenTelemetry begins; the @adorn/otel adapter
 // (DEC-019) is a separate future add-on and is NOT built here. `RETURN_INDEX` marks the return
@@ -56,6 +67,8 @@ import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 // neither the sentinel nor the typed error (facts arrive through the sink, not by catching).
 import {setObservationSink, getObservationSink, RETURN_INDEX} from './src/Core/Observation';
 import {settle} from './src/Core/settle';
+// O1c: a ready-made zero-dependency JSON-to-console sink (opt-in; never installed automatically).
+import {consoleObservationSink} from './src/Core/ObservationBehavior';
 
 // --- Registry introspection (Q-6: this surface is now semver-relevant) -----
 // Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,
@@ -83,6 +96,14 @@ export type {PostconditionResult} from './src/Core/Postconditions';
 // --- Projections ----------------------------------------------------------
 import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
 import {schemaForClass, schemaForContracts, serializeSchema, generateSchema} from './src/Projections/schema';
+// O1d: the "what leaves the process" privacy-review projection — the sixth projection. A pure registry
+// read (DEC-012), it reports the disclosure each parameter/return carries and renders its own scanned
+// denominator (a clean table is never a clean bill of health). It makes no claim about runtime flows.
+// prettier-ignore
+import {
+    telemetryForClass, telemetryForContracts, serializeTelemetry, generateTelemetryReport,
+} from './src/Projections/telemetry';
+export type {TelemetryReport} from './src/Projections/telemetry';
 
 // The projection's model types, so a consumer can actually type a variable holding one.
 // `ClassDoc.fields` is deliberately required, not optional: an optional band is one a future
@@ -146,6 +167,13 @@ export {
 
     // Method decorators
     Log, Time, setTimingSink,
+    // @Observe (O1c) — span + duration + disclosed-value observability sugar over the shared
+    // ObservationBehavior; carries the declared SpanKind ({kind}, default 'internal') and the detail dial.
+    Observe,
+
+    // @Telemetry (O1c) — the per-parameter/return value-disclosure opt-in on the observation record path.
+    // Record-only (the @Sensitive twin): .value()/.redact(strategy)/.result(). @Sensitive vetoes, surfaced.
+    Telemetry,
 
     // Postconditions (DEC-032). `@Ensures` records; `@Contract()`/`@Validate()` installs. Runs
     // after the method returns — a throw skips, async awaits-then-checks, inheritance conjoins
@@ -183,19 +211,23 @@ export {
 
     // Enforcement configuration. `guard` contracts survive production; `assert` contracts are
     // stripped by default. Guards are only removable via disableGuardEnforcement({confirm, reason}).
+    // `setObservationVerbosity` (O1c) is the 'normal'|'detailed' dial gating `detail`-level observations.
     setEnforcementMode, setAssertEnforcement, setDefaultTrust,
     disableGuardEnforcement, enableGuardEnforcement, setViolationPolicy,
+    setObservationVerbosity,
 
     // Value disclosure (DEC-030). @Log and violation messages redact values by default;
     // setValueDisclosure('all') opts in for local debugging. @Sensitive always vetoes.
     setValueDisclosure, getValueDisclosure,
 
-    // Observability (O1a). Install one around-shaped ObservationSink and read it; the enforcement
-    // weave then emits value-free violation facts + completions through it (redacted by default —
-    // "seeing ≠ emitting"). `settle` is the shared sync/thenable/observable settling classifier @Time
-    // now rides and an @adorn/otel adapter (DEC-019) ends spans with. `RETURN_INDEX` marks the return
-    // value in an EmittedValue. NOOP_SINK / ViolationError stay internal.
-    setObservationSink, getObservationSink, settle, RETURN_INDEX,
+    // Observability (O1). Install one around-shaped ObservationSink and read it; the enforcement weave
+    // emits value-free violation facts + completions through it, and @Observe (O1c) opens the scope and
+    // emits completions carrying the pre-disclosed values (redacted by default — "seeing ≠ emitting").
+    // `settle` is the shared sync/thenable/observable settling classifier @Time now rides and an
+    // @adorn/otel adapter (DEC-019) ends spans with. `RETURN_INDEX` marks the return value in an
+    // EmittedValue. `consoleObservationSink` is a ready-made zero-dep JSON-to-console sink (opt-in; never
+    // installed automatically). NOOP_SINK / ViolationError stay internal.
+    setObservationSink, getObservationSink, settle, RETURN_INDEX, consoleObservationSink,
 
     // Registry introspection — what the projections read
     getContracts, getContract, getContractedClasses, getContractsForClass,
@@ -223,6 +255,11 @@ export {
 
     // Projections: JSON Schema (draft 2020-12) generated from recorded contracts
     schemaForClass, schemaForContracts, serializeSchema, generateSchema,
+
+    // Projections: telemetry disclosure (O1d) — the "what leaves the process" privacy-review table.
+    // A pure registry read (DEC-012) that reports the disclosure each position carries and renders its
+    // own scanned denominator; it makes no claim about runtime flows.
+    telemetryForClass, telemetryForContracts, serializeTelemetry, generateTelemetryReport,
 
     // Constraint descriptors (data, not decorators)
     NumberContracts, StringContracts,
