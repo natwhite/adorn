@@ -2,6 +2,8 @@
 
 *Research and design for incorporating OpenTelemetry-compatible observability into adorn. Produced 2026-07-19.*
 
+> **Update (2026-07-25 consolidation).** The concrete O1 build sequence now lives in **`observability-o1-plan.md`**, which treats this document as the ratified design ("does not re-argue the design — settled there") and cites the §7 **DEC-OBS-1…6** entries that exist only here. The **O0 redaction prerequisite is discharged** — safe-by-default redaction shipped as **DEC-030** (see §5.3). This document is retained as the design rationale, the verified OpenTelemetry research corpus (§2), the primary-source bibliography (§10), the unverified-claims ledger (§9), and the home of the DEC-OBS proposals; Observability O1 itself is not yet built (it is on the roadmap in `next-phase-plan.md`). The "Status: proposal" framing below predates the O1 revision.
+
 > **Status: proposal.** Nothing here is implemented and nothing here is ratified. The decision entries in §7 are written in `DECISIONS.md` style but live in this file deliberately — they are proposals, and `DECISIONS.md` is being edited concurrently.
 >
 > **How to read the claims.** Everything in §2 is *verified* against a primary source and linked. Everything in §3 onward is *my recommendation* and is labelled as such. Where I could not confirm something, §9 says so plainly rather than letting it pass as fact.

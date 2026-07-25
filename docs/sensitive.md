@@ -1,6 +1,6 @@
 # adorn — `@Sensitive` and the sensitive-flow detector
 
-*Shipped 2026-07-21. Implements the design ratified in `sensitive-flow-spike.md` §15 (recommendation), governed by DEC-025 (trust boundary), DEC-026 / DEC-027 (the one-pass intraprocedural detector), and DEC-PII-1/2/5 (the marker). This document is the user-facing surface for both pieces.*
+*Shipped 2026-07-21. Implements the design ratified in `sensitive-flow-spike.md` §15 (recommendation), governed by DEC-025 (trust boundary), DEC-026 / DEC-027 (the one-pass intraprocedural detector), DEC-028 (the shipped marker + detector), DEC-030 (safe-by-default redaction), and DEC-PII-1/2/5 (the marker). This document is the user-facing surface for both pieces.*
 
 ---
 
@@ -14,7 +14,7 @@ In the user's words, which set the boundary this whole feature is built to (DEC-
 
 Concretely:
 
-- Marking `User.ssn` as `@Sensitive` lets adorn's own emitters — `@Log`, contract-violation messages, and (later) telemetry — redact it once the redaction runtime lands.
+- Marking `User.ssn` as `@Sensitive` makes adorn's own emitters — `@Log` and contract-violation messages today (DEC-030), telemetry later — keep it redacted **even when raw-value disclosure is switched on** (`setValueDisclosure('all')`). Those emitters already redact every value by default; the marking is the veto that survives an explicit opt-in.
 - A raw ``console.log(`${user.ssn}`)``, a hand-rolled logger, a third-party library that logs its own copy, `JSON.stringify(user)` in your own code — **adorn was never in those call paths, and no library can intercept them.** They are yours.
 
 This is the same boundary an OpenTelemetry instrumentation library draws: it secures the attributes _it_ emits, not your application's `printf`. **Do not let "adorn protects my PII" become the shorthand.** A developer who marks a field and stops thinking is worse off than one who never marked anything, because they have stopped looking (`pii-redaction-plan.md` §11.2).
@@ -23,7 +23,7 @@ This is the same boundary an OpenTelemetry instrumentation library draws: it sec
 
 ## Part 1 — `@Sensitive`, the marker
 
-`@Sensitive` is a **record-only** decorator. It _marks_; it does **not** redact. Redaction (safe-by-default emission from `@Log` and violation messages — BUG-18/BUG-19) is a separate, later piece that will _read_ these markings. Marking a value changes nothing about its runtime behaviour today: a `@Sensitive` field is still an ordinary readable, writable, enumerable, serialisable property.
+`@Sensitive` is a **record-only** decorator: it _marks_, and it installs no accessor. It does **not** transform or hide the value itself — a `@Sensitive` field is still an ordinary readable, writable, enumerable, serialisable property. What reads the marking is the **redaction runtime**, which has since shipped (safe-by-default emission from `@Log` and violation messages — BUG-18/BUG-19, **DEC-030**). That runtime redacts every value adorn emits **by default, without consulting any marking**; a `@Sensitive` marking only ever adds *stronger* protection, by vetoing an explicit `setValueDisclosure('all')` opt-in on the marked site. So the marking is defence-in-depth — never the thing that makes an emission safe.
 
 It applies to **fields, parameters, and classes**:
 

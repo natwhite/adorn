@@ -2,6 +2,8 @@
 
 *Research and design for declaring, propagating and enforcing sensitive-data redaction in adorn. Produced 2026-07-19.*
 
+> **Update (2026-07-25 consolidation).** The **redaction runtime shipped**: safe-by-default emission (`[REDACTED]`, `setValueDisclosure`, `@Sensitive` vetoes) is **DEC-030**, closing BUG-18/BUG-19; the `@Sensitive` marker and the build-time detector are **DEC-028**; the trust boundary is **DEC-025**. `docs/sensitive.md` is the user-facing surface. This document is retained as the **research/rationale record** the shipped work descends from — the precedent survey (§3), the standards analysis (§3.5), the empirical measurements (§4), the rejected `Secret<T>` wrapper (§3.3/§10), and the §12 verification caveats — and it is cited by section from `sensitive.md`, `DECISIONS.md`, `ISSUES.md`, and `sensitive-flow-spike.md`. The "Status: proposal" framing below predates the ship.
+
 > **Status: proposal.** Nothing here is implemented and nothing here is ratified. The decision entries in §13 are written in `DECISIONS.md` style but live in this file deliberately — they are proposals, and `DECISIONS.md` is being edited concurrently.
 >
 > **How to read the claims.** §3 is *research*: everything is labelled **VERIFIED** (I read the primary source and it is linked) or **INFERRED** (it follows from something verified, but no source states it in those words). §4 is *measurement* — experiments I ran in this repo's environment, reproducible from the scripts described. §5 onward is *recommendation*. §12 lists what I could not confirm.

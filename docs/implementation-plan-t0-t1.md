@@ -1,5 +1,7 @@
 # adorn — Implementation Plan: Tier 0 & Tier 1
 
+> **Update (2026-07-25 consolidation).** The Tier 0 / Tier 1 work **shipped** — the reified descriptor model, the contract registry, the `@Contract()`/`@Validate()` installer, the method/parameter/field factories, the ts-jest harness, and declaration-order normalisation are all in `src/` (see the `FIXED`/`IMPLEMENTED` entries in `ISSUES.md`). This document is retained as the **plan-of-record** that **DEC-004/005/007/010/011/012/014/015** cite as their `source:` (several by section §2/§8/§9) and that `decorators-modernization.md` builds on. In several places `DECISIONS.md` has since **superseded and corrected** it — e.g. DEC-020 removed the `Positive()` family this plan proposed to keep, and DEC-010 refined the single descriptor shape into `ConstraintDefinition`/`ConstraintDescriptor`. Read the DECs for the current state.
+>
 > **Status:** planning document. No source under `src/` or `index.ts` has been modified by this plan.
 > **Scope:** the Tier 0 (foundational) and Tier 1 (high-ROI) work, plus the repo-level enablers (tests, build, toolchain) that Tier 0 depends on.
 > **Decorator-model dependency:** **resolved** — the parallel research recommends a *dual-track* (legacy per-parameter **and** method-level `@Contract`). See [§8](#8-the-decorator-model-dependency-resolved).

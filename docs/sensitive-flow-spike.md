@@ -2,6 +2,8 @@
 
 *A spike, not a feature. Produced 2026-07-20. Proof-of-concept code in `spike/`, excluded from the build, the linter and Prettier.*
 
+> **Update (2026-07-25 consolidation).** The detector this spike recommended **shipped** — see **DEC-028** and `tools/sensitive-flow/` (an ESLint rule + `adorn check`), with SMELL-19 discharged. **DEC-025** (trust boundary) and **DEC-027** (both alternatives rejected) are ACCEPTED in `DECISIONS.md`. The proposed **DEC-024** (§11) and **DEC-026** (§14.8) amendments were never transferred to `DECISIONS.md`, so **this document is their only record** — DEC-023's status line points here for exactly that reason. This spike is retained as the cited evidence base for DEC-023/026/027/028 and Q-16…Q-21 and the home of those two amendment steps; superseded in outcome, not in evidence. The "Status: spike report" framing below predates the ship.
+
 > **Status: spike report. This discharges DEC-023 point 4** — *"A feasibility spike precedes any implementation."* DEC-023 is `ACCEPTED (governs the spike) · feasibility **unproven** — see sensitive-flow-spike.md`, so this document is the evidence it gates on, and it returns a **negative** result on point 1. Nothing here is implemented in `src/`, and the code in `spike/` is throwaway. §11 contains a proposed **amendment to DEC-023** written in `DECISIONS.md` style; it is a **proposal in this document** and `DECISIONS.md` was not edited.
 >
 > **DEC-023 named both hazards correctly before I started, which is worth recording.** It flags *"a tool that cannot see a flow and does not say so"* and *"silent because converged and silent because never re-run look identical"*. I measured both. They are not risks to be designed against — they are what the design does (§6, §4.3, §8.4).
