@@ -48,6 +48,15 @@ import {
 // opt-in to turn them back on for local debugging. @Sensitive always vetoes (DEC-025).
 import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 
+// --- Observability (O1a): the neutral observation seam (DEC-035, DEC-036) --
+// A settable, around-shaped sink and the shared settle() classifier. ZERO third-party deps:
+// this is the neutral layer that ENDS where OpenTelemetry begins; the @adorn/otel adapter
+// (DEC-019) is a separate future add-on and is NOT built here. `RETURN_INDEX` marks the return
+// value in an EmittedValue. NOOP_SINK and ViolationError stay INTERNAL — a sink author needs
+// neither the sentinel nor the typed error (facts arrive through the sink, not by catching).
+import {setObservationSink, getObservationSink, RETURN_INDEX} from './src/Core/Observation';
+import {settle} from './src/Core/settle';
+
 // --- Registry introspection (Q-6: this surface is now semver-relevant) -----
 // Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,
 // setParameterMetadata, setFieldMetadata, markInstalled, ...) are deliberately NOT
@@ -87,6 +96,18 @@ export type {
     MarkdownOptions,
 } from './src/Projections/docs';
 export type {ClassSchema, SchemaOptions} from './src/Projections/schema';
+
+// The observation model + the event/payload surface an ObservationSink binds to (O1a). This union is
+// semver-frozen the moment an adapter binds to it (Q-6): every event payload field is optional and
+// object-shaped, so the "seeing ≠ emitting" channel (values, error, attributes) grows additively.
+// prettier-ignore
+export type {
+    ObservationSink, Observation, ObservedParameter, ParameterDisclosure,
+    ObservationEvent, ViolationFacts, EmittedValue, ErrorFacts,
+    Attributes, AttributeValue, LogLevel, ObservationDetail, ObservationCall, SpanKind,
+} from './src/Core/Observation';
+// The value-XOR-error settlement handed to settle()'s callback, and its kind discriminant.
+export type {Settlement, SettleKind} from './src/Core/settle';
 
 // --- Constraint descriptors, namespaced -----------------------------------
 // `src/Contracts/*` exports `GreaterThan`, `Between`, `GreaterThanEqual`, ... under the SAME
@@ -168,6 +189,13 @@ export {
     // Value disclosure (DEC-030). @Log and violation messages redact values by default;
     // setValueDisclosure('all') opts in for local debugging. @Sensitive always vetoes.
     setValueDisclosure, getValueDisclosure,
+
+    // Observability (O1a). Install one around-shaped ObservationSink and read it; the enforcement
+    // weave then emits value-free violation facts + completions through it (redacted by default —
+    // "seeing ≠ emitting"). `settle` is the shared sync/thenable/observable settling classifier @Time
+    // now rides and an @adorn/otel adapter (DEC-019) ends spans with. `RETURN_INDEX` marks the return
+    // value in an EmittedValue. NOOP_SINK / ViolationError stay internal.
+    setObservationSink, getObservationSink, settle, RETURN_INDEX,
 
     // Registry introspection — what the projections read
     getContracts, getContract, getContractedClasses, getContractsForClass,

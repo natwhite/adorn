@@ -690,3 +690,33 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 - The add-on now imports four `src/Core` internals not on the public root surface — `Descriptor` (`ConstraintDescriptor`), `ContractRegistry`, `redaction` (`REDACTED`/`shouldDiscloseValue`), and `Configuration` (`getAssertEnforcement`, whose setter alone is public). Consistent with the Phase A pattern and fine **in-repo**, but a **publishing-time coupling**: extracting `@adorn/test` as a real package needs these made public (a Q-6 decision) or deep-import handling. Logged against GAP-11.
 - Deferred as Phase C, not attempted (avoids IDEA-6 scope creep): a custom-generator registry, a persisted counterexample corpus, and discovery of nullary pure-`@Ensures` methods (closures live in a parallel band `getContractsForClass` does not surface, so Phase B relies on such methods also carrying a constrained parameter — the realistic case).
 
+---
+
+## DEC-035 — Observability O1 (O1a + O1b): a neutral, zero-dependency observation seam
+**Status:** ACCEPTED · builds `next-phase-plan.md` Item 3 / `observability-o1-plan.md` (absorbs the plan's DEC-OBS-1..6 into the DEC-0xx sequence) · O1c/O1d deferred to Stage 3b
+
+**Context.** adorn should be *observable* without adopting a telemetry vendor. O1 defines a sink **interface** and emits plain, value-free data; the OpenTelemetry binding is a separate add-on (`@adorn/otel`, DEC-019) — not built here, and no `@opentelemetry/*` specifier enters the tree (runtime deps stay `{tslib}`).
+
+**Decisions (O1a — the seam).**
+- **One settling classifier, `settle` (`Core/settle.ts`), extracted verbatim from `@Time`.** `@Time`, a future `@Observe`, and the OTel span adapter all need to know *when work settles* (not when a method returns — ~0ms for async, worse than no measurement). That classifier — sync/thenable/Observable, the rxjs-absent `settled:false` refusal (SMELL-16), the cold-Observable non-subscription (SMELL-15) — is the hard, already-correct part; extracting it verbatim is what guarantees the three consumers compute one duration from one source and cannot drift (DEC-006). `@Time` is the first consumer and proves it (rebased to a thin `settle` call, behaviour byte-for-byte preserved).
+- **`settle` takes a THUNK — `settle(operation, onSettle)`, not the plan's `settle(result, onSettle)`.** Required so a *synchronous throw* is classified and handed to `onSettle` before re-throwing (an adapter can `recordException` on **every** outcome — the Q-24/F2 gap), and so `settle` owns the try/catch `@Time` previously held, letting `@Time` rebase without behaviour change.
+- **The corrected `Settlement<T>` arity (Q-24/R1): value XOR error in one object,** discriminated on the *string literal* `outcome` so it narrows even under `strict:false` (unlike a boolean discriminant — the same trap DEC-032 hit). One arity forever; a later field is additive, never an arity break (Q-6).
+- **The sink slot** (`setObservationSink`/`getObservationSink`, internal `NOOP_SINK` default) is a no-op until a sink is set — zero overhead when unobserved. The **event union** (`Observation`/`ObservationEvent`/`ViolationFacts`/`EmittedValue`/`ErrorFacts`/`ObservationCall`/`SpanKind`/…) is a **semver-frozen public surface (Q-6)**: every payload field is optional and object-shaped so growth stays additive — exactly what the Q-24 revision pinned. `ViolationFacts` carries `blame:'caller'|'callee'` (added at emit-time with `trust`), widening the older O1-plan §1 shape — recorded.
+
+**Decisions (O1b — enforcement-weave emission).**
+- When — and only when — a sink is installed, `enforcementBehavior` **also** emits a value-free `{kind:'violation'}` event (precondition **and** both postcondition bands) and a `{kind:'completed'}` event. **Strictly additive:** the unobserved path is one `!== NOOP_SINK` compare and byte-for-byte the pre-O1b flow (`observeViolation` is `undefined`, so the check functions run exactly as before); `proceed()` stays outside every `try`; emission is a **side-channel** fired *before and independent of* `applyViolationPolicy` (a sink is not a `ViolationHandler`, cannot influence control flow, fires under `throw`/`warn`/suppress alike); a sink that throws is contained so it can never become the method's failure.
+- **The O1b fidelity payoff (why `@Returns` shipped first):** a reified `@Returns`/`@Enforce` violation carries full `ViolationFacts` (`error.type: adorn.<constraint>`, groupable), while an `@Ensures` closure degrades to `_OTHER` (no `constraint` dimension — Q-3/SMELL-14, stated not hidden). `@Enforce`/parameter violations now throw a `ViolationError` (an `Error` subclass, message byte-for-byte unchanged) carrying the value-free facts.
+
+**Consequences.**
+- Deferred to Stage 3b: O1c (`@Observe`/`Telemetry`/`setObservationVerbosity`/`consoleObservationSink`) and O1d (the telemetry projection). **Known deferred reconciliation:** once `@Observe` (O1c) also emits `completed`, a `@Contract`+`@Observe` method double-emits `completed` to the ObservationSink until the wrapper-unification (plan §5) — an O1c task, not an O1b defect. (`@Time`'s `TimingSink` is a *different* sink and does not double-emit.)
+- Q-24 → **BUILT** for O1a/O1b (the payload channel exists); Q-23 stays partial (`@Telemetry.result()` is O1c); Q-6's frozen surface grows by the event union.
+
+## DEC-036 — "Seeing ≠ emitting": the per-call payload principle (ratifies Q-24/R0)
+**Status:** ACCEPTED · the organizing principle behind DEC-035's disclosure behaviour
+
+**Decision.** The adversarial O1 review found a *permission-without-payload* gap (Q-24): a value-emission permission system with no channel to carry a per-call value/error. The resolution is two paths with **different disclosure rules**, and the rule is which path you are on:
+- **The `record` path** (the sink's telemetry events) carries only **pre-disclosed** data. `ViolationFacts` is value-free *by construction*; any emitted `error.message` is the already-**redacted-by-default** violation message (DEC-030 — `[REDACTED]` unless `setValueDisclosure('all')`). Deny-by-default holds *at the source*.
+- **The `scope`/`settle` path** sees the **raw** outcome exactly as `@Time` already does (`Settlement<T>` hands back value XOR error), because ending a span or timing a call needs the real outcome and is *not* an emission.
+
+**Why it matters.** This is DEC-025/DEC-030 applied to telemetry: adorn secures **its own** emissions. Seeing a value (to time it, to end a span) is not the same act as emitting it (to a telemetry backend), and only the second is disclosure-gated. Recording it as a principle, not just a code path, so O1c/O1d and the future OTel adapter inherit it rather than re-deciding it.
+

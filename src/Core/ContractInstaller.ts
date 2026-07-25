@@ -94,6 +94,17 @@ import {
     MethodBehavior,
 } from './MethodDecoratorFactory';
 import {noteContractInstalled} from './ContractDiagnostics';
+import {
+    ErrorFacts,
+    getObservationSink,
+    NOOP_SINK,
+    Observation,
+    ObservationEvent,
+    ObservationSink,
+    RETURN_INDEX,
+    ViolationFacts,
+} from './Observation';
+import {ViolationError} from './ViolationError';
 
 /**
  * Class decorator that installs every contract recorded against the class, and registers it for
@@ -342,6 +353,20 @@ const POSTCONDITION_TRUST: ContractTrust = 'assert';
  * must not be routed through the violation policy, and must not have its stack rewritten. A throw
  * therefore skips both postcondition bands entirely (there is no return value to check) and propagates
  * untouched; only the checks are guarded (plan §5).
+ *
+ * ## Observation emission is strictly additive (O1b, DEC-035/DEC-036)
+ *
+ * When — and only when — an {@link ObservationSink} is installed, this weave *also* emits structured
+ * telemetry around the unchanged check flow: a value-free `{kind:'violation'}` event for a
+ * precondition **and** both postcondition bands, and a `{kind:'completed'}` event when the call
+ * settles. The emission is a non-authoritative **side-channel**: it fires *before and independent of*
+ * `applyViolationPolicy` (a sink is not a `ViolationHandler` — it cannot influence control flow), fires
+ * under `'warn'` and a suppressing handler alike, and a sink that throws is contained so it can never
+ * become the method's failure. The uninstalled path is one `===` compare and byte-for-byte identical to
+ * the pre-O1b flow — no `Observation` built, no allocation, no behaviour change. "Seeing ≠ emitting":
+ * the reified `@Returns` band carries full {@link ViolationFacts} from its descriptor while an
+ * `@Ensures` closure degrades to a low-fidelity `_OTHER` fact, and the emitted `error.message` is the
+ * already-redacted-by-default violation message (DEC-030), never a raw value.
  */
 function enforcementBehavior(
     enforce: ((context: InvocationContext) => void) | undefined,
@@ -357,15 +382,51 @@ function enforcementBehavior(
     const callerSite: ViolationSite = {owner, member, trust, blame: 'caller'};
     const calleeSite: ViolationSite = {owner, member, trust: POSTCONDITION_TRUST, blame: 'callee'};
 
+    // Built once at install time, like the sites: the structural facts of this method, fixed for the
+    // life of the wrapper. `parameters` stays empty in O1b — the per-parameter disclosure resolver is
+    // O1c; the violation event carries the offending parameter's facts directly on `ViolationFacts`.
+    const siteObservation: Observation = {
+        owner,
+        member,
+        name: `${owner}.${member}`,
+        isStatic: typeof host === 'function',
+        detail: 'always',
+        kind: 'internal',
+        parameters: [],
+    };
+    // Frozen so an event handed to a sink cannot mutate the shared, per-install facts.
+    Object.freeze(siteObservation.parameters);
+    Object.freeze(siteObservation);
+
     // Either postcondition band makes the after-call stage live.
     const hasPostChecks = posts.length > 0 || returns.length > 0;
 
     return function (context, proceed) {
+        // The one branch the uninstalled path pays — a single reference compare (plan §4a).
+        const sink = getObservationSink();
+        const observing = sink !== NOOP_SINK;
+        // Emitter for a postcondition-band violation, or `undefined` when unobserved so the check
+        // functions run byte-for-byte as before. Allocated only when a sink is installed.
+        const observeViolation = observing
+            ? (facts: ViolationFacts, error: unknown) => emitViolation(sink, siteObservation, facts, error)
+            : undefined;
+
         // --- preconditions ---------------------------------------------------
         if (enforce && shouldEnforce(trust)) {
             try {
                 enforce(context);
             } catch (violation) {
+                // Side-channel: emitted before, and independent of, the policy. A reified precondition
+                // throws a ViolationError carrying facts; a hand-written closure (SMELL-14) is invisible
+                // here and emits nothing, exactly as it is invisible to every projection.
+                if (observing && violation instanceof ViolationError) {
+                    emitViolation(
+                        sink,
+                        siteObservation,
+                        {...violation.facts, trust, blame: 'caller'},
+                        violation,
+                    );
+                }
                 // Rethrows unless the configured policy suppresses it ('warn', or a handler that
                 // returns). Suppression falls through deliberately: 'warn' stages a contract over
                 // live traffic, so the call must still happen.
@@ -374,8 +435,16 @@ function enforcementBehavior(
         }
 
         // Nothing to check after the call, or postconditions are stripped in this build.
-        if (!hasPostChecks || !shouldEnforce(POSTCONDITION_TRUST)) return proceed();
+        if (!hasPostChecks || !shouldEnforce(POSTCONDITION_TRUST)) {
+            if (!observing) return proceed();
+            // proceed() stays outside every try; the completion is observed without altering the
+            // returned value (a sync throw propagates untouched and is not a completed event here).
+            const started = now();
+            const result = proceed();
+            return observeCompletion(sink, siteObservation, started, result);
+        }
 
+        const started = observing ? now() : 0;
         // Outside the try — see the header. A method throw skips postconditions and propagates.
         const result = proceed();
 
@@ -384,18 +453,22 @@ function enforcementBehavior(
             // promise is not caught here, so it skips both bands and propagates (the async twin of the
             // sync-throw rule); an async violation surfaces as a rejected Promise carrying the
             // postcondition Error, which is the correct shape.
-            return Promise.resolve(result).then(value => {
+            const checked = Promise.resolve(result).then(value => {
                 // Reified band first (DEC-033), then the closure band — see the header.
-                checkReturnConstraints(returns, value, calleeSite);
-                checkPostconditions(posts, value, context.args, calleeSite);
+                checkReturnConstraints(returns, value, calleeSite, observeViolation);
+                checkPostconditions(posts, value, context.args, calleeSite, observeViolation);
                 return value;
             });
+            // Observe the settled outcome of the checked promise without changing what is returned.
+            if (observing) observeSettledPromise(sink, siteObservation, started, checked);
+            return checked;
         }
 
         // Observables and other non-thenable objects are checked as the raw value (rxjs is gone —
         // DEC-019; real settling is deferred, plan §5).
-        checkReturnConstraints(returns, result, calleeSite);
-        checkPostconditions(posts, result, context.args, calleeSite);
+        checkReturnConstraints(returns, result, calleeSite, observeViolation);
+        checkPostconditions(posts, result, context.args, calleeSite, observeViolation);
+        if (observing) emitCompleted(sink, siteObservation, now() - started, 'returned', true);
         return result;
     };
 }
@@ -417,6 +490,7 @@ function checkReturnConstraints(
     returns: ReadonlyArray<ConstraintDescriptor>,
     result: unknown,
     site: ViolationSite,
+    observe?: (facts: ViolationFacts, error: unknown) => void,
 ): void {
     for (const descriptor of returns) {
         if (descriptor.predicate(result)) continue;
@@ -426,7 +500,25 @@ function checkReturnConstraints(
             paramName: 'return value',
             disclose: shouldDiscloseValue(false),
         });
-        applyViolationPolicy(new Error(message), site);
+        const error = new Error(message);
+        // Full-fidelity facts: a `@Returns` is a reified descriptor (DEC-033), so the violation is as
+        // groupable as a precondition's — the O1b payoff. Emitted before the policy, as a side-channel.
+        if (observe) {
+            observe(
+                {
+                    constraint: descriptor.constraint,
+                    kind: descriptor.kind,
+                    params: descriptor.params,
+                    expectation: descriptor.describe(),
+                    parameterName: 'return value',
+                    parameterIndex: RETURN_INDEX,
+                    trust: site.trust,
+                    blame: site.blame,
+                },
+                error,
+            );
+        }
+        applyViolationPolicy(error, site);
         return; // first-failure-wins, base-most first (getEffectiveContract().post orders it so)
     }
 }
@@ -444,12 +536,163 @@ function checkPostconditions(
     result: unknown,
     args: ReadonlyArray<unknown>,
     site: ViolationSite,
+    observe?: (facts: ViolationFacts, error: unknown) => void,
 ): void {
     const outcome = evaluatePostconditions(posts, result, args);
     if (outcome.ok || !outcome.failed) return;
 
     const message = postconditionMessage(site.owner, site.member, outcome.failed, result);
-    applyViolationPolicy(new Error(message), site);
+    const error = new Error(message);
+    // Low-fidelity by nature: an `@Ensures` closure carries no identity or serialisable params (Q-3,
+    // SMELL-14), so it degrades to the `_OTHER` semconv fallback — no `constraint` dimension. Stated,
+    // not hidden. `error.type` becomes `_OTHER` from the sentinel constraint below.
+    if (observe) {
+        observe(
+            {
+                constraint: OTHER_CONSTRAINT,
+                kind: 'generic',
+                params: {},
+                expectation: outcome.failed.description || '',
+                parameterIndex: RETURN_INDEX,
+                trust: site.trust,
+                blame: site.blame,
+            },
+            error,
+        );
+    }
+    applyViolationPolicy(error, site);
+}
+
+// ---------------------------------------------------------------------------
+// Observation emission (O1b) — strictly additive, side-channel only
+// ---------------------------------------------------------------------------
+
+/** The OpenTelemetry semconv fallback for an error/constraint with no reified identity. */
+const OTHER_CONSTRAINT = '_OTHER';
+
+/**
+ * Hand one event to the sink's `record`, guarded. A telemetry sink that throws must never become the
+ * method's failure (plan §6): the throw is swallowed here, and `record` being absent is a no-op.
+ */
+function recordObservation(sink: ObservationSink, event: ObservationEvent): void {
+    try {
+        if (sink.record) sink.record(event);
+    } catch {
+        // Contained: enforcement is authoritative, observation is not.
+    }
+}
+
+/** Emit one value-free `{kind:'violation'}` event, deriving `error.type` from the constraint identity. */
+function emitViolation(
+    sink: ObservationSink,
+    observation: Observation,
+    facts: ViolationFacts,
+    error: unknown,
+): void {
+    recordObservation(sink, {
+        kind: 'violation',
+        observation,
+        violation: facts,
+        error: violationErrorFacts(error, facts.constraint),
+    });
+}
+
+/**
+ * Emit a `{kind:'completed'}` event. `error` is present iff the call settled by throwing — the around
+ * seam sees the raw outcome (as `@Time` does), and the structured `ErrorFacts` is what an adapter needs
+ * to `recordException`.
+ */
+function emitCompleted(
+    sink: ObservationSink,
+    observation: Observation,
+    durationMs: number,
+    outcome: 'returned' | 'threw',
+    settled: boolean,
+    error?: unknown,
+): void {
+    recordObservation(
+        sink,
+        outcome === 'threw'
+            ? {kind: 'completed', observation, durationMs, outcome, settled, error: toErrorFacts(error)}
+            : {kind: 'completed', observation, durationMs, outcome, settled},
+    );
+}
+
+/**
+ * Observe a completion on the no-postcondition path without altering the returned value. A thenable is
+ * observed through a passive `.then` on a `Promise.resolve` clone — the original value is returned to
+ * the caller unchanged, so async/return identity is preserved exactly. Non-thenables (including
+ * Observables, which enforcement treats as raw values) settle as a synchronous `'returned'`.
+ */
+function observeCompletion(
+    sink: ObservationSink,
+    observation: Observation,
+    started: number,
+    result: any,
+): any {
+    if (isThenable(result)) {
+        Promise.resolve(result).then(
+            () => emitCompleted(sink, observation, now() - started, 'returned', true),
+            (error: unknown) => emitCompleted(sink, observation, now() - started, 'threw', true, error),
+        );
+        return result;
+    }
+    emitCompleted(sink, observation, now() - started, 'returned', true);
+    return result;
+}
+
+/**
+ * Observe the settled outcome of the already-checked promise on the postcondition path, without
+ * changing what is returned. A postcondition throw makes `checked` reject, so it is reported as a
+ * `'threw'` completion; the violation event itself was already emitted inside the check functions.
+ */
+function observeSettledPromise(
+    sink: ObservationSink,
+    observation: Observation,
+    started: number,
+    checked: Promise<unknown>,
+): void {
+    checked.then(
+        () => emitCompleted(sink, observation, now() - started, 'returned', true),
+        (error: unknown) => emitCompleted(sink, observation, now() - started, 'threw', true, error),
+    );
+}
+
+/** Structured facts for a *violation* error: `adorn.<constraint>`, or `_OTHER` for a degraded closure. */
+function violationErrorFacts(error: unknown, constraint: string): ErrorFacts {
+    const type =
+        constraint && constraint !== OTHER_CONSTRAINT ? `adorn.${constraint}` : OTHER_CONSTRAINT;
+    return {type, message: errorMessage(error), stack: errorStack(error)};
+}
+
+/** Structured facts for an arbitrary thrown value: its `name`, or `_OTHER` when it has none. */
+function toErrorFacts(error: unknown): ErrorFacts {
+    if (error && typeof error === 'object') {
+        const named = (error as {name?: unknown}).name;
+        const type = typeof named === 'string' && named ? named : OTHER_CONSTRAINT;
+        return {type, message: errorMessage(error), stack: errorStack(error)};
+    }
+    return {type: OTHER_CONSTRAINT, message: String(error)};
+}
+
+function errorMessage(error: unknown): string | undefined {
+    const message = error && (error as {message?: unknown}).message;
+    return typeof message === 'string' ? message : undefined;
+}
+
+function errorStack(error: unknown): string | undefined {
+    const stack = error && (error as {stack?: unknown}).stack;
+    return typeof stack === 'string' ? stack : undefined;
+}
+
+/**
+ * Highest-resolution monotonic clock available, for the `completed` event's `durationMs`. Matches the
+ * clock `@Time`/`settle` read (`performance.now()` where available, `Date.now()` otherwise).
+ */
+function now(): number {
+    const perf = typeof performance !== 'undefined' ? performance : undefined;
+    if (perf && typeof perf.now === 'function') return perf.now();
+    return Date.now();
 }
 
 /**

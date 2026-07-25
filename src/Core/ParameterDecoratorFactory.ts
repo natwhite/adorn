@@ -83,6 +83,7 @@ import {notePendingContract} from './ContractDiagnostics';
 import {DecoratorFactory} from './common';
 import {InvocationContext} from './MethodDecoratorFactory';
 import {shouldDiscloseValue} from './redaction';
+import {ViolationError, ViolationFactsSource} from './ViolationError';
 
 /**
  * Object handed to a {@link ParamDeco} closure. Unchanged from the original design — this is public
@@ -344,6 +345,12 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
     const ownContract = getContract(target, propertyKey);
     if (ownContract) captureSignature(target, propertyKey, ownContract, paramNames);
 
+    // Reflected parameter types, resolved once here so `descriptorCheck` can carry `parameterType` on
+    // the structured `ViolationError.facts` (O1b) without a per-call reflect read. Absent under
+    // esbuild/Babel or for interface/union/generic types (DEC-004) — then the field is simply omitted,
+    // never guessed, exactly as the doc projection renders it (plan §11.6).
+    const paramTypes = designParamTypes(target, propertyKey);
+
     // Built lazily and identically to the previous implementation, so every existing violation
     // message is byte-for-byte unchanged.
     const signatureFor = (index: number) =>
@@ -386,8 +393,10 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
             // decoration, so only the *global* disclosure switch needs reading per call. Redaction
             // itself is safe with no marking at all; this bit only ever strengthens it (DEC-PII-1).
             const sensitive = isParameterSensitive(target, propertyKey, index);
+            const reflected = paramTypes && paramTypes[index];
+            const typeName = typeof reflected === 'function' ? reflected.name : undefined;
             for (const constraint of parameter.constraints) {
-                plan.push(descriptorCheck(constraint, index, signatureFor, paramNames, sensitive));
+                plan.push(descriptorCheck(constraint, index, signatureFor, paramNames, sensitive, typeName));
             }
         }
 
@@ -406,11 +415,28 @@ function descriptorCheck(
     signatureFor: (index: number) => string,
     paramNames: string[],
     sensitive: boolean,
+    typeName: string | undefined,
 ): PlannedCheck {
+    // The value-free, reified facts of this constraint, fixed for the life of the wrapper. `params`
+    // and `describe()` are already deep-frozen and JSON-serialisable (DEC-010); no value, no rendered
+    // string — deny-by-default holds at the source (O1b, plan §6). `trust`/`blame` belong to the
+    // enforcement site and are added there when it emits.
+    const name = paramNames[index];
+    const facts: ViolationFactsSource = {
+        constraint: constraint.constraint,
+        kind: constraint.kind,
+        params: constraint.params,
+        expectation: constraint.describe(),
+        parameterName: typeof name === 'string' ? name : undefined,
+        parameterIndex: index,
+        parameterType: typeName,
+    };
+
     return function (args: any[]) {
         const value = args[index];
         if (constraint.predicate(value)) return;
-        throw new Error(
+        // Message byte-for-byte identical to the pre-O1b `new Error(message)`; only the carrier changed.
+        throw new ViolationError(
             constraint.message({
                 value,
                 signature: signatureFor(index),
@@ -420,6 +446,7 @@ function descriptorCheck(
                 // Read live so a later disclosure change takes effect without reinstalling.
                 disclose: shouldDiscloseValue(sensitive),
             }),
+            facts,
         );
     };
 }
