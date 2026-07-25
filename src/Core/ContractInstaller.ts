@@ -62,12 +62,15 @@ import {
     getEffectiveContractKeys,
     getEffectivePostconditionKeys,
     getEffectivePostconditions,
+    getEffectiveReturnConstraints,
     getPostconditionKeys,
     markInstalled,
     MethodKey,
     Postcondition,
     registerContractedClass,
 } from './ContractRegistry';
+import {ConstraintDescriptor} from './Descriptor';
+import {shouldDiscloseValue} from './redaction';
 import {evaluatePostconditions, postconditionMessage} from './Postconditions';
 import {
     applyViolationPolicy,
@@ -174,19 +177,21 @@ export function Validate(options?: TrustOptions): MethodDecorator {
         if (isInstalled(target, propertyKey)) return descriptor;
 
         const enforce = buildParameterEnforcement(target, propertyKey, original);
-        // Postconditions are read effectively (inheritance-aware). Note the ordering caveat: because
-        // `@Validate()` runs at member-decoration time, it only sees `@Ensures` clauses that recorded
-        // first — i.e. `@Ensures` must sit *below* `@Validate()` in source. Class-level `@Contract()`
-        // runs last and has no such caveat (see the `@Ensures` docs).
+        // Both postcondition bands are read effectively (inheritance-aware): the `@Ensures` closure
+        // band AND the reified `@Returns` descriptor band (DEC-033). Note the ordering caveat: because
+        // `@Validate()` runs at member-decoration time, it only sees clauses that recorded first —
+        // i.e. `@Ensures`/`@Returns` must sit *below* `@Validate()` in source. Class-level `@Contract()`
+        // runs last and has no such caveat (see the `@Ensures`/`@Returns` docs).
         const posts = getEffectivePostconditions(target, propertyKey);
-        if (!enforce && posts.length === 0) {
+        const returns = getEffectiveReturnConstraints(target, propertyKey);
+        if (!enforce && posts.length === 0 && returns.length === 0) {
             // Nothing recorded. Returning the descriptor untouched keeps `@Validate()` harmless on
             // a method that has neither parameter constraints nor postconditions (yet).
             return descriptor;
         }
 
         const decorate = CreateMethodDecorator(
-            enforcementBehavior(enforce, posts, target, propertyKey, trust),
+            enforcementBehavior(enforce, posts, returns, target, propertyKey, trust),
         );
         const result = decorate(target, propertyKey, descriptor as any) || descriptor;
 
@@ -291,9 +296,10 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
 
     const enforce = buildParameterEnforcement(host, key, original);
     const posts = getEffectivePostconditions(host, key);
-    if (!enforce && posts.length === 0) return;
+    const returns = getEffectiveReturnConstraints(host, key);
+    if (!enforce && posts.length === 0 && returns.length === 0) return;
 
-    installMethodWrapper(host, key, enforcementBehavior(enforce, posts, host, key, trust));
+    installMethodWrapper(host, key, enforcementBehavior(enforce, posts, returns, host, key, trust));
     noteInstalled(host, key);
 }
 
@@ -313,8 +319,15 @@ const POSTCONDITION_TRUST: ContractTrust = 'assert';
 
 /**
  * The combined enforcement `MethodBehavior`: gate → check preconditions → `proceed()` → check
- * postconditions. Either half may be absent — a method may carry only parameter constraints, only
- * postconditions, or both.
+ * postconditions. Any part may be absent — a method may carry only parameter constraints, only
+ * postconditions (of either band), or any mix.
+ *
+ * **Two postcondition bands run after `proceed()` (DEC-033):** the reified `@Returns` descriptor band
+ * (`returns`) and the `@Ensures` closure band (`posts`). Both are checked against the *same* settled
+ * value, under the *same* single {@link POSTCONDITION_TRUST} gate and the *same* callee-blamed
+ * {@link ViolationSite} — no new trust machinery. **Cross-band ordering is pinned reified-first:** the
+ * descriptor band is checked before the closure band, so when a call breaks both the more precise,
+ * projectable, groupable guarantee is the one reported first (first-failure-wins across the two bands).
  *
  * **Each gate is evaluated once per call, not once per predicate** (plan P3.2). Preconditions run
  * under the method/class `trust`; postconditions run under {@link POSTCONDITION_TRUST}. They are
@@ -327,12 +340,13 @@ const POSTCONDITION_TRUST: ContractTrust = 'assert';
  *
  * `proceed()` stays **outside** every `try` — a failure thrown by the method itself is not adorn's,
  * must not be routed through the violation policy, and must not have its stack rewritten. A throw
- * therefore skips postconditions entirely (there is no return value to check) and propagates
+ * therefore skips both postcondition bands entirely (there is no return value to check) and propagates
  * untouched; only the checks are guarded (plan §5).
  */
 function enforcementBehavior(
     enforce: ((context: InvocationContext) => void) | undefined,
     posts: ReadonlyArray<Postcondition>,
+    returns: ReadonlyArray<ConstraintDescriptor>,
     host: object,
     key: MethodKey,
     trust: ContractTrust,
@@ -343,7 +357,8 @@ function enforcementBehavior(
     const callerSite: ViolationSite = {owner, member, trust, blame: 'caller'};
     const calleeSite: ViolationSite = {owner, member, trust: POSTCONDITION_TRUST, blame: 'callee'};
 
-    const hasPosts = posts.length > 0;
+    // Either postcondition band makes the after-call stage live.
+    const hasPostChecks = posts.length > 0 || returns.length > 0;
 
     return function (context, proceed) {
         // --- preconditions ---------------------------------------------------
@@ -359,17 +374,19 @@ function enforcementBehavior(
         }
 
         // Nothing to check after the call, or postconditions are stripped in this build.
-        if (!hasPosts || !shouldEnforce(POSTCONDITION_TRUST)) return proceed();
+        if (!hasPostChecks || !shouldEnforce(POSTCONDITION_TRUST)) return proceed();
 
         // Outside the try — see the header. A method throw skips postconditions and propagates.
         const result = proceed();
 
         if (isThenable(result)) {
             // Await the settled value, then check — mirroring `@Time`'s thenable handling. A REJECTED
-            // promise is not caught here, so it skips postconditions and propagates (the async twin of
-            // the sync-throw rule); an async violation surfaces as a rejected Promise carrying the
+            // promise is not caught here, so it skips both bands and propagates (the async twin of the
+            // sync-throw rule); an async violation surfaces as a rejected Promise carrying the
             // postcondition Error, which is the correct shape.
             return Promise.resolve(result).then(value => {
+                // Reified band first (DEC-033), then the closure band — see the header.
+                checkReturnConstraints(returns, value, calleeSite);
                 checkPostconditions(posts, value, context.args, calleeSite);
                 return value;
             });
@@ -377,9 +394,41 @@ function enforcementBehavior(
 
         // Observables and other non-thenable objects are checked as the raw value (rxjs is gone —
         // DEC-019; real settling is deferred, plan §5).
+        checkReturnConstraints(returns, result, calleeSite);
         checkPostconditions(posts, result, context.args, calleeSite);
         return result;
     };
+}
+
+/**
+ * Evaluate the reified `@Returns` descriptor band against one settled outcome (DEC-033) and route the
+ * first failure through the same violation policy preconditions and the closure band use. Returns
+ * normally when they hold OR when the policy suppresses (`'warn'`/handler), so the method's value is
+ * still returned to the caller.
+ *
+ * Each descriptor is checked with its **own** `predicate` (DEC-010 — the same predicate parameter
+ * enforcement runs and the fuzzer will call; never re-derived here), and its **own** `message` renders
+ * the violation. A return carries no `@Sensitive` marking (Q-23), so disclosure follows the global
+ * switch alone — `shouldDiscloseValue(false)` — and the value redacts by default (DEC-030), exactly as
+ * `postconditionMessage` does for the closure band. First-failure-wins, mirroring
+ * {@link evaluatePostconditions}.
+ */
+function checkReturnConstraints(
+    returns: ReadonlyArray<ConstraintDescriptor>,
+    result: unknown,
+    site: ViolationSite,
+): void {
+    for (const descriptor of returns) {
+        if (descriptor.predicate(result)) continue;
+
+        const message = descriptor.message({
+            value: result,
+            paramName: 'return value',
+            disclose: shouldDiscloseValue(false),
+        });
+        applyViolationPolicy(new Error(message), site);
+        return; // first-failure-wins, base-most first (getEffectiveContract().post orders it so)
+    }
 }
 
 /**

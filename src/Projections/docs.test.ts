@@ -22,6 +22,7 @@ import {
     markInstalled,
     recordFieldConstraint,
     recordParameterConstraint,
+    recordReturnConstraint,
     registerContractedClass,
     resetRegistry,
     setFieldMetadata,
@@ -409,6 +410,87 @@ describe('contracted fields', () => {
         // Four cells means five unescaped delimiters, so six parts once the leading and trailing
         // empties are counted — the same arithmetic the parameter-table case uses.
         expect(row.split(/(?<!\\)\|/)).toHaveLength(6);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The reified @Returns band — the Returns table (DEC-033)
+// ---------------------------------------------------------------------------
+
+describe('the Returns section (reified @Returns)', () => {
+    /** Table rows of a method's Returns table — the return twin of the parameter-row filter. */
+    function returnRows(markdown: string): string[] {
+        return markdown.split('\n').filter(line => /^\| `return`/.test(line));
+    }
+
+    it('models the reified return descriptor on MethodDoc.post via describe()', () => {
+        class Ledger {
+            balance() {
+                return 0;
+            }
+        }
+        recordReturnConstraint(Ledger.prototype, 'balance', GreaterThanEqual(0));
+
+        const method = methodNamed(documentClass(Ledger), 'balance');
+        expect(method.post.map(constraint => constraint.constraint)).toEqual(['min']);
+        expect(method.post[0].expectation).toBe('a number greater than or equal to 0');
+    });
+
+    it('renders a Returns table with the descriptor’s identity and describe() output', () => {
+        class Ledger {
+            balance() {
+                return 0;
+            }
+        }
+        recordReturnConstraint(Ledger.prototype, 'balance', GreaterThanEqual(0));
+        markInstalled(Ledger.prototype, 'balance');
+
+        const markdown = renderMarkdown([documentClass(Ledger)]);
+        expect(markdown).toContain('| Return | Constraint | Expectation |');
+        expect(markdown).toContain('| `return` | `min` | a number greater than or equal to 0 |');
+    });
+
+    it('emits one Returns row per stacked @Returns', () => {
+        class Ledger {
+            balance() {
+                return 0;
+            }
+        }
+        recordReturnConstraint(Ledger.prototype, 'balance', GreaterThanEqual(1));
+        recordReturnConstraint(Ledger.prototype, 'balance', LessThanEqual(100));
+        markInstalled(Ledger.prototype, 'balance');
+
+        expect(returnRows(renderMarkdown([documentClass(Ledger)]))).toHaveLength(2);
+    });
+
+    it('does NOT render a Returns table when there is no @Returns', () => {
+        class Task {
+            run(_value: number) {
+                /* no-op */
+            }
+        }
+        recordParameterConstraint(Task.prototype, 'run', 0, GreaterThan(0));
+
+        expect(renderMarkdown([documentClass(Task)])).not.toContain('| Return |');
+    });
+
+    it('renders the Returns table for a @Returns-only method (the DEC-016 asymmetry guard)', () => {
+        // A method carrying only a return contract — no parameter constraints, no @Ensures — must still
+        // appear with its Returns row rather than being reported as having no contracts. This is the
+        // documentation half of the two-band consumption rule (plan Gaps §1).
+        class Ledger {
+            balance() {
+                return 0;
+            }
+        }
+        recordReturnConstraint(Ledger.prototype, 'balance', GreaterThanEqual(0));
+        markInstalled(Ledger.prototype, 'balance');
+
+        const markdown = renderMarkdown([documentClass(Ledger)]);
+        expect(markdown).toContain('| Return | Constraint | Expectation |');
+        expect(markdown).toContain('| `return` | `min` | a number greater than or equal to 0 |');
+        // The "no parameter constraints" note must not crowd out the Returns table.
+        expect(markdown).not.toContain('_No parameter constraints recorded._');
     });
 });
 

@@ -159,11 +159,17 @@ export interface MethodDoc {
     /** Ordered by parameter index. Only positions with a registry entry appear. */
     readonly parameters: ReadonlyArray<ParameterDoc>;
     /**
-     * Reserved slots (registry P1.1), always empty in T0/T1 — no writer exists for them yet.
-     * Carried so postconditions (IDEA-4, the top Tier 2 item) extend the renderer rather than
-     * the model. Not rendered, for the same reason: an unreachable render branch is untestable.
+     * The reserved cross-parameter precondition band (registry P1.1). Still empty — no writer exists
+     * for it yet — and carried, unrendered, so a future writer extends the renderer rather than the
+     * model, exactly as `post` was carried before `@Returns` gave it one.
      */
     readonly pre: ReadonlyArray<ConstraintDoc>;
+    /**
+     * The reified `@Returns` band (DEC-033) — descriptor-shaped return-value postconditions. Populated
+     * from `entry.contract.post` and **rendered** as the "Returns" table (see `renderReturns`). A
+     * `@Ensures` *closure* postcondition is deliberately absent: it has no identity or params to
+     * project (SMELL-14), so it is enforced-but-unprojectable by design.
+     */
     readonly post: ReadonlyArray<ConstraintDoc>;
 }
 
@@ -437,22 +443,52 @@ function renderMethod(method: MethodDoc, lines: string[]): void {
     }
 
     const hasConstraints = method.parameters.some(parameter => parameter.constraints.length > 0);
-    if (!hasConstraints) {
+    if (hasConstraints) {
+        lines.push('| Parameter | Type | Constraint | Expectation |', '| --- | --- | --- | --- |');
+
+        method.parameters.forEach(parameter => {
+            parameter.constraints.forEach(constraint => {
+                lines.push(
+                    `| \`${escapeCell(parameter.name)}\` (${parameter.index}) ` +
+                        `| ${parameter.typeName ? '`' + escapeCell(parameter.typeName) + '`' : '—'} ` +
+                        `| \`${escapeCell(constraint.constraint)}\` ` +
+                        `| ${escapeCell(constraint.expectation)} |`,
+                );
+            });
+        });
+
+        lines.push('');
+    } else if (method.post.length === 0) {
+        // No parameter constraints AND no reified return contract — say so plainly. A method that
+        // carries only a `@Returns` (post non-empty) skips this line and renders the Returns table
+        // below instead, so a `@Returns`-only method is never reported as having no contracts.
         lines.push('_No parameter constraints recorded._', '');
-        return;
     }
 
-    lines.push('| Parameter | Type | Constraint | Expectation |', '| --- | --- | --- | --- |');
+    renderReturns(method.post, lines);
+}
 
-    method.parameters.forEach(parameter => {
-        parameter.constraints.forEach(constraint => {
-            lines.push(
-                `| \`${escapeCell(parameter.name)}\` (${parameter.index}) ` +
-                    `| ${parameter.typeName ? '`' + escapeCell(parameter.typeName) + '`' : '—'} ` +
-                    `| \`${escapeCell(constraint.constraint)}\` ` +
-                    `| ${escapeCell(constraint.expectation)} |`,
-            );
-        });
+/**
+ * Render the reified `@Returns` contract (DEC-033) as its own small table, after the parameter table.
+ *
+ * Driven by `method.post` — the projectable postcondition band the registry has carried since P1.1 and
+ * DEC-033 finally writes to via `@Returns(<descriptor>)`. A `@Ensures` *closure* postcondition is
+ * deliberately absent here: it carries no identity or params to tabulate (SMELL-14), so it is
+ * enforced-but-unprojectable by design, exactly as a `CreateSimpleDecorator` closure is. This keeps a
+ * `@Returns`-only method from being enforced-but-undocumented — the DEC-016 asymmetry. Emitted only
+ * when the band is non-empty; there is no parameter-index column, because a return has no index.
+ */
+function renderReturns(post: ReadonlyArray<ConstraintDoc>, lines: string[]): void {
+    if (post.length === 0) return;
+
+    lines.push('| Return | Constraint | Expectation |', '| --- | --- | --- |');
+
+    post.forEach(constraint => {
+        lines.push(
+            `| \`return\` ` +
+                `| \`${escapeCell(constraint.constraint)}\` ` +
+                `| ${escapeCell(constraint.expectation)} |`,
+        );
     });
 
     lines.push('');

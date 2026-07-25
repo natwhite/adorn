@@ -653,3 +653,22 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 - **Lower-value pointers for the deferred tiers:** async "`old` is a snapshot, `self` is live" (plan A §1.4) belongs with the deferred `old()`/`this`-state work; the `returns` return-value-schema keyword shape (plan A §4.3) belongs with the reified `@Returns` tier already scheduled in `next-phase-plan.md`.
 
+---
+
+## DEC-033 — Reified `@Returns(<descriptor>)`: the projectable postcondition tier
+**Status:** ACCEPTED · builds `next-phase-plan.md` Item 2 · closes Q-11's reserved-slot loop · advances IDEA-7/IDEA-12
+
+**Context.** DEC-032 shipped `@Ensures` as a *closure* band and deliberately left the reserved `ConstraintDescriptor` `post` slot empty, for a tier that could be **projected** (a closure carries no identity or params — SMELL-14 — so nothing can render it into docs or schema). This is that tier.
+
+**Decisions.**
+- **`@Returns(descriptor, description?)` records an existing `ConstraintDescriptor` into the reserved `MethodContract.post` band** (its first writer, `recordReturnConstraint`) — *not* the `@Ensures` closure band. A bare predicate is rejected at the decoration site: it cannot be projected, and `@Ensures` already covers the closure case. `description?` is validated but **not stored** in v1 (the band holds descriptors, which self-describe via `describe()`; a stored phrase could drift from the derived predicate — DEC-010), rather than ship a stored-but-ignored field.
+- **The projectable/opaque line is the reason both exist.** `@Returns` is the *single-value, projectable* subset — the return in isolation, tested by one descriptor's `predicate` (DEC-010, the *same* predicate parameter enforcement runs and Fuzzing Phase B will call — no drift). `@Ensures` stays the *n-ary, opaque* superset — the return related to the inputs. A guarantee like "result exceeds `amount`" stays `@Ensures`; a guarantee like "result ≥ 0" becomes `@Returns` and gains a docs row and a schema fragment for free.
+- **Two postcondition bands now run after `proceed()`, and the weave + both projections consume both** — the DEC-016 enforced-but-undocumented asymmetry, avoided by construction and pinned: a `@Returns`-only method (no `@Ensures`, no param constraints) is enforced at runtime **and** appears in `generateMarkdown()` with its Returns table **and** in `generateSchema()` with its `returns` fragment. **Cross-band ordering is pinned reified-first:** the descriptor band checks before the closure band, on the *same* settled value, under the *same* single `POSTCONDITION_TRUST='assert'` gate and the *same* callee-blamed `ViolationSite` — no new trust machinery. First-failure-wins across the two bands, so the more precise/projectable guarantee is reported first. This resolves the cross-band-ordering item the planning wave flagged as a new open question: it is decided here, not left open.
+- **Settling is identical to DEC-032**: async awaits the resolved value then checks; a throw or rejection skips *both* bands and propagates untouched (`proceed()` stays outside every `try`); an Observable is checked raw (DEC-019). The violation message uses the descriptor's **own** `message(...)` with `disclose: shouldDiscloseValue(false)` — a return carries no `@Sensitive` marking (Q-23), so disclosure follows the global switch alone and the value **redacts by default** (DEC-030). DEC-012 holds — the schema/docs projections read the descriptor's `schema()`/`describe()` directly, never a decorator adapter.
+
+**Consequences.**
+- The OpenAPI **response** half is now expressible (return-value schema); the full OpenAPI emitter stays blocked on Q-10 (parameter arity), unchanged.
+- Registry writer/reader (`recordReturnConstraint`/`getEffectiveReturnConstraints`) stay **internal** (Q-6); the only new public symbol is `@Returns`. The `returns` schema keyword is a new public *output* shape — additive, enumerated under Q-6's semver note.
+- Fuzzing Phase B (next) now has **two oracle sources** to consume, exactly as enforcement does: `getEffectiveReturnConstraints` + each descriptor's `predicate` for the reified band, and `getEffectivePostconditions` + `evaluatePostconditions` for the closure band. Building against one band only would fuzz half the guarantee.
+- Deferred, unchanged: `old()`, invariants (IDEA-5), `this`-state, per-clause trust, exceptional postconditions (the throw-vacuous LSP hole above).
+

@@ -18,6 +18,7 @@ import {
     markInstalled,
     recordFieldConstraint,
     recordParameterConstraint,
+    recordReturnConstraint,
     registerContractedClass,
     resetRegistry,
     setParameterMetadata,
@@ -292,6 +293,104 @@ describe('a multi-parameter method', () => {
         expect(send.minItems).toBeUndefined();
         expect(send.maxItems).toBeUndefined();
         expect(send.items).toBeUndefined();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The reified @Returns band → the `returns` schema fragment (DEC-033)
+// ---------------------------------------------------------------------------
+
+describe('the return-value schema (reified @Returns)', () => {
+    /** The `returns` fragment on a method's argument-tuple schema. */
+    function returnsSchema(constructor: Function, method: string): JsonObject {
+        return ((schemaForClass(constructor).methods as JsonObject)[method] as JsonObject)
+            .returns as JsonObject;
+    }
+
+    it('emits a returns fragment from the descriptor’s own schema() hook, read directly', () => {
+        class Ledger {
+            balance() {
+                return 0;
+            }
+        }
+        recordReturnConstraint(Ledger.prototype, 'balance', GreaterThan(0));
+
+        expect(returnsSchema(Ledger, 'balance')).toEqual({type: 'number', exclusiveMinimum: 0});
+    });
+
+    it('merges several stacked @Returns as a conjunction, exactly as a parameter position does', () => {
+        class Ledger {
+            balance() {
+                return 0;
+            }
+        }
+        recordReturnConstraint(Ledger.prototype, 'balance', GreaterThanEqual(1));
+        recordReturnConstraint(Ledger.prototype, 'balance', LessThanEqual(100));
+
+        expect(returnsSchema(Ledger, 'balance')).toEqual({type: 'number', minimum: 1, maximum: 100});
+    });
+
+    it('under-claims a descriptor with no schema() hook to {} rather than guessing a bound', () => {
+        class Ledger {
+            balance() {
+                return 0;
+            }
+        }
+        recordReturnConstraint(Ledger.prototype, 'balance', opaqueConstraint({}));
+
+        // The same honest-degradation floor the parameter fragments use — {} never rejects.
+        expect(returnsSchema(Ledger, 'balance')).toEqual({});
+    });
+
+    it('omits the returns key entirely on a method with no reified @Returns', () => {
+        class Task {
+            send(_message: string) {
+                /* no-op */
+            }
+        }
+        recordParameterConstraint(Task.prototype, 'send', 0, StringMinLength(3));
+
+        const send = (schemaForClass(Task).methods as JsonObject).send as JsonObject;
+        expect(send.returns).toBeUndefined();
+    });
+
+    it('orders `returns` after `prefixItems` in canonical output, so a regen does not churn', () => {
+        class Task {
+            send(_message: string) {
+                return 0;
+            }
+        }
+        recordParameterConstraint(Task.prototype, 'send', 0, StringMinLength(3));
+        recordReturnConstraint(Task.prototype, 'send', GreaterThan(0));
+
+        const send = (schemaForClass(Task).methods as JsonObject).send as JsonObject;
+        expect(Object.keys(send)).toEqual(['title', 'type', 'prefixItems', 'returns']);
+    });
+
+    it('carries a static method’s @Returns under staticMethods (the other key band)', () => {
+        class Task {
+            static parse(_input: string) {
+                return 0;
+            }
+        }
+        recordParameterConstraint(Task, 'parse', 0, StringMinLength(3));
+        recordReturnConstraint(Task, 'parse', GreaterThanEqual(0));
+
+        const parse = (schemaForClass(Task).staticMethods as JsonObject).parse as JsonObject;
+        expect(parse.returns).toEqual({type: 'number', minimum: 0});
+    });
+
+    it('surfaces an inherited @Returns in the subclass schema (DEC-022 union, free)', () => {
+        class Base {
+            make() {
+                return 0;
+            }
+        }
+        class Sub extends Base {}
+        recordReturnConstraint(Base.prototype, 'make', GreaterThanEqual(0));
+
+        // Sub declares nothing; the effective `post` union still reports the inherited descriptor.
+        expect(returnsSchema(Sub, 'make')).toEqual({type: 'number', minimum: 0});
     });
 });
 

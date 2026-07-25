@@ -690,6 +690,31 @@ export function getEffectivePostconditionKeys(target: ContractTarget): MethodKey
     return keys;
 }
 
+// --- reified return-constraint band reads (DEC-033, Q-11) ------------------
+
+/**
+ * Every reified return constraint in force on `target[key]`, base-most class first — the descriptor
+ * `@Returns(<descriptor>)` tier written by {@link recordReturnConstraint}. This is the read the
+ * installer plans the return check from AND the read the fuzzer's oracle consumes for the reified band.
+ *
+ * A thin wrapper over the `post` union {@link getEffectiveContract} already computes: `post` is
+ * concatenated base-most first there, so a subclass `@Returns` **conjoins** its ancestors' (covariant
+ * strengthening, orthodox Meyer — free, exactly as the closure band's {@link getEffectivePostconditions}
+ * is). It is the descriptor twin of the closure band, so a method may carry both: a `@Ensures` closure
+ * (opaque, this returns nothing for it) and a `@Returns` descriptor (projectable, returned here).
+ *
+ * Kept **internal** — not exported from root `index.ts` — for the same reason
+ * {@link getEffectiveContractKeys} is: it is installer/projection plumbing, and Q-6 makes every
+ * registry export semver-relevant. A projection reads `getEffectiveContract().post` directly.
+ */
+export function getEffectiveReturnConstraints(
+    target: ContractTarget,
+    key: MethodKey,
+): ReadonlyArray<ConstraintDescriptor> {
+    const contract = getEffectiveContract(target, key);
+    return contract ? contract.post : EMPTY_CONSTRAINTS;
+}
+
 // --- field band reads (GAP-9) ----------------------------------------------
 
 /**
@@ -1109,6 +1134,48 @@ function postconditionEntry(target: ContractTarget, key: MethodKey): Postconditi
         byKey.set(key, list);
     }
     return list;
+}
+
+// --- reified return-constraint band writes (DEC-033, Q-11) -----------------
+
+/**
+ * Record a descriptor-shaped postcondition against `target[key]` — the reified `@Returns(<descriptor>)`
+ * tier. Writes to the reserved {@link MethodContract.post} slot (Q-11 kept it reserved for exactly
+ * this; DEC-032/DEC-033), the *first* writer that slot has ever had.
+ *
+ * This is the projectable half of the postcondition story. Unlike a `@Ensures` closure — which lives
+ * in its own band ({@link recordPostcondition}) precisely because a closure carries no identity or
+ * params — a return descriptor is data: it is checked by the same `descriptor.predicate` machinery
+ * parameter constraints use (DEC-010) AND emitted into docs/schema. It therefore rejects a bare
+ * predicate exactly as {@link recordParameterConstraint} does; a closure does not live in a descriptor
+ * band.
+ *
+ * `position` means what it does on {@link recordParameterConstraint}: `@Returns` passes `'prepend'`
+ * because method decorators stack bottom-up under `__decorate`, so prepending yields declaration order
+ * (DEC-015/DEC-017), matching `@Ensures`.
+ */
+export function recordReturnConstraint(
+    target: ContractTarget,
+    key: MethodKey,
+    constraint: ConstraintDescriptor,
+    position: ConstraintPosition = 'append',
+): void {
+    if (!constraint || typeof constraint.predicate !== 'function') {
+        throw new TypeError(
+            'recordReturnConstraint: expected a ConstraintDescriptor. Bare predicates are not ' +
+                'accepted — a closure carries no identity or params, so nothing can be projected from it ' +
+                '(DEC-006). Use @Ensures for a closure postcondition.',
+        );
+    }
+    if (position !== 'append' && position !== 'prepend') {
+        throw new TypeError(
+            `recordReturnConstraint: position must be 'append' or 'prepend', received ${String(position)}`,
+        );
+    }
+
+    const post = methodEntry(target, key).post;
+    if (position === 'prepend') post.unshift(constraint);
+    else post.push(constraint);
 }
 
 // --- sensitivity band writes (DEC-PII-1/2) ---------------------------------

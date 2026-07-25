@@ -240,12 +240,20 @@ export function generateSchema(options?: SchemaOptions): string {
 // ---------------------------------------------------------------------------
 
 /**
- * A method projects to its **argument tuple** — `{type: 'array', prefixItems: [<per-parameter>]}`.
+ * A method projects to its **argument tuple** — `{type: 'array', prefixItems: [<per-parameter>]}` —
+ * plus, when it carries a reified `@Returns` contract (DEC-033), a `returns` sub-schema for the
+ * return value (the OpenAPI-response half, IDEA-7/IDEA-12).
  *
  * Positions are filled `0..maxContractedIndex`; a gap (an undecorated position before a decorated
  * one) is `{}` (accept anything), the same gap-filling `docs.ts` does for signatures. No `minItems`/
  * `maxItems` and no `items: false`: arity is not reliably known and a trailing-optional or variadic
  * call must not be rejected (under-claim).
+ *
+ * `returns` is built from the descriptor `post` band with the exact same `schema()`-hook extraction and
+ * conjunction merge parameters use — a descriptor with no `schema()` hook contributes `{}`, and the
+ * whole under-claim discipline is inherited unchanged. It is an annotation keyword a tuple-validator
+ * ignores (like `methods`/`staticMethods`), emitted only when the band is non-empty, so the argument
+ * tuple stays an honest tuple schema.
  */
 function methodSchema(className: string, entry: ClassMethodContract): JsonObject {
     const params = entry.contract.params;
@@ -264,6 +272,11 @@ function methodSchema(className: string, entry: ClassMethodContract): JsonObject
             prefixItems.push(match ? mergeFragments(schemaFragmentsOf(match.constraints)) : {});
         }
         schema.prefixItems = prefixItems;
+    }
+
+    const post = entry.contract.post;
+    if (post.length > 0) {
+        schema.returns = mergeFragments(schemaFragmentsOf(post));
     }
 
     return schema;
@@ -408,6 +421,7 @@ const KEY_ORDER = [
     'format',
     'properties',
     'prefixItems',
+    'returns',
     'items',
     'required',
     'allOf',

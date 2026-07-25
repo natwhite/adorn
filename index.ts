@@ -25,6 +25,7 @@ import {Verify} from './src/Validation/Verify';
 import {Log} from './src/MethodDecorators/Log';
 import {Time, setTimingSink} from './src/MethodDecorators/Time';
 import {Ensures} from './src/MethodDecorators/Ensures';
+import {Returns} from './src/MethodDecorators/Returns';
 
 // --- Installation & diagnostics -------------------------------------------
 import {Contract, Validate} from './src/Core/ContractInstaller';
@@ -130,6 +131,13 @@ export {
     // (covariant strengthening, free via the DEC-021/022 union). `evaluatePostconditions` below
     // is the same oracle the fuzzer consumes.
     Ensures,
+    // `@Returns(<descriptor>)` (DEC-033) — the projectable postcondition tier. Records an existing
+    // ConstraintDescriptor into the reserved `post` band, so the return value is checked by the same
+    // predicate machinery preconditions use (DEC-010) AND emitted into docs (a Returns table) and
+    // schema (a `returns` fragment). Coexists with @Ensures on one method — the reified band is
+    // checked first; a descriptor relates one value, a closure relates result-to-inputs. The registry
+    // writer/reader (recordReturnConstraint / getEffectiveReturnConstraints) stay internal (Q-6).
+    Returns,
 
     /**
      * BREAKING (P1.3) — required on any class using parameter constraints.
