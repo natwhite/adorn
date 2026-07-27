@@ -4,6 +4,12 @@
   "description": "A collection of convinient TypeScript decorators and simplified decorator creation wrapper",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "adorn": "dist/src/cli/main.js"
   },

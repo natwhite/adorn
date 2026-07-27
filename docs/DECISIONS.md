@@ -756,3 +756,18 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Consequences.** ~10 historical file-path references in older `docs/` plans/spikes (e.g. `implementation-plan-t0-t1`, `observability-plan`, `pii-redaction-plan`) now name old `Core/` paths — left as historical records, not rewritten. The recurring in-source `.js` artifact friction the restructure surfaced is logged as SMELL-21.
 
+---
+
+## DEC-039 — The registry read surface is the semver-frozen public API (Q-6)
+**Status:** ACCEPTED · resolves Q-6 · enforced by `test/public-surface.test.ts`
+
+**Context.** Q-6 flagged the registry introspection surface as semver-relevant with rising stakes — three shipped consumers (docs projection, schema projection, the CLI) plus the fuzzer now read it — and left "what is public-frozen vs internal" formally undecided. The trio and GAP-8 raised the stakes again.
+
+**Decision.**
+- **The registry introspection READ surface is the semver-frozen public API**: `getContracts`, `getContract`, `getContractedClasses`, `getContractsForClass`, `getFieldContract`/`getFieldContracts`/`getFieldContractsForClass`, and the `getEffective*` reads (`getEffectiveFieldConstraints`, `getEffectiveFieldContract`, `getEffectiveContract`, `getEffectiveParameterConstraints`, `getEffectivePostconditions`).
+- **The WRITERS and key/internal-reader helpers stay internal permanently**: `record*` (parameter/field/postcondition/return/telemetry/sensitivity), `set*Metadata`, `mark*Installed`, `registerContractedClass`, `resetRegistry`, `setClassEnumerationEnabled`, and every `*Keys`/internal reader (`getEffectiveContractKeys`, `get*PostconditionKeys`, `getEffectiveReturnConstraints`). Exporting one would let a caller bypass the adapter that owns declaration ordering (SMELL-13) and write contracts the enforcement path never sees.
+- **Enforced mechanically**, not by convention: `test/public-surface.test.ts` asserts the reads are present and callable, the writers/`*Keys` are absent from the root, and pins the total value-export count at **72** as a deliberate-change tripwire (any intentional surface change updates the count in the same commit).
+- The O1 event-union types stay "frozen but additive" (all-optional/object-shaped) per DEC-035/DEC-036 — additive growth is allowed, arity/shape breaks are not.
+
+**Consequences.** This freezes the read/write boundary and makes drift a CI failure; it is deliberately **not** a version-number or npm-release commitment (publication process was deprioritized in the ③ direction choice). GAP-11's `exports` map makes that frozen surface the one thing a consumer resolves.
+
