@@ -45,7 +45,11 @@ import {
     MethodKey,
     ParameterContract,
 } from '../Core/ContractRegistry';
-import {resolveParameterDisclosure, resolveReturnDisclosure, ResolvedDisclosure} from '../Core/telemetryDisclosure';
+import {
+    resolveParameterDisclosure,
+    resolveReturnDisclosure,
+    ResolvedDisclosure,
+} from '../Core/telemetryDisclosure';
 import {RETURN_INDEX} from '../Core/Observation';
 
 // ---------------------------------------------------------------------------

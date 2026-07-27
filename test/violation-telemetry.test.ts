@@ -18,7 +18,10 @@ import {Ensures} from '../src/MethodDecorators/Ensures';
 import {resetRegistry} from '../src/Core/ContractRegistry';
 import {resetConfiguration, setEnforcementMode, setViolationPolicy} from '../src/Core/Configuration';
 import {resetValueDisclosure, setValueDisclosure} from '../src/Core/redaction';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
+import {
+    resetContractDiagnostics,
+    setContractDiagnosticsSink,
+} from '../src/Adapters/legacy/ContractDiagnostics';
 import {
     getObservationSink,
     setObservationSink,
@@ -90,7 +93,11 @@ describe('precondition violations', () => {
             blame: 'caller',
         });
         expect(v.error?.type).toBe('adorn.greaterThan');
-        expect(v.observation).toMatchObject({owner: 'Accounts', member: 'transfer', name: 'Accounts.transfer'});
+        expect(v.observation).toMatchObject({
+            owner: 'Accounts',
+            member: 'transfer',
+            name: 'Accounts.transfer',
+        });
     });
 
     it('keeps facts value-free and redacts error.message by default; raw only under disclosure', () => {

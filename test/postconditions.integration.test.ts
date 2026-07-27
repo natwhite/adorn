@@ -19,7 +19,10 @@ import {
     ViolationSite,
 } from '../src/Core/Configuration';
 import {resetValueDisclosure, setValueDisclosure} from '../src/Core/redaction';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
+import {
+    resetContractDiagnostics,
+    setContractDiagnosticsSink,
+} from '../src/Adapters/legacy/ContractDiagnostics';
 
 beforeEach(() => {
     resetRegistry();

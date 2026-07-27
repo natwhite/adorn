@@ -673,8 +673,7 @@ function observeSettledPromise(
 
 /** Structured facts for a *violation* error: `adorn.<constraint>`, or `_OTHER` for a degraded closure. */
 function violationErrorFacts(error: unknown, constraint: string): ErrorFacts {
-    const type =
-        constraint && constraint !== OTHER_CONSTRAINT ? `adorn.${constraint}` : OTHER_CONSTRAINT;
+    const type = constraint && constraint !== OTHER_CONSTRAINT ? `adorn.${constraint}` : OTHER_CONSTRAINT;
     return {type, message: errorMessage(error), stack: errorStack(error)};
 }
 

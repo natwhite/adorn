@@ -320,10 +320,7 @@ let classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
  * Own-scoped and index-keyed, so a subclass conjoins rather than un-marks, and minification cannot break
  * the keying. Record-only: no key here ever causes an installer to attach anything.
  */
-let parameterTelemetryByTarget = new WeakMap<
-    ContractTarget,
-    Map<MethodKey, Map<number, TelemetryMarking>>
->();
+let parameterTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, TelemetryMarking>>>();
 
 /** Return telemetry: target → method key → marking (`@Telemetry.result()`). The disclosure-side of Q-23. */
 let returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
@@ -1298,7 +1295,9 @@ export function recordParameterTelemetry(
     marking: TelemetryMarking,
 ): void {
     if (!isRegisterableTarget(target)) {
-        throw new TypeError('recordParameterTelemetry: target must be an object (a prototype or constructor)');
+        throw new TypeError(
+            'recordParameterTelemetry: target must be an object (a prototype or constructor)',
+        );
     }
     if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
         throw new TypeError(
@@ -1561,10 +1560,7 @@ export function resetRegistry(): void {
         Map<MethodKey, Map<number, SensitivityMarking>>
     >();
     classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
-    parameterTelemetryByTarget = new WeakMap<
-        ContractTarget,
-        Map<MethodKey, Map<number, TelemetryMarking>>
-    >();
+    parameterTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, TelemetryMarking>>>();
     returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
     classEnumerationEnabled = true;
 }

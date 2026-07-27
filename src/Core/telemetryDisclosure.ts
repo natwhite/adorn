@@ -63,11 +63,23 @@ function resolve(sensitive: boolean, declared: TelemetryMarking | undefined): Re
     // The veto wins first, always (DEC-025). Distinguish a veto-of-an-explicit-opt-in (surfaced) from a
     // plain sensitive position with no opt-in (nothing to surface).
     if (sensitive) {
-        return {disclosure: 'deny', sensitive: true, declared: !!declared, vetoed: !!declared, name: declared?.name};
+        return {
+            disclosure: 'deny',
+            sensitive: true,
+            declared: !!declared,
+            vetoed: !!declared,
+            name: declared?.name,
+        };
     }
     if (declared) {
         // The per-parameter production opt-in: 'value' emits the value, {redact} emits a surrogate.
-        return {disclosure: declared.disclose, sensitive: false, declared: true, vetoed: false, name: declared.name};
+        return {
+            disclosure: declared.disclose,
+            sensitive: false,
+            declared: true,
+            vetoed: false,
+            name: declared.name,
+        };
     }
     // Nothing declared: the global local-debug switch is the only remaining way a value discloses, and it
     // never reaches a `@Sensitive` position (handled above). Otherwise deny — THE default.
@@ -79,8 +91,7 @@ function resolve(sensitive: boolean, declared: TelemetryMarking | undefined): Re
 
 /** Whether parameter `index` of `target[key]` is `@Sensitive`, honouring class-level and inherited marks. */
 function parameterSensitive(target: ContractTarget, key: MethodKey, index: number): boolean {
-    const owner =
-        typeof target === 'function' ? target : (target as {constructor?: Function}).constructor;
+    const owner = typeof target === 'function' ? target : (target as {constructor?: Function}).constructor;
     if (typeof owner === 'function' && getEffectiveClassSensitivity(owner)) return true;
     for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
         if (getParameterSensitivity(cursor, key, index)) return true;
@@ -90,8 +101,7 @@ function parameterSensitive(target: ContractTarget, key: MethodKey, index: numbe
 
 /** Whether the return of `target[key]` is `@Sensitive`, honouring class-level and inherited marks. */
 function returnSensitive(target: ContractTarget, key: MethodKey): boolean {
-    const owner =
-        typeof target === 'function' ? target : (target as {constructor?: Function}).constructor;
+    const owner = typeof target === 'function' ? target : (target as {constructor?: Function}).constructor;
     if (typeof owner === 'function' && getEffectiveClassSensitivity(owner)) return true;
     return !!getEffectiveFieldSensitivity(target, key);
 }
@@ -102,7 +112,10 @@ export function resolveParameterDisclosure(
     key: MethodKey,
     index: number,
 ): ResolvedDisclosure {
-    return resolve(parameterSensitive(target, key, index), getEffectiveParameterTelemetry(target, key, index));
+    return resolve(
+        parameterSensitive(target, key, index),
+        getEffectiveParameterTelemetry(target, key, index),
+    );
 }
 
 /** Resolve the telemetry disclosure in force on the return of `target[key]`. */

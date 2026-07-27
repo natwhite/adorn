@@ -85,10 +85,7 @@ import {arbitraryForParameter, Arbitrary, ParameterArbitrary} from './arbitrarie
 export type OracleMode = 'weak-invariant' | 'postcondition';
 
 export type FindingType =
-    | 'unexpected-throw'
-    | 'contract-violation'
-    | 'invariant-violation'
-    | 'postcondition-violation';
+    'unexpected-throw' | 'contract-violation' | 'invariant-violation' | 'postcondition-violation';
 
 /** A reproducible counterexample. The seed is the whole point — a finding you cannot replay is noise. */
 export interface FuzzFinding {
@@ -601,11 +598,7 @@ function checkFieldInvariants(
  * reported. A postcondition that *threw* is surfaced as a postcondition-violation naming the thrown
  * value, so a buggy oracle is not mistaken for the bug it hunts (foundation §5.2 pt 1).
  */
-function checkPostconditionBands(
-    result: unknown,
-    args: unknown[],
-    ctx: OracleContext,
-): OracleOutcome | null {
+function checkPostconditionBands(result: unknown, args: unknown[], ctx: OracleContext): OracleOutcome | null {
     for (const descriptor of ctx.returns) {
         if (descriptor.predicate(result)) continue;
         return {
@@ -754,7 +747,8 @@ function describeOracles(
 ): string[] {
     const out: string[] = [];
     for (const descriptor of returns) out.push(`@Returns ${descriptor.constraint}: ${descriptor.describe()}`);
-    for (const post of posts) out.push(`@Ensures: ${post.description || '(anonymous closure postcondition)'}`);
+    for (const post of posts)
+        out.push(`@Ensures: ${post.description || '(anonymous closure postcondition)'}`);
     return out;
 }
 

@@ -132,7 +132,13 @@ function isObservableLike(value: any): boolean {
 function settleThenable<T>(result: any, started: number, onSettle: OnSettle<T>): any {
     return Promise.resolve(result).then(
         (value: any) => {
-            onSettle({outcome: 'returned', value, durationMs: now() - started, kind: 'promise', settled: true});
+            onSettle({
+                outcome: 'returned',
+                value,
+                durationMs: now() - started,
+                kind: 'promise',
+                settled: true,
+            });
             return value;
         },
         (error: any) => {
@@ -168,7 +174,13 @@ function settleObservable<T>(source: any, onSettle: OnSettle<T>): any {
         const subscription = source.subscribe({
             next: (value: any) => subscriber.next(value),
             error: (error: any) => {
-                once({outcome: 'threw', error, durationMs: now() - started, kind: 'observable', settled: true});
+                once({
+                    outcome: 'threw',
+                    error,
+                    durationMs: now() - started,
+                    kind: 'observable',
+                    settled: true,
+                });
                 subscriber.error(error);
             },
             complete: () => {

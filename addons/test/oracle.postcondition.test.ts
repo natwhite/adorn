@@ -104,7 +104,10 @@ describe('@Ensures closure band — the fuzzer finds a return that violates the 
     it('a correct implementation passes', () => {
         @Contract()
         class GoodWallet {
-            @Ensures((result, amount) => (result as number) <= (amount as number), 'never more than deposited')
+            @Ensures(
+                (result, amount) => (result as number) <= (amount as number),
+                'never more than deposited',
+            )
             topUp(@Between(0, 5000) amount: number): number {
                 return amount;
             }

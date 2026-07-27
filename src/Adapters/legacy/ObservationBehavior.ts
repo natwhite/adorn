@@ -55,7 +55,11 @@ import {DecoratorFactory} from '../../Core/common';
 import {REDACTED} from '../../Core/redaction';
 import {getObservationVerbosity} from '../../Core/Configuration';
 import {reportDiagnostic} from './ContractDiagnostics';
-import {resolveParameterDisclosure, resolveReturnDisclosure, ResolvedDisclosure} from '../../Core/telemetryDisclosure';
+import {
+    resolveParameterDisclosure,
+    resolveReturnDisclosure,
+    ResolvedDisclosure,
+} from '../../Core/telemetryDisclosure';
 
 /** The install-time options `@Observe` resolves and hands to {@link observeBehavior}. */
 export interface ObserveConfig {
@@ -149,9 +153,7 @@ function buildObservation(context: InvocationContext, config: ObserveConfig): Bu
 
     // Surface the `@Sensitive`-veto-of-an-explicit-opt-in collision (Q-24 R8): the value stays redacted, but
     // the collision is announced once (this build runs once per decorated method) rather than silenced.
-    const vetoed = parameters
-        .filter(p => p.vetoed)
-        .map(p => `#${p.index}${p.name ? ` (${p.name})` : ''}`);
+    const vetoed = parameters.filter(p => p.vetoed).map(p => `#${p.index}${p.name ? ` (${p.name})` : ''}`);
     if (returnDisclosure.vetoed) vetoed.push('return');
     if (vetoed.length > 0) {
         reportDiagnostic(
@@ -227,7 +229,9 @@ function renderReturnValues(
     if (!returnDisclosure.declared || settlement.outcome !== 'returned') return [];
     const disclosure = returnDisclosure.disclosure;
     if (disclosure === 'value') {
-        return [{index: RETURN_INDEX, name: 'return', disclosed: true, rendering: renderScalar(settlement.value)}];
+        return [
+            {index: RETURN_INDEX, name: 'return', disclosed: true, rendering: renderScalar(settlement.value)},
+        ];
     }
     if (typeof disclosure === 'object') {
         return [
@@ -294,7 +298,10 @@ function renderScalar(value: unknown): string | number | boolean | null {
 function applyStrategy(strategy: string, value: unknown): string | number | boolean | null {
     if (strategy === 'type') return typeName(value);
     if (strategy === 'length') {
-        const len = value && typeof (value as {length?: unknown}).length === 'number' ? (value as {length: number}).length : null;
+        const len =
+            value && typeof (value as {length?: unknown}).length === 'number'
+                ? (value as {length: number}).length
+                : null;
         return len;
     }
     // Unknown strategy is rejected at decoration time; if one slips through, redact rather than guess.
@@ -369,7 +376,12 @@ function summarize(event: ObservationEvent): object {
         };
     }
     if (event.kind === 'violation') {
-        return {kind: 'violation', name, violation: event.violation, ...(event.error ? {error: event.error} : {})};
+        return {
+            kind: 'violation',
+            name,
+            violation: event.violation,
+            ...(event.error ? {error: event.error} : {}),
+        };
     }
     return {
         kind: 'message',
@@ -395,7 +407,9 @@ function reflectTypes(target: object, key: MethodKey): Array<string | undefined>
         return [];
     }
     if (!Array.isArray(types)) return [];
-    return (types as unknown[]).map(entry => (typeof entry === 'function' && entry.name ? entry.name : undefined));
+    return (types as unknown[]).map(entry =>
+        typeof entry === 'function' && entry.name ? entry.name : undefined,
+    );
 }
 
 function ownerNameOf(target: object): string {

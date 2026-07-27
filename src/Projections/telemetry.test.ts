@@ -32,7 +32,9 @@ beforeEach(() => {
 
 function methodOf(report: {classes: ReadonlyArray<ClassTelemetry>}, method: string) {
     const positions: PositionTelemetry[] = [];
-    report.classes.forEach(c => c.methods.forEach(m => (m.name === method ? positions.push(...m.positions) : null)));
+    report.classes.forEach(c =>
+        c.methods.forEach(m => (m.name === method ? positions.push(...m.positions) : null)),
+    );
     return positions;
 }
 
@@ -116,7 +118,10 @@ describe('serializeTelemetry renders the table with its scanned denominator', ()
     it('states what it scanned and renders the state cells', () => {
         @Contract()
         class Accounts {
-            transfer(@Telemetry.value() @GreaterThan(0) amount: number, @StringMinLength(1) memo: string): number {
+            transfer(
+                @Telemetry.value() @GreaterThan(0) amount: number,
+                @StringMinLength(1) memo: string,
+            ): number {
                 return amount;
             }
         }

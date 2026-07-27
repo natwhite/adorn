@@ -15,11 +15,20 @@ import {Telemetry} from '../src/Telemetry/Telemetry';
 import {Sensitive} from '../src/Sensitive/Sensitive';
 import {GreaterThan} from '../src/ParameterDecorators/Constraints';
 import {consoleObservationSink} from '../src/Adapters/legacy/ObservationBehavior';
-import {getObservationSink, setObservationSink, ObservationEvent, ObservationCall, RETURN_INDEX} from '../src/Core/Observation';
+import {
+    getObservationSink,
+    setObservationSink,
+    ObservationEvent,
+    ObservationCall,
+    RETURN_INDEX,
+} from '../src/Core/Observation';
 import {resetRegistry} from '../src/Core/ContractRegistry';
 import {resetConfiguration, setObservationVerbosity, setViolationPolicy} from '../src/Core/Configuration';
 import {resetValueDisclosure} from '../src/Core/redaction';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
+import {
+    resetContractDiagnostics,
+    setContractDiagnosticsSink,
+} from '../src/Adapters/legacy/ContractDiagnostics';
 
 let events: ObservationEvent[];
 let scopeCalls: ObservationCall[];
@@ -84,7 +93,12 @@ describe('@Observe opens a scope and emits one completion', () => {
         expect(completions()).toHaveLength(1);
         const c = completions()[0];
         expect(c.outcome).toBe('returned');
-        expect(c.observation).toMatchObject({owner: 'Svc', member: 'work', name: 'Svc.work', kind: 'internal'});
+        expect(c.observation).toMatchObject({
+            owner: 'Svc',
+            member: 'work',
+            name: 'Svc.work',
+            kind: 'internal',
+        });
         expect(typeof c.durationMs).toBe('number');
     });
 

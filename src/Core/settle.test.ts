@@ -25,7 +25,10 @@ function busyWait(ms: number): void {
 describe('settle — synchronous', () => {
     it('hands back the value and reports a returned/sync settlement', () => {
         const seen: Settlement<number>[] = [];
-        const out = settle(() => 42, s => seen.push(s));
+        const out = settle(
+            () => 42,
+            s => seen.push(s),
+        );
 
         expect(out).toBe(42);
         expect(seen).toHaveLength(1);
@@ -36,10 +39,13 @@ describe('settle — synchronous', () => {
 
     it('measures the operation itself, not ~0 (the thunk runs inside settle)', () => {
         const seen: Settlement<string>[] = [];
-        settle(() => {
-            busyWait(30);
-            return 'done';
-        }, s => seen.push(s));
+        settle(
+            () => {
+                busyWait(30);
+                return 'done';
+            },
+            s => seen.push(s),
+        );
 
         // A result-taking classifier would see the value after the 30ms already elapsed and report ~0.
         expect(seen[0].durationMs).toBeGreaterThanOrEqual(30 * 0.8);
@@ -50,9 +56,12 @@ describe('settle — synchronous', () => {
         const seen: Settlement<never>[] = [];
 
         expect(() =>
-            settle<never>(() => {
-                throw boom;
-            }, s => seen.push(s)),
+            settle<never>(
+                () => {
+                    throw boom;
+                },
+                s => seen.push(s),
+            ),
         ).toThrow(boom);
 
         expect(seen).toHaveLength(1);
@@ -64,7 +73,10 @@ describe('settle — synchronous', () => {
 
     it('invokes onSettle exactly once', () => {
         let calls = 0;
-        settle(() => 1, () => calls++);
+        settle(
+            () => 1,
+            () => calls++,
+        );
         expect(calls).toBe(1);
     });
 });
@@ -74,7 +86,10 @@ describe('settle — promises', () => {
         // T is the operation's return (a Promise), so the value slot is typed Promise<T> — the same
         // detail @Time lives with by ignoring the value. `any` keeps the runtime assertions honest.
         const seen: Settlement<any>[] = [];
-        const returned = settle(() => Promise.resolve('ok'), s => seen.push(s));
+        const returned = settle(
+            () => Promise.resolve('ok'),
+            s => seen.push(s),
+        );
 
         expect(typeof (returned as Promise<string>).then).toBe('function');
         expect(seen).toHaveLength(0); // nothing until it settles
@@ -89,7 +104,10 @@ describe('settle — promises', () => {
         const seen: Settlement<any>[] = [];
 
         await expect(
-            settle<Promise<never>>(() => Promise.reject(boom), s => seen.push(s)),
+            settle<Promise<never>>(
+                () => Promise.reject(boom),
+                s => seen.push(s),
+            ),
         ).rejects.toBe(boom);
 
         expect(seen[0].outcome).toBe('threw');
@@ -120,7 +138,10 @@ describe('settle — observables with rxjs absent (SMELL-16)', () => {
         };
 
         const seen: Settlement<any>[] = [];
-        const returned = settle(() => source, s => seen.push(s));
+        const returned = settle(
+            () => source,
+            s => seen.push(s),
+        );
 
         // No rxjs to wrap with → the caller's own object is returned, never subscribed.
         expect(returned).toBe(source);

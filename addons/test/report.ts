@@ -124,8 +124,7 @@ function renderMethod(result: FuzzResult): string[] {
 function renderClean(header: string, result: FuzzResult): string[] {
     const seed = result.seed !== undefined ? ` (seed ${result.seed})` : '';
     if (result.oracle === 'postcondition') {
-        const checked =
-            result.oraclesChecked.length > 0 ? result.oraclesChecked.join('; ') : '(none named)';
+        const checked = result.oraclesChecked.length > 0 ? result.oraclesChecked.join('; ') : '(none named)';
         return [
             `- ${header}: clean — ${result.numRuns} cases; postcondition oracle, guarantees held: ${checked}${seed}`,
         ];
