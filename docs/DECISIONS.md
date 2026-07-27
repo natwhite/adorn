@@ -771,3 +771,44 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Consequences.** This freezes the read/write boundary and makes drift a CI failure; it is deliberately **not** a version-number or npm-release commitment (publication process was deprioritized in the ③ direction choice). GAP-11's `exports` map makes that frozen surface the one thing a consumer resolves.
 
+---
+
+## DEC-040 — Direction: a TC39 Stage-3 decorators adapter beside the legacy one
+**Status:** ACCEPTED (direction) · detail in `docs/decision-stage3-adapter.md` · builds on DEC-038 · tracked as IDEA-18 + GAP-13
+
+**Decisions (consolidated from the decision doc's DEC-040..045 proposals).**
+- **Two adapters over one decorator-agnostic Core**: `adorn` (root, **legacy default** — DEC-038/DEC-039 untouched) and `adorn/stage3` (the GAP-11 `exports` map gains a `"./stage3"` subpath). `experimentalDecorators` is a per-compilation switch the consumer owns, so legacy vs standard is a **per-consumer choice, not mixable** in one build — hence two entry points, not a runtime toggle; `index.ts` is not forked (shared exports factored so each entry composes them with its adapter).
+- **The parameter-decorator gap is the crux.** Stage-3 has no parameter decorators, so per-parameter contracts become a **method-level positional descriptor-list spec** — `@Validate({params: [[GreaterThan(0)], [MinLength(3)]]})`, `@Contract({constructor:[...]})` — recording each descriptor into the **same** `recordParameterConstraint` band the legacy per-parameter decorators write. `@Sensitive`/`@Telemetry` are parameter decorators today too, so they fold into the same spec via the same writers. Enforcement and every projection stay adapter-blind (DEC-012).
+- **Field constraints** target Stage-3 `accessor` auto-accessors (standard define-semantics bypass the legacy prototype trampoline). The **enforcement weave + invocation seam + check planner hoist into a shared decorator-agnostic layer** both adapters consume; the `src/Adapters/layering.test.ts` / DEC-012 boundary extends to `stage3/`; **one shared conformance suite** guards against dual-track drift.
+- **Trade:** no `emitDecoratorMetadata`/`design:type` under standard decorators (drop `reflect-metadata`), so type columns degrade to advisory (parameter names unaffected). **Upside:** Stage-3 is *simpler* — a method decorator's returned replacement is honored, so the `__decorate`-clobber / `OverrideObjectDefineProperty` problem (DEC-005) never exists in that adapter.
+
+## DEC-041 — Direction: the add-on ecosystem and its priority order
+**Status:** ACCEPTED (direction) · detail in `docs/decision-addon-ecosystem.md` · extends DEC-019
+
+**Decisions.**
+- **Priority `@adorn/otel` → `@adorn/rx` → `@adorn/cache`**, ordered by seam-readiness and risk introduced, not headline value.
+- **`@adorn/otel`** (IDEA-14, first): maps `ObservationEvent`/`ViolationFacts`/`Settlement<T>` onto OTel spans/metrics/exceptions, **ends spans via the exported `settle`** (never a reimplementation), honours "seeing ≠ emitting" (DEC-036); `@opentelemetry/api` peer. Needs **zero new core surface** — the O1 seam (DEC-035/037/039) was purpose-built for it, which is why it goes first (also the first real exercise of the peer-dep isolation + frozen-event-union contract).
+- **`@adorn/rx`** (IDEA-8, second): reintroduces `@Memoize`/Observable handling **carrying the BUG-3/5/9/10/11/15 findings + cold-safety verbatim** as design constraints; owns the SMELL-16 `setObservableConstructor()` decision; BUG-15 lands unsolved (documented). Recovers capability rather than adding it.
+- **`@adorn/cache`** (IDEA-15, third): richest/most new machinery — records policy in the new `concern` band (GAP-12/DEC-043), reuses rx's keying, and carries the Q-22 detector. `@adorn/policy` (`@Authorize`, IDEA-16) is Q-22's second half.
+- **Contracts:** heavy deps are peers, never a core specifier; each add-on ships an isolation test mirroring `addons/test/isolation.test.ts`; add-ons consume the frozen public read surface + blessed seams (DEC-039), writers stay internal — otel needs nothing new public, rx one symbol, cache the concern band + a blessed concern-recording seam.
+
+## DEC-042 — Direction: the flow-control family, entirely as add-ons
+**Status:** ACCEPTED (direction) · detail in `docs/decision-flow-control.md` · tracked as IDEA-17
+
+**Decisions.**
+- **The whole family is add-on**, not core (`@adorn/resilience` / `@adorn/limit` / `@adorn/idempotency`), decided on "behaviours are add-ons, the factory is the product" + statefulness — explicitly **not** on dependency weight (these are light). `@Time`/`@Log` remain the only core behaviours. The one enabling core change is the `concern` band (GAP-12/DEC-043).
+- **BUILD:** `@Retry` (attempt cap + data-shaped backoff), `@Timeout` (races the *settlement*; states the "cannot cancel — may leave a mutation half-done" limit up front), `@Fallback`, `@RateLimit` (token bucket, reject-or-bounded-queue), `@ConcurrencyLimit`/`@Queue` (bulkhead; `@Queue` = `ConcurrencyLimit(1)`, the deleted `queue.ts`/SMELL-6 intent), `@CircuitBreaker` (reified state machine), `@Idempotent` (the safety pair that makes `@Retry` correct).
+- **REJECT:** `@Debounce`/`@Throttle` on awaited methods — dishonest by construction (cannot return a result to every caller; they belong on fire-and-forget handlers, where rxjs/lodash already win); Observable/stream flow control (a worse rxjs → `@adorn/rx`). **DEFER:** `@Deadline` (needs an `AsyncLocalStorage` ambient substrate adorn lacks — Q-25-adjacent).
+- **State + settling:** cross-call state is per-instance `WeakMap<receiver, State>` (the BUG-3 rule verbatim); argument keys inherit BUG-11/BUG-15, and under a guard a key collision is a **validation bypass** (Q-22), not a stale value. All settling reuses `settle` (DEC-006, never a second classifier); a dropped/throttled/retried/queued call is a value-free `{kind:'flow'}` O1 event (additive to the DEC-035 union). Composition safety: see DEC-043.
+
+## DEC-043 — The reified `concern` registry band + install-time composition-hazard lints (resolves Q-22)
+**Status:** ACCEPTED · the cross-cutting decision **both DEC-041 and DEC-042 depend on** · resolves Q-22 · built as GAP-12
+
+**Context.** The add-on and flow-control decisioning agents **independently** concluded that `@adorn/cache` and the entire flow-control family need the same thing: a way to know what a composed decorator *is*.
+
+**Decisions.**
+- Build a reified **`concern` registry band** — DEC-008's deliberately-deferred `categories` axis — a decorator-agnostic record of which **concern** each installed behaviour represents (`cache`, `rate-limit`, `guard`, `authz`, …). Built once in Core (GAP-12); it is the shared prerequisite, and its build timing is Q-26.
+- Because decorator composition is registry **data** (order normalised at record time — DEC-017), adorn runs an install-time, **decorator-agnostic composition lint** over the concern band. **Report-only by default** (the DEC-028 stance), with **strict refusal reserved for the genuinely dangerous orderings**: a `cache`/dedup concern recorded **outside** a `guard`-trust contract or an `@Authorize` concern (privilege escalation / validation bypass — Q-22). The escape-hatch shape is Q-25.
+- **Class-level `@Contract()` makes the safe ordering free**: the enforcement weave installs **outermost** (a class decorator running after member decorators), so guard-before-flow-control/cache and postcondition-on-final-result hold **by construction**. The per-method `@Validate()` form is order-sensitive (mirrors the DEC-032 `@Ensures` caveat) — which is where the lint earns its keep.
+- This turns Q-22 from an open hazard into a designed-in safety property, and opens a composition-hazard / operational-profile projection reading the concern band (IDEA-19).
+
