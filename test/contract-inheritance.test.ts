@@ -26,11 +26,11 @@
  * reversal of this rule.
  */
 
-import {Contract, Validate} from '../src/Core/ContractInstaller';
+import {Contract, Validate} from '../src/Adapters/legacy/ContractInstaller';
 import {GreaterThanEqual, StringMinLength} from '../src/ParameterDecorators/Constraints';
-import {ParameterDecoratorFactory} from '../src/Core/ParameterDecoratorFactory';
+import {ParameterDecoratorFactory} from '../src/Adapters/legacy/ParameterDecoratorFactory';
 import {getContract, getContractsForClass} from '../src/Core/ContractRegistry';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Core/ContractDiagnostics';
+import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
 
 describe('an overridden method inherits its parent constraints (DEC-022)', () => {
     it('checks an override that declares no constraints at all — the headline case', () => {

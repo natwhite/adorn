@@ -136,37 +136,49 @@ Phase A ships a **weak invariant oracle**: run the method on precondition-valid 
 
 ```
 adorn/
-├── index.ts                              # Public entry point (59 value exports)
+├── index.ts                              # Public entry point (72 value exports)
 ├── src/
-│   ├── Core/
+│   ├── Core/                             # Decorator-agnostic model — imports no adapter (DEC-012)
 │   │   ├── Descriptor.ts                 # Constraints as data (identity + params -> predicate)
 │   │   ├── ContractRegistry.ts           # Where contracts are recorded; public read surface
-│   │   ├── ContractInstaller.ts          # @Contract() / @Validate()
-│   │   ├── MethodDecoratorFactory.ts     # The around-behaviour install seam
-│   │   ├── ParameterDecoratorFactory.ts  # Parameter decorators — record only, never install
-│   │   ├── FieldDecoratorFactory.ts      # Field decorators — record + install an accessor (DEC-021)
 │   │   ├── Postconditions.ts             # evaluatePostconditions — the shared oracle (DEC-032)
-│   │   ├── Configuration.ts              # Trust / enforcement / violation policy (DEC-008)
+│   │   ├── Configuration.ts              # Trust / enforcement / violation policy / verbosity (DEC-008)
 │   │   ├── redaction.ts                  # Safe-by-default emission (DEC-030)
-│   │   ├── ContractDiagnostics.ts        # Missing-@Contract() dev warning
+│   │   ├── Observation.ts                # O1 sink interface + event union (DEC-035)
+│   │   ├── settle.ts                     # Shared settling classifier — Settlement<T> (DEC-035)
+│   │   ├── telemetryDisclosure.ts        # The one veto+opt-in+global disclosure resolver (DEC-037)
+│   │   ├── ViolationError.ts             # Error subclass carrying value-free ViolationFacts
 │   │   ├── DecoratorConfiguration.ts     # Legacy config shim, inert (superseded by Configuration.ts)
 │   │   └── common.ts                     # Param-name recovery, stack attribution
+│   ├── Adapters/                         # The decorator-adapter layer (GAP-8) — may import Core/Contracts
+│   │   ├── legacy/                       # Legacy (experimentalDecorators) adapter; a stage3/ sibling can join it
+│   │   │   ├── ContractInstaller.ts      # @Contract() / @Validate() + the enforcement weave
+│   │   │   ├── MethodDecoratorFactory.ts # The around-behaviour install seam
+│   │   │   ├── ParameterDecoratorFactory.ts # Parameter decorators — record only, never install
+│   │   │   ├── FieldDecoratorFactory.ts  # Field decorators — record + install an accessor (DEC-021)
+│   │   │   ├── ContractDiagnostics.ts    # Missing-@Contract() dev warning
+│   │   │   └── ObservationBehavior.ts    # The MethodBehavior @Observe is sugar over (O1c)
+│   │   └── layering.test.ts              # Asserts Core/Contracts/Projections import no adapter (DEC-012)
 │   ├── Contracts/                        # Built-in constraint descriptors (decorator-free)
 │   │   ├── number.ts                     # totality + NaN handling (BUG-4, Q-7)
 │   │   └── string.ts
 │   ├── ParameterDecorators/Constraints.ts# GreaterThan / StringMinLength / Matches / ...
-│   ├── FieldDeocrators/Enforce.ts        # (sic) misspelled dir — Enforce.* field decorators
+│   ├── FieldDecorators/Enforce.ts        # Enforce.* field decorators
 │   ├── MethodDecorators/
 │   │   ├── Log.ts                        # Log()
 │   │   ├── Time.ts                       # Time() + setTimingSink()
-│   │   └── Ensures.ts                    # @Ensures postconditions
+│   │   ├── Ensures.ts                    # @Ensures closure postconditions (DEC-032)
+│   │   ├── Returns.ts                    # @Returns reified postcondition tier (DEC-033)
+│   │   └── Observe.ts                    # @Observe observation scope (DEC-037)
 │   ├── Sensitive/Sensitive.ts            # @Sensitive record-only marker
+│   ├── Telemetry/Telemetry.ts            # @Telemetry.value/.redact/.result disclosure opt-in (DEC-037)
 │   ├── Projections/
 │   │   ├── docs.ts                       # Markdown from recorded contracts
-│   │   └── schema.ts                     # JSON Schema (draft 2020-12) from recorded contracts
+│   │   ├── schema.ts                     # JSON Schema (draft 2020-12) from recorded contracts
+│   │   └── telemetry.ts                  # Telemetry/disclosure report (DEC-037)
 │   ├── Validation/Verify.ts             # Imperative assertion helper
 │   └── cli/                              # `adorn` CLI (docs / schema / check) — bin entry
-├── addons/test/                          # @adorn/test — fast-check fuzzing (Phase A), isolated from dist
+├── addons/test/                          # @adorn/test — fast-check fuzzing (Phase A+B), isolated from dist
 ├── tools/sensitive-flow/                 # Build-time sensitive-flow detector (ESLint rule + `adorn check`)
 ├── examples/demo.ts                      # Manual smoke script (excluded from the build)
 ├── docs/                                 # Decision log, issue tracker, plans, research
@@ -220,11 +232,10 @@ npm run demo       # ts-node examples/demo.ts
 
 - **Arity is lost.** A wrapped method reports `length === 0` rather than its real arity; its `.name` is correct (BUG-7 residue, Q-10). Destructured/rest signatures also yield no arity and can misalign recovered names.
 - **Parameter names come from `Function.prototype.toString()`.** Minification degrades them (`["message","someNumber"]` → `["s","t"]`), and since BUG-14 that degradation propagates into generated documents. Enforcement and documentation degrade *together*, which is the property that matters (SMELL-1).
-- **The `src/FieldDeocrators/` directory name is misspelled.** Renaming touches the public entry point, so it is deferred (SMELL-7).
 - **`DecoratorConfiguration.ts` is inert**, retained only as a migration shim; the live configuration is `Core/Configuration.ts` (SMELL-4 / DEC-008).
 - **Hand-written predicate closures can't be projected.** A constraint that is a closure rather than a descriptor is enforced but invisible to docs, schema, and fuzzing (Q-3 / SMELL-14) — "decorate your code, get a fuzz suite" is partial by construction.
 - **The `@Sensitive` primitive-parameter gap is permanent.** `transfer(ssn: string)` must be marked on the parameter; the connection to a `@Sensitive` field is destroyed by JavaScript's value semantics (DEC-PII-5).
-- `strict: false` is still set; the reactive `@Memoize` decorator and `rxjs` were removed from core (they will return as a separate `@adorn/rx` add-on — IDEA-8), so `@Time` degrades to `settled: false` when no Observable library is present.
+- `strict: false` is still set, but the zero-cost sub-flags are on (`strictFunctionTypes`, `strictBindCallApply`, `noImplicitThis`, `useUnknownInCatchVariables`, `alwaysStrict`); `strictNullChecks` / `noImplicitAny` / `strictPropertyInitialization` carry real cost and are deferred (SMELL-12). The reactive `@Memoize` decorator and `rxjs` were removed from core (they will return as a separate `@adorn/rx` add-on — IDEA-8), so `@Time` degrades to `settled: false` when no Observable library is present.
 
 ### Roadmap
 

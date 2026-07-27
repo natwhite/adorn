@@ -31,7 +31,7 @@
  * unchanged.
  */
 
-import {CreateMethodDecorator, InvocationContext} from '../Core/MethodDecoratorFactory';
+import {CreateMethodDecorator, InvocationContext} from '../Adapters/legacy/MethodDecoratorFactory';
 import {settle} from '../Core/settle';
 
 // ---------------------------------------------------------------------------

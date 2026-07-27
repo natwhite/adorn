@@ -69,7 +69,7 @@
  * place, and `__decorate`'s ordering stays known only to this adapter, exactly as DEC-015 requires.
  */
 
-import {ConstraintDescriptor} from './Descriptor';
+import {ConstraintDescriptor} from '../../Core/Descriptor';
 import {
     getContract,
     getEffectiveContract,
@@ -78,12 +78,12 @@ import {
     MethodKey,
     recordParameterConstraint,
     setParameterMetadata,
-} from './ContractRegistry';
+} from '../../Core/ContractRegistry';
 import {notePendingContract} from './ContractDiagnostics';
-import {DecoratorFactory} from './common';
+import {DecoratorFactory} from '../../Core/common';
 import {InvocationContext} from './MethodDecoratorFactory';
-import {shouldDiscloseValue} from './redaction';
-import {ViolationError, ViolationFactsSource} from './ViolationError';
+import {shouldDiscloseValue} from '../../Core/redaction';
+import {ViolationError, ViolationFactsSource} from '../../Core/ViolationError';
 
 /**
  * Object handed to a {@link ParamDeco} closure. Unchanged from the original design — this is public

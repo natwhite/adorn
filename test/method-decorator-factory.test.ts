@@ -21,7 +21,7 @@ import {
     InvocationContext,
     MethodBehavior,
     wrapMethod,
-} from '../src/Core/MethodDecoratorFactory';
+} from '../src/Adapters/legacy/MethodDecoratorFactory';
 
 const passthrough: MethodBehavior = (_context, proceed) => proceed();
 

@@ -68,10 +68,10 @@ import {
     MethodKey,
     Postcondition,
     registerContractedClass,
-} from './ContractRegistry';
-import {ConstraintDescriptor} from './Descriptor';
-import {shouldDiscloseValue} from './redaction';
-import {evaluatePostconditions, postconditionMessage} from './Postconditions';
+} from '../../Core/ContractRegistry';
+import {ConstraintDescriptor} from '../../Core/Descriptor';
+import {shouldDiscloseValue} from '../../Core/redaction';
+import {evaluatePostconditions, postconditionMessage} from '../../Core/Postconditions';
 import {
     applyViolationPolicy,
     ContractTrust,
@@ -79,7 +79,7 @@ import {
     shouldEnforce,
     TrustOptions,
     ViolationSite,
-} from './Configuration';
+} from '../../Core/Configuration';
 import {
     buildParameterEnforcement,
     getEffectiveStagedMethodKeys,
@@ -104,8 +104,8 @@ import {
     ownsCompletion,
     RETURN_INDEX,
     ViolationFacts,
-} from './Observation';
-import {ViolationError} from './ViolationError';
+} from '../../Core/Observation';
+import {ViolationError} from '../../Core/ViolationError';
 
 /**
  * Class decorator that installs every contract recorded against the class, and registers it for

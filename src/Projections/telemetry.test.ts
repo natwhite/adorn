@@ -9,7 +9,7 @@
 
 import 'reflect-metadata';
 
-import {Contract} from '../Core/ContractInstaller';
+import {Contract} from '../Adapters/legacy/ContractInstaller';
 import {GreaterThan, StringMinLength} from '../ParameterDecorators/Constraints';
 import {Telemetry} from '../Telemetry/Telemetry';
 import {Sensitive} from '../Sensitive/Sensitive';

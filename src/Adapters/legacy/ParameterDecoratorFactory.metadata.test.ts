@@ -16,12 +16,12 @@
 
 import 'reflect-metadata';
 
-import {GreaterThanEqual, StringMinLength} from '../ParameterDecorators/Constraints';
+import {GreaterThanEqual, StringMinLength} from '../../ParameterDecorators/Constraints';
 import {Contract} from './ContractInstaller';
-import {getContract} from './ContractRegistry';
-import {documentClass} from '../Projections/docs';
-import {Enforce} from '../FieldDeocrators/Enforce';
-import {getFieldContractsForClass} from './ContractRegistry';
+import {getContract} from '../../Core/ContractRegistry';
+import {documentClass} from '../../Projections/docs';
+import {Enforce} from '../../FieldDecorators/Enforce';
+import {getFieldContractsForClass} from '../../Core/ContractRegistry';
 
 describe('preconditions of this file', () => {
     it('runs on the Reflect.decorate branch with metadata available', () => {

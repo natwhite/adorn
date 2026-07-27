@@ -39,7 +39,7 @@
  */
 
 import {MethodKey, PostconditionPredicate, recordPostcondition} from '../Core/ContractRegistry';
-import {notePendingContract} from '../Core/ContractDiagnostics';
+import {notePendingContract} from '../Adapters/legacy/ContractDiagnostics';
 
 /**
  * Record a postcondition on the decorated method.

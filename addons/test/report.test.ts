@@ -8,7 +8,7 @@
  */
 
 import * as fc from 'fast-check';
-import {Contract} from '../../src/Core/ContractInstaller';
+import {Contract} from '../../src/Adapters/legacy/ContractInstaller';
 import {
     Between,
     Email,
@@ -18,7 +18,7 @@ import {
     MultipleOf,
     NotEmpty,
 } from '../../src/ParameterDecorators/Constraints';
-import {ParameterDecoratorFactory} from '../../src/Core/ParameterDecoratorFactory';
+import {ParameterDecoratorFactory} from '../../src/Adapters/legacy/ParameterDecoratorFactory';
 import {resetConfiguration} from '../../src/Core/Configuration';
 import {fuzzMethod} from './oracle';
 import {formatFuzzReport} from './report';

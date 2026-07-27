@@ -15,7 +15,7 @@
  * No getter, no storage, prototype-shared, and non-configurable — so `@Enforce.positive()` validated
  * an assignment and then read back `undefined` forever. `generator` is gone entirely. The accessor
  * design that replaces it, and why the value lives in a per-instance own accessor rather than a
- * `WeakMap` side table, is documented on `Core/FieldDecoratorFactory`.
+ * `WeakMap` side table, is documented on `Adapters/legacy/FieldDecoratorFactory`.
  *
  * ## The field band exposes exactly what the parameter band does
  *
@@ -42,12 +42,12 @@
  * ## No `@Contract()` needed
  *
  * Unlike parameter constraints, a field contract installs itself at decoration time — see the module
- * note on `Core/FieldDecoratorFactory` for why that is safe for a field and was not for a method.
+ * note on `Adapters/legacy/FieldDecoratorFactory` for why that is safe for a field and was not for a method.
  * There is consequently no silent-no-op failure mode here and nothing for the missing-`@Contract()`
  * diagnostic to warn about.
  */
 
-import {CreateFieldDecorator} from '../Core/FieldDecoratorFactory';
+import {CreateFieldDecorator} from '../Adapters/legacy/FieldDecoratorFactory';
 import * as Numbers from '../Contracts/number';
 import * as Strings from '../Contracts/string';
 

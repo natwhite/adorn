@@ -29,8 +29,8 @@
 
 import 'reflect-metadata';
 
-import {Enforce} from '../src/FieldDeocrators/Enforce';
-import {getFieldConstraints} from '../src/Core/FieldDecoratorFactory';
+import {Enforce} from '../src/FieldDecorators/Enforce';
+import {getFieldConstraints} from '../src/Adapters/legacy/FieldDecoratorFactory';
 
 describe('preconditions of this file', () => {
     it('runs on the Reflect.decorate branch', () => {

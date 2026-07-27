@@ -7,7 +7,7 @@
  * conjunction, the `@Validate()` ordering caveat, and the no-drift property the fuzzer depends on.
  */
 
-import {Contract, Validate} from '../src/Core/ContractInstaller';
+import {Contract, Validate} from '../src/Adapters/legacy/ContractInstaller';
 import {Ensures} from '../src/MethodDecorators/Ensures';
 import {GreaterThan} from '../src/ParameterDecorators/Constraints';
 import {getEffectivePostconditions, resetRegistry} from '../src/Core/ContractRegistry';
@@ -19,7 +19,7 @@ import {
     ViolationSite,
 } from '../src/Core/Configuration';
 import {resetValueDisclosure, setValueDisclosure} from '../src/Core/redaction';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Core/ContractDiagnostics';
+import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
 
 beforeEach(() => {
     resetRegistry();

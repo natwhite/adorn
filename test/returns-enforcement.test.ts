@@ -14,7 +14,7 @@
  *     "enforced but undocumented" asymmetry.
  */
 
-import {Contract, Validate} from '../src/Core/ContractInstaller';
+import {Contract, Validate} from '../src/Adapters/legacy/ContractInstaller';
 import {Returns} from '../src/MethodDecorators/Returns';
 import {Ensures} from '../src/MethodDecorators/Ensures';
 import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../src/Contracts/number';
@@ -26,7 +26,7 @@ import {
     ViolationSite,
 } from '../src/Core/Configuration';
 import {resetValueDisclosure, setValueDisclosure} from '../src/Core/redaction';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Core/ContractDiagnostics';
+import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
 import {generateMarkdown} from '../src/Projections/docs';
 import {generateSchema} from '../src/Projections/schema';
 

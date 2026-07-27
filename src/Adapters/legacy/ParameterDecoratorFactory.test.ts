@@ -24,12 +24,12 @@
  * degradation is honest rather than incidental: names must flow with or without it.
  */
 
-import {GreaterThan, GreaterThanEqual, StringMinLength} from '../ParameterDecorators/Constraints';
+import {GreaterThan, GreaterThanEqual, StringMinLength} from '../../ParameterDecorators/Constraints';
 import {ParameterDecoratorFactory} from './ParameterDecoratorFactory';
 import {Contract, Validate} from './ContractInstaller';
-import {getContract} from './ContractRegistry';
-import {documentClass} from '../Projections/docs';
-import {DecoratorFactory} from './common';
+import {getContract} from '../../Core/ContractRegistry';
+import {documentClass} from '../../Projections/docs';
+import {DecoratorFactory} from '../../Core/common';
 
 describe('preconditions of this file', () => {
     it('runs WITHOUT reflect-metadata, so no design:paramtypes is available', () => {

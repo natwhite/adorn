@@ -34,9 +34,9 @@
  * settlement, so the sink sees `completed` exactly once.
  */
 
-import {CreateMethodDecorator} from '../Core/MethodDecoratorFactory';
+import {CreateMethodDecorator} from '../Adapters/legacy/MethodDecoratorFactory';
 import {MethodKey} from '../Core/ContractRegistry';
-import {observeBehavior} from '../Core/ObservationBehavior';
+import {observeBehavior} from '../Adapters/legacy/ObservationBehavior';
 import {markOwnsCompletion, ObservationDetail, SpanKind} from '../Core/Observation';
 
 const SPAN_KINDS: ReadonlyArray<SpanKind> = ['internal', 'server', 'client', 'producer', 'consumer'];

@@ -49,7 +49,7 @@
  * them in exactly the same way.
  */
 
-import {MethodKey} from './ContractRegistry';
+import {MethodKey} from '../../Core/ContractRegistry';
 
 /** Where warnings go. Swappable so tests can assert on them and hosts can route them. */
 export type DiagnosticSink = (message: string) => void;

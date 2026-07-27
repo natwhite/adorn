@@ -138,8 +138,8 @@
  * in DEC-021: a field constraint is a class invariant, not a precondition.
  */
 
-import {ConstraintDescriptor} from './Descriptor';
-import {DecoratorFactory} from './common';
+import {ConstraintDescriptor} from '../../Core/Descriptor';
+import {DecoratorFactory} from '../../Core/common';
 import {
     FieldContract,
     getEffectiveFieldConstraints as registryEffectiveFieldConstraints,
@@ -150,8 +150,8 @@ import {
     recordFieldConstraint as registryRecordFieldConstraint,
     registerContractedClass,
     setFieldMetadata,
-} from './ContractRegistry';
-import {shouldDiscloseValue} from './redaction';
+} from '../../Core/ContractRegistry';
+import {shouldDiscloseValue} from '../../Core/redaction';
 
 /** A field name. Symbols are supported because a class may declare `[sym] = value`. */
 export type FieldKey = string | symbol;

@@ -34,7 +34,7 @@
  */
 
 import {InvocationContext, MethodBehavior} from './MethodDecoratorFactory';
-import {settle, Settlement} from './settle';
+import {settle, Settlement} from '../../Core/settle';
 import {
     EmittedValue,
     ErrorFacts,
@@ -49,13 +49,13 @@ import {
     RETURN_INDEX,
     SpanKind,
     ObservationDetail,
-} from './Observation';
-import {MethodKey} from './ContractRegistry';
-import {DecoratorFactory} from './common';
-import {REDACTED} from './redaction';
-import {getObservationVerbosity} from './Configuration';
+} from '../../Core/Observation';
+import {MethodKey} from '../../Core/ContractRegistry';
+import {DecoratorFactory} from '../../Core/common';
+import {REDACTED} from '../../Core/redaction';
+import {getObservationVerbosity} from '../../Core/Configuration';
 import {reportDiagnostic} from './ContractDiagnostics';
-import {resolveParameterDisclosure, resolveReturnDisclosure, ResolvedDisclosure} from './telemetryDisclosure';
+import {resolveParameterDisclosure, resolveReturnDisclosure, ResolvedDisclosure} from '../../Core/telemetryDisclosure';
 
 /** The install-time options `@Observe` resolves and hands to {@link observeBehavior}. */
 export interface ObserveConfig {

@@ -19,10 +19,10 @@ import {
     installFieldContracts,
     recordFieldConstraint,
 } from './FieldDecoratorFactory';
-import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../Contracts/number';
-import {StringMinLength} from '../Contracts/string';
-import {getFieldContract, getFieldContractsForClass} from './ContractRegistry';
-import {Enforce} from '../FieldDeocrators/Enforce';
+import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../../Contracts/number';
+import {StringMinLength} from '../../Contracts/string';
+import {getFieldContract, getFieldContractsForClass} from '../../Core/ContractRegistry';
+import {Enforce} from '../../FieldDecorators/Enforce';
 
 describe('the constraint store', () => {
     it('reports nothing for an untouched target', () => {

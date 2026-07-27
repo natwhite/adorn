@@ -7,19 +7,19 @@
  * failed against that implementation.
  *
  * The unit-level design (storage, ordering, idempotence, the rejected `WeakMap` side table) is
- * covered in `src/Core/FieldDecoratorFactory.test.ts`. This file exercises the decorators as a user
+ * covered in `src/Adapters/legacy/FieldDecoratorFactory.test.ts`. This file exercises the decorators as a user
  * writes them, including the two places field decoration interacts with the rest of adorn:
  * inheritance, and sharing a class with parameter contracts.
  */
 
-import {Enforce} from '../src/FieldDeocrators/Enforce';
-import {Contract} from '../src/Core/ContractInstaller';
+import {Enforce} from '../src/FieldDecorators/Enforce';
+import {Contract} from '../src/Adapters/legacy/ContractInstaller';
 import {StringMinLength} from '../src/ParameterDecorators/Constraints';
 import {
     getEffectiveFieldConstraints,
     getFieldConstraints,
     installFieldContract,
-} from '../src/Core/FieldDecoratorFactory';
+} from '../src/Adapters/legacy/FieldDecoratorFactory';
 import {getContractedClasses} from '../src/Core/ContractRegistry';
 
 describe('a decorated field behaves like a field (BUG-1)', () => {

@@ -19,7 +19,7 @@
  */
 import {StringMinLength, GreaterThanEqual, LessThanEqual} from '../src/ParameterDecorators/Constraints';
 import {Log} from '../src/MethodDecorators/Log';
-import {Contract} from '../src/Core/ContractInstaller';
+import {Contract} from '../src/Adapters/legacy/ContractInstaller';
 
 // P1.3 (BREAKING): parameter decorators now only RECORD their constraints; `@Contract()` is what
 // installs the enforcing wrapper. Without it the constraints below are silently inert — running

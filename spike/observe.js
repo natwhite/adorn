@@ -7,7 +7,7 @@
  * ## What this models
  *
  * adorn installs a per-instance accessor for every decorated field
- * (`src/Core/FieldDecoratorFactory.ts` — `installFieldContract` writes a non-enumerable prototype
+ * (`src/Adapters/legacy/FieldDecoratorFactory.ts` — `installFieldContract` writes a non-enumerable prototype
  * trampoline; the trampoline's setter calls `defineInstanceSlot`, which writes an OWN, ENUMERABLE
  * accessor closing over a private slot). So adorn controls the READ of a sensitive field.
  *

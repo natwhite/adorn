@@ -40,9 +40,9 @@
 
 import 'reflect-metadata';
 
-import {Contract} from '../Core/ContractInstaller';
+import {Contract} from '../Adapters/legacy/ContractInstaller';
 import {GreaterThanEqual, StringMinLength} from '../ParameterDecorators/Constraints';
-import {Enforce} from '../FieldDeocrators/Enforce';
+import {Enforce} from '../FieldDecorators/Enforce';
 import {documentClass, generateMarkdown, renderMarkdown} from './docs';
 
 // ---------------------------------------------------------------------------

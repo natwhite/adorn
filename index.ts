@@ -9,8 +9,8 @@ import {
 } from './src/ParameterDecorators/Constraints';
 
 // --- Field decorators -----------------------------------------------------
-import {Enforce} from './src/FieldDeocrators/Enforce';
-import {CreateFieldDecorator, installFieldContracts} from './src/Core/FieldDecoratorFactory';
+import {Enforce} from './src/FieldDecorators/Enforce';
+import {CreateFieldDecorator, installFieldContracts} from './src/Adapters/legacy/FieldDecoratorFactory';
 
 // --- Sensitive marker (DEC-PII-1/2) ---------------------------------------
 // Record-only: marks a field/parameter/class as holding sensitive data; it does NOT redact.
@@ -37,12 +37,12 @@ export type {ObserveOptions} from './src/MethodDecorators/Observe';
 import {Telemetry} from './src/Telemetry/Telemetry';
 
 // --- Installation & diagnostics -------------------------------------------
-import {Contract, Validate} from './src/Core/ContractInstaller';
+import {Contract, Validate} from './src/Adapters/legacy/ContractInstaller';
 import {
     setContractDiagnosticsEnabled,
     setContractDiagnosticsSink,
     flushContractDiagnostics,
-} from './src/Core/ContractDiagnostics';
+} from './src/Adapters/legacy/ContractDiagnostics';
 
 // --- Enforcement configuration (DEC-008) ----------------------------------
 // Grouped by line: the mode/trust setters, then the guard controls, then the O1c verbosity dial.
@@ -68,7 +68,7 @@ import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 import {setObservationSink, getObservationSink, RETURN_INDEX} from './src/Core/Observation';
 import {settle} from './src/Core/settle';
 // O1c: a ready-made zero-dependency JSON-to-console sink (opt-in; never installed automatically).
-import {consoleObservationSink} from './src/Core/ObservationBehavior';
+import {consoleObservationSink} from './src/Adapters/legacy/ObservationBehavior';
 
 // --- Registry introspection (Q-6: this surface is now semver-relevant) -----
 // Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,

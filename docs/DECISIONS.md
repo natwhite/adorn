@@ -741,3 +741,18 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 - Q-24 → **RESOLVED/BUILT** end-to-end; IDEA-10(a) third item satisfied; Q-6's frozen surface grows by `TelemetryReport`/`ObserveOptions`/`ObservationVerbosity` (the telemetry-band registry reads stay internal).
 - Deferred, per the plan: the `@Log` → `{kind:'message'}` rebase (sequenced last, not required here — `@Log` untouched); `.redact` deferred strategies; Fr1 (name-hatch). Q-23's *return* veto still only arrives via class-level `@Sensitive` (a return cannot be directly `@Sensitive` — TS signature limit), unchanged.
 
+---
+
+## DEC-038 — The adapter layer is physically separated (GAP-8); DEC-012 is now mechanically enforced
+**Status:** ACCEPTED · closes GAP-8 and SMELL-7 · prepares the chosen TC39 Stage-3 adapter direction
+
+**Context.** DEC-012 set the layering rule — `Core`/`Contracts`/`Projections` import no decorator adapter — but it lived only by convention and per-file imports-tests, while the adapter modules themselves sat in `src/Core/` (GAP-8). With a Stage-3 adapter now a chosen direction, making the split physical is worth its churn: a `stage3/` adapter needs a place to sit beside the legacy one.
+
+**Decisions.**
+- The legacy-decorator **adapter modules moved from `src/Core/` to `src/Adapters/legacy/`**: `MethodDecoratorFactory`, `ParameterDecoratorFactory`, `ContractInstaller`, `ContractDiagnostics`, `FieldDecoratorFactory`, and `ObservationBehavior`. The last two go beyond GAP-8's named four deliberately: `FieldDecoratorFactory`'s own header already declared it adapter-side, and `ObservationBehavior` was **the one remaining `Core/` file importing an adapter** — leaving it would have made the new layering test fail.
+- The **decorator-agnostic model stays in `Core/`**: `Descriptor`, `ContractRegistry`, `Configuration`, `redaction`, `Observation`, `settle`, `Postconditions`, `ViolationError`, `telemetryDisclosure`, `common` (verified: none imports any adapter).
+- **DEC-012 is now a test, not a convention.** `src/Adapters/layering.test.ts` sweeps every non-test module under `Core`/`Contracts`/`Projections` and asserts none resolves an import into `src/Adapters/`. A `stage3/` adapter will sit beside `legacy/` consuming the same Core model.
+- **Pure move:** `index.ts`'s public export surface is byte-for-byte unchanged (72 value exports); all imports updated across `src/`/`test/`/`addons/`/`examples/`; `git mv` preserved history; SMELL-7 (the `FieldDeocrators` misspelling) was fixed in the same pass.
+
+**Consequences.** ~10 historical file-path references in older `docs/` plans/spikes (e.g. `implementation-plan-t0-t1`, `observability-plan`, `pii-redaction-plan`) now name old `Core/` paths — left as historical records, not rewritten. The recurring in-source `.js` artifact friction the restructure surfaced is logged as SMELL-21.
+

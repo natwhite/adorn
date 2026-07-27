@@ -34,7 +34,7 @@ import {
     LessThanEqual,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
-import {Contract} from '../src/Core/ContractInstaller';
+import {Contract} from '../src/Adapters/legacy/ContractInstaller';
 import {getContract, getContractedClasses} from '../src/Core/ContractRegistry';
 
 describe('preconditions of this file', () => {

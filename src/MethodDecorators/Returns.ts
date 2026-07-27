@@ -58,7 +58,7 @@
 
 import {ConstraintDescriptor} from '../Core/Descriptor';
 import {MethodKey, recordReturnConstraint} from '../Core/ContractRegistry';
-import {notePendingContract} from '../Core/ContractDiagnostics';
+import {notePendingContract} from '../Adapters/legacy/ContractDiagnostics';
 
 /**
  * Record a reified return-value postcondition on the decorated method.

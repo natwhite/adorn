@@ -12,7 +12,7 @@
  * `@Ensures` closure lives in the parallel postcondition band). This is the realistic shape.
  */
 
-import {Contract} from '../../src/Core/ContractInstaller';
+import {Contract} from '../../src/Adapters/legacy/ContractInstaller';
 import {Returns} from '../../src/MethodDecorators/Returns';
 import {Ensures} from '../../src/MethodDecorators/Ensures';
 import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../../src/Contracts/number';

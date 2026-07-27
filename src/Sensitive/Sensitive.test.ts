@@ -20,7 +20,7 @@ import {
     getFieldSensitivity,
     getParameterSensitivity,
 } from '../Core/ContractRegistry';
-import {Enforce} from '../FieldDeocrators/Enforce';
+import {Enforce} from '../FieldDecorators/Enforce';
 
 describe('@Sensitive — recording', () => {
     it('marks a field, recorded against the prototype under the property key', () => {

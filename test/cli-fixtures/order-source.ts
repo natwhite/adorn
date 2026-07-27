@@ -11,7 +11,7 @@
  * on demand by the CLI's loader, exactly as a user entry module would be.
  */
 
-import {Contract} from '../../src/Core/ContractInstaller';
+import {Contract} from '../../src/Adapters/legacy/ContractInstaller';
 import {StringMinLength, GreaterThan, LessThanEqual} from '../../src/ParameterDecorators/Constraints';
 
 @Contract()

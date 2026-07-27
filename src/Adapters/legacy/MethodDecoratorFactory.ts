@@ -44,7 +44,7 @@
  * any of them.
  */
 
-import {MethodKey} from './ContractRegistry';
+import {MethodKey} from '../../Core/ContractRegistry';
 
 // ---------------------------------------------------------------------------
 // Behaviour contract

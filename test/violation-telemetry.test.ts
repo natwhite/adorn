@@ -10,7 +10,7 @@
  * `setValueDisclosure('all')`). The uninstalled path emits nothing and enforces exactly as before.
  */
 
-import {Contract} from '../src/Core/ContractInstaller';
+import {Contract} from '../src/Adapters/legacy/ContractInstaller';
 import {GreaterThan} from '../src/ParameterDecorators/Constraints';
 import {GreaterThan as GreaterThanDescriptor} from '../src/Contracts/number';
 import {Returns} from '../src/MethodDecorators/Returns';
@@ -18,7 +18,7 @@ import {Ensures} from '../src/MethodDecorators/Ensures';
 import {resetRegistry} from '../src/Core/ContractRegistry';
 import {resetConfiguration, setEnforcementMode, setViolationPolicy} from '../src/Core/Configuration';
 import {resetValueDisclosure, setValueDisclosure} from '../src/Core/redaction';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Core/ContractDiagnostics';
+import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
 import {
     getObservationSink,
     setObservationSink,

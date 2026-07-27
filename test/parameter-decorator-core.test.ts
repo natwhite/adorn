@@ -55,8 +55,8 @@ import {
     LessThanEqual,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
-import {ParameterDecoratorFactory} from '../src/Core/ParameterDecoratorFactory';
-import {Contract} from '../src/Core/ContractInstaller';
+import {ParameterDecoratorFactory} from '../src/Adapters/legacy/ParameterDecoratorFactory';
+import {Contract} from '../src/Adapters/legacy/ContractInstaller';
 import {getContract} from '../src/Core/ContractRegistry';
 
 describe('preconditions of this file', () => {

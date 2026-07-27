@@ -7,9 +7,9 @@
  * throw-on-violation enforcement the oracle relies on.
  */
 
-import {Contract} from '../../src/Core/ContractInstaller';
+import {Contract} from '../../src/Adapters/legacy/ContractInstaller';
 import {Between, GreaterThanEqual, Integer, NotEmpty} from '../../src/ParameterDecorators/Constraints';
-import {Enforce} from '../../src/FieldDeocrators/Enforce';
+import {Enforce} from '../../src/FieldDecorators/Enforce';
 import {resetConfiguration} from '../../src/Core/Configuration';
 import {fuzzClass, fuzzMethod} from './oracle';
 

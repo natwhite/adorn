@@ -12,7 +12,7 @@ import {
     flushContractDiagnostics,
     resetContractDiagnostics,
     setContractDiagnosticsSink,
-} from '../Core/ContractDiagnostics';
+} from '../Adapters/legacy/ContractDiagnostics';
 
 beforeEach(() => {
     resetRegistry();

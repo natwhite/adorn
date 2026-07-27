@@ -9,7 +9,7 @@
  * Promise object as if it were the answer.
  */
 
-import {Contract} from '../../src/Core/ContractInstaller';
+import {Contract} from '../../src/Adapters/legacy/ContractInstaller';
 import {Returns} from '../../src/MethodDecorators/Returns';
 import {Ensures} from '../../src/MethodDecorators/Ensures';
 import {GreaterThanEqual} from '../../src/Contracts/number';

@@ -9,17 +9,17 @@
  * and `consoleObservationSink`'s output.
  */
 
-import {Contract} from '../src/Core/ContractInstaller';
+import {Contract} from '../src/Adapters/legacy/ContractInstaller';
 import {Observe} from '../src/MethodDecorators/Observe';
 import {Telemetry} from '../src/Telemetry/Telemetry';
 import {Sensitive} from '../src/Sensitive/Sensitive';
 import {GreaterThan} from '../src/ParameterDecorators/Constraints';
-import {consoleObservationSink} from '../src/Core/ObservationBehavior';
+import {consoleObservationSink} from '../src/Adapters/legacy/ObservationBehavior';
 import {getObservationSink, setObservationSink, ObservationEvent, ObservationCall, RETURN_INDEX} from '../src/Core/Observation';
 import {resetRegistry} from '../src/Core/ContractRegistry';
 import {resetConfiguration, setObservationVerbosity, setViolationPolicy} from '../src/Core/Configuration';
 import {resetValueDisclosure} from '../src/Core/redaction';
-import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Core/ContractDiagnostics';
+import {resetContractDiagnostics, setContractDiagnosticsSink} from '../src/Adapters/legacy/ContractDiagnostics';
 
 let events: ObservationEvent[];
 let scopeCalls: ObservationCall[];

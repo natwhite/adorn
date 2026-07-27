@@ -42,10 +42,10 @@
  * ```
  *
  * Without it the constraints are recorded but never installed, and a development-mode warning names
- * the class (see `Core/ContractDiagnostics`).
+ * the class (see `Adapters/legacy/ContractDiagnostics`).
  */
 
-import {ParameterDecoratorFactory} from '../Core/ParameterDecoratorFactory';
+import {ParameterDecoratorFactory} from '../Adapters/legacy/ParameterDecoratorFactory';
 import * as Numbers from '../Contracts/number';
 import * as Strings from '../Contracts/string';
 

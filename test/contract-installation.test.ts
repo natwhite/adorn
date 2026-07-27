@@ -13,20 +13,20 @@
  * are what hold it to that.
  */
 
-import {Contract, installContracts, Validate} from '../src/Core/ContractInstaller';
+import {Contract, installContracts, Validate} from '../src/Adapters/legacy/ContractInstaller';
 import {
     flushContractDiagnostics,
     resetContractDiagnostics,
     setContractDiagnosticsEnabled,
     setContractDiagnosticsSink,
-} from '../src/Core/ContractDiagnostics';
+} from '../src/Adapters/legacy/ContractDiagnostics';
 import {
     GreaterThan,
     GreaterThanEqual,
     LessThanEqual,
     StringMinLength,
 } from '../src/ParameterDecorators/Constraints';
-import {ParameterDecoratorFactory} from '../src/Core/ParameterDecoratorFactory';
+import {ParameterDecoratorFactory} from '../src/Adapters/legacy/ParameterDecoratorFactory';
 import {getContract, getContractedClasses} from '../src/Core/ContractRegistry';
 import {
     resetConfiguration,

@@ -25,7 +25,7 @@
  * because parameter-name recovery parses `Function.prototype.toString` (SMELL-1).
  */
 
-import {CreateMethodDecorator, InvocationContext} from '../Core/MethodDecoratorFactory';
+import {CreateMethodDecorator, InvocationContext} from '../Adapters/legacy/MethodDecoratorFactory';
 import {DecoratorFactory} from '../Core/common';
 import {
     getEffectiveClassSensitivity,
