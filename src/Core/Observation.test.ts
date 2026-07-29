@@ -60,6 +60,7 @@ describe('the sink slot', () => {
                 kind: 'internal',
                 parameters: [],
             },
+            callId: 1,
             durationMs: 1,
             outcome: 'returned',
             settled: true,

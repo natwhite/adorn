@@ -272,6 +272,52 @@ describe('completed events', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Per-call correlation id (Q-27) — the weave's violation and completion share one id
+// ---------------------------------------------------------------------------
+
+describe('the weave stamps one correlation callId per invocation (Q-27)', () => {
+    it('a warned postcondition violation and the completion of the SAME call share one callId', () => {
+        setViolationPolicy('warn'); // suppress the throw so the call both violates AND completes
+
+        @Contract()
+        class Ledger {
+            @Returns(GreaterThanDescriptor(100))
+            balance(n: number): number {
+                return n; // fails the >100 postcondition, but 'warn' lets the call through
+            }
+        }
+
+        expect(new Ledger().balance(1)).toBe(1);
+
+        expect(violations()).toHaveLength(1);
+        expect(completions()).toHaveLength(1);
+        expect(typeof violations()[0].callId).toBe('number');
+        // Same wrapper, same invocation → one shared id the sink can correlate on.
+        expect(violations()[0].callId).toBe(completions()[0].callId);
+    });
+
+    it('separate invocations get distinct ids', () => {
+        setViolationPolicy('warn');
+
+        @Contract()
+        class Ledger {
+            @Returns(GreaterThanDescriptor(100))
+            balance(n: number): number {
+                return n;
+            }
+        }
+        const ledger = new Ledger();
+
+        ledger.balance(1);
+        ledger.balance(2);
+
+        const ids = completions().map(c => c.callId);
+        expect(ids).toHaveLength(2);
+        expect(new Set(ids).size).toBe(2); // monotonic counter — never reused
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Containment and the no-op fast path
 // ---------------------------------------------------------------------------
 

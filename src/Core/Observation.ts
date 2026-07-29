@@ -96,6 +96,38 @@ export function markOwnsCompletion(fn: Function): void {
 }
 
 // ---------------------------------------------------------------------------
+// Per-call correlation id (Q-27, DEC-047) — the additive correlation token
+// ---------------------------------------------------------------------------
+
+/**
+ * A process-local monotonic counter backing {@link nextCallId}. A plain counter — NOT `Date.now()` or
+ * `Math.random()` — is deterministic, allocation-free, and collision-free for the life of the process:
+ * the id only has to be unique among concurrently-live calls, and a strictly increasing integer is.
+ */
+let callSeq = 0;
+
+/**
+ * The next per-call correlation id (Q-27). It is stamped once per observed invocation onto that call's
+ * {@link ObservationCall} and every {@link ObservationEvent} the same invocation emits, so a sink can
+ * match a record-path event (`completed`/`violation`/`message`) back to the specific `scope` call it
+ * belongs to — the correlation the frozen, *non-unique* {@link Observation} reference could not provide
+ * under concurrent same-method async.
+ *
+ * There is ONE shared sequence for the whole process (not one counter per wrapper) so ids can never
+ * collide across the `@Observe` span wrapper and the enforcement weave. A sink can therefore trust that
+ * two events with equal `callId`s came from the *same* wrapper's emit for the *same* invocation.
+ * Same-wrapper correlation is the guarantee; cross-wrapper correlation (a weave violation vs. an inner
+ * `@Observe` span — different nesting levels, DEC-046) is deliberately out of scope, so those carry
+ * distinct ids by construction.
+ *
+ * Module-internal: a sink never mints ids, it only reads the ones adorn stamped, so this is not on the
+ * root export surface (DEC-039).
+ */
+export function nextCallId(): number {
+    return ++callSeq;
+}
+
+// ---------------------------------------------------------------------------
 // Install-time facts of an instrumented method
 // ---------------------------------------------------------------------------
 
@@ -195,6 +227,13 @@ export interface ObservationCall {
     readonly thisArg: unknown;
     /** Pre-disclosed arg renderings (placeholder unless opted in). THE safe span-attribute source. */
     readonly values: ReadonlyArray<EmittedValue>;
+    /**
+     * Per-call correlation id (Q-27, DEC-047), from {@link nextCallId}. It is shared with every
+     * {@link ObservationEvent} this same invocation emits — in particular this `scope` call's
+     * `completed` event — so a sink can correlate a record-path event to the exact span/call it belongs
+     * to under concurrent same-method async, which the non-unique {@link Observation} reference cannot.
+     */
+    readonly callId: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,11 +244,18 @@ export interface ObservationCall {
  * A point-in-time event handed to {@link ObservationSink.record}. Three kinds; an adapter reads them,
  * a projection reads them, an O3 metrics counter reads them. Every payload field beyond the
  * discriminant is optional and object-shaped so the union grows additively (Q-6).
+ *
+ * The one required addition since the freeze is `callId` (Q-27, DEC-047): a scalar per-call correlation
+ * token present on every variant. It is reader-safe and additive — a sink *receives* these events (it
+ * never constructs the union), and {@link ObservationSink} is unchanged — while giving a sink the token
+ * to match a record-path event back to its `scope` call, which the non-unique {@link Observation}
+ * reference could not. It shares the invocation's {@link ObservationCall.callId}.
  */
 export type ObservationEvent =
     | {
           readonly kind: 'completed';
           readonly observation: Observation;
+          readonly callId: number; // correlation token (Q-27) — shared with this call's scope
           readonly durationMs: number;
           readonly outcome: 'returned' | 'threw';
           readonly settled: boolean;
@@ -220,6 +266,7 @@ export type ObservationEvent =
     | {
           readonly kind: 'violation';
           readonly observation: Observation;
+          readonly callId: number; // correlation token (Q-27) — shared across this invocation's emits
           readonly violation: ViolationFacts; // value-free — that is its point
           readonly values?: ReadonlyArray<EmittedValue>; // the offending parameter, iff opted in (O1c)
           readonly error?: ErrorFacts; // the violation error (message redacted by default)
@@ -227,6 +274,7 @@ export type ObservationEvent =
     | {
           readonly kind: 'message';
           readonly observation: Observation;
+          readonly callId: number; // correlation token (Q-27) — shared across this invocation's emits
           readonly level: LogLevel;
           readonly message?: string;
           readonly attributes: Attributes; // the low-cardinality map

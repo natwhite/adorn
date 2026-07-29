@@ -279,6 +279,71 @@ describe('disclosure is honoured on span attributes ("seeing ≠ emitting")', ()
 });
 
 // ---------------------------------------------------------------------------
+// The Q-27 win — the disclosed return-value rendering now lands on the method's own span,
+// correlated via callId (DEC-047). Impossible under DEC-046's end-in-scope lifecycle.
+// ---------------------------------------------------------------------------
+
+describe('the disclosed return value lands on the method span, correlated via callId (Q-27)', () => {
+    it('renders a @Telemetry.result() return as adorn.return on the span', () => {
+        install();
+
+        class Accounts {
+            @Observe()
+            @Telemetry.result()
+            balance(): number {
+                return 99;
+            }
+        }
+
+        new Accounts().balance();
+
+        const span = finishedSpans()[0];
+        // The return rendering — produced only on the `completed` record event — is correlated back onto
+        // the span this call's `scope` opened, and lands as `adorn.return`.
+        expect(span.attributes['adorn.return']).toBe(99);
+        expect(span.status.code).toBe(SpanStatusCode.OK);
+    });
+
+    it('keeps an un-opted return OFF the span, so disclosure still holds (DEC-036)', () => {
+        install();
+
+        class Accounts {
+            @Observe()
+            secret(): string {
+                return 'topsecret'; // no @Telemetry.result() opt-in
+            }
+        }
+
+        new Accounts().secret();
+
+        const span = finishedSpans()[0];
+        // An un-opted return carries no EmittedValue at all, so `adorn.return` is absent (stronger than a
+        // [REDACTED] placeholder) and the raw value appears nowhere on the exported span.
+        expect(span.attributes['adorn.return']).toBeUndefined();
+        expect(JSON.stringify(span.attributes)).not.toContain('topsecret');
+    });
+
+    it('still ends the span exactly once, with the settled duration (DEC-006)', () => {
+        install();
+
+        class Accounts {
+            @Observe()
+            @Telemetry.result()
+            balance(): number {
+                return 7;
+            }
+        }
+
+        new Accounts().balance();
+
+        const spans = finishedSpans();
+        expect(spans).toHaveLength(1); // ended exactly once, by its correlated completion
+        expect(completed).toHaveLength(1);
+        expect(Math.abs(hrToMs(spans[0].duration) - completed[0].durationMs)).toBeLessThan(5);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Metrics (opt-in) — duration histogram + violations counter
 // ---------------------------------------------------------------------------
 
@@ -349,6 +414,7 @@ describe('message events and mapping helpers', () => {
         const event: ObservationEvent = {
             kind: 'message',
             observation,
+            callId: 1,
             level: 'info',
             message: 'hello',
             attributes: {route: '/x', count: 3},

@@ -39,6 +39,7 @@ import {
     EmittedValue,
     ErrorFacts,
     getObservationSink,
+    nextCallId,
     NOOP_SINK,
     Observation,
     ObservationCall,
@@ -111,15 +112,22 @@ export function observeBehavior(config: ObserveConfig): MethodBehavior {
             values = [];
         }
 
+        // ONE correlation id per observed invocation (Q-27), stamped on BOTH this call's `scope`
+        // `ObservationCall` and its `completed` event, so a sink can correlate the completion back to the
+        // span this `@Observe` wrapper opened — even under concurrent same-method async, where the frozen
+        // `Observation` reference is shared and non-unique.
+        const callId = nextCallId();
+
         const call: ObservationCall = {
             observation: built.observation,
             thisArg: context.thisArg,
             values,
+            callId,
         };
         const run = () => proceed();
         const scoped = sink.scope ? () => sink.scope!(call, run) : run;
 
-        return settle(scoped, settlement => recordCompleted(sink, built!, values, settlement));
+        return settle(scoped, settlement => recordCompleted(sink, built!, values, settlement, callId));
     };
 }
 
@@ -251,6 +259,7 @@ function recordCompleted(
     built: BuiltObservation,
     values: EmittedValue[],
     settlement: Settlement<unknown>,
+    callId: number,
 ): void {
     const allValues = values.concat(renderReturnValues(built.returnDisclosure, settlement));
     const event: ObservationEvent =
@@ -258,6 +267,7 @@ function recordCompleted(
             ? {
                   kind: 'completed',
                   observation: built.observation,
+                  callId,
                   durationMs: settlement.durationMs,
                   outcome: 'threw',
                   settled: settlement.settled,
@@ -267,6 +277,7 @@ function recordCompleted(
             : {
                   kind: 'completed',
                   observation: built.observation,
+                  callId,
                   durationMs: settlement.durationMs,
                   outcome: 'returned',
                   settled: settlement.settled,

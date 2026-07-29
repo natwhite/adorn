@@ -148,6 +148,49 @@ describe('@Observe opens a scope and emits one completion', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Per-call correlation id (Q-27) — same-wrapper correlation + concurrent distinctness
+// ---------------------------------------------------------------------------
+
+describe('@Observe stamps one correlation callId per call (Q-27)', () => {
+    it('the scope call and its completed event share one callId (same-wrapper correlation)', () => {
+        class Svc {
+            @Observe()
+            work(n: number): number {
+                return n;
+            }
+        }
+
+        new Svc().work(1);
+
+        expect(typeof scopeCalls[0].callId).toBe('number');
+        expect(scopeCalls[0].callId).toBe(completions()[0].callId);
+    });
+
+    it('two concurrent async calls of the same method get DISTINCT ids, each matching its own completion', async () => {
+        class Svc {
+            @Observe()
+            async work(delay: number): Promise<number> {
+                await new Promise(resolve => setTimeout(resolve, delay));
+                return delay;
+            }
+        }
+        const svc = new Svc();
+
+        // Overlap two calls of the SAME method: the shared, non-unique Observation reference cannot tell
+        // them apart, but the per-call callId can.
+        await Promise.all([svc.work(20), svc.work(5)]);
+
+        expect(scopeCalls).toHaveLength(2);
+        const scopeIds = scopeCalls.map(c => c.callId);
+        expect(new Set(scopeIds).size).toBe(2); // distinct — no collision under concurrency
+
+        // Every completion's id is one of the two scope ids, and both scope calls were completed.
+        const completedIds = completions().map(c => c.callId);
+        expect(new Set(completedIds)).toEqual(new Set(scopeIds));
+    });
+});
+
+// ---------------------------------------------------------------------------
 // The uninstalled fast path
 // ---------------------------------------------------------------------------
 

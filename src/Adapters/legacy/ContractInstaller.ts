@@ -97,6 +97,7 @@ import {noteContractInstalled} from './ContractDiagnostics';
 import {
     ErrorFacts,
     getObservationSink,
+    nextCallId,
     NOOP_SINK,
     Observation,
     ObservationEvent,
@@ -413,11 +414,19 @@ function enforcementBehavior(
         // The one branch the uninstalled path pays — a single reference compare (plan §4a).
         const sink = getObservationSink();
         const observing = sink !== NOOP_SINK;
+        // ONE correlation id per invocation (Q-27), minted only when observing so the uninstalled path
+        // stays allocation-free. It is stamped on every event THIS wrapper emits — the violation(s) and,
+        // when it owns the emit, the completion — so a sink can correlate them to this invocation. It is
+        // deliberately NOT shared with an inner `@Observe`'s span: that is a different wrapper at a
+        // different nesting level (a precondition throws before the span opens; a postcondition after it
+        // settles), so cross-wrapper correlation is out of scope (DEC-046) and carries a distinct id.
+        const callId = observing ? nextCallId() : 0;
         // Emitter for a postcondition-band violation, or `undefined` when unobserved so the check
         // functions run byte-for-byte as before. Allocated only when a sink is installed. Violations
         // always emit while observing — they are never suppressed by the completed-emit reconciliation.
         const observeViolation = observing
-            ? (facts: ViolationFacts, error: unknown) => emitViolation(sink, siteObservation, facts, error)
+            ? (facts: ViolationFacts, error: unknown) =>
+                  emitViolation(sink, siteObservation, facts, error, callId)
             : undefined;
         // Whether THIS wrapper owns the `{kind:'completed'}` emit. Suppressed when an inner `@Observe`
         // already owns it (plan §5) — the sole thing `observed` changes; checks and violations are
@@ -438,6 +447,7 @@ function enforcementBehavior(
                         siteObservation,
                         {...violation.facts, trust, blame: 'caller'},
                         violation,
+                        callId,
                     );
                 }
                 // Rethrows unless the configured policy suppresses it ('warn', or a handler that
@@ -454,7 +464,7 @@ function enforcementBehavior(
             // returned value (a sync throw propagates untouched and is not a completed event here).
             const started = now();
             const result = proceed();
-            return observeCompletion(sink, siteObservation, started, result);
+            return observeCompletion(sink, siteObservation, started, result, callId);
         }
 
         const started = observeCompletions ? now() : 0;
@@ -473,7 +483,7 @@ function enforcementBehavior(
                 return value;
             });
             // Observe the settled outcome of the checked promise without changing what is returned.
-            if (observeCompletions) observeSettledPromise(sink, siteObservation, started, checked);
+            if (observeCompletions) observeSettledPromise(sink, siteObservation, started, checked, callId);
             return checked;
         }
 
@@ -481,7 +491,8 @@ function enforcementBehavior(
         // DEC-019; real settling is deferred, plan §5).
         checkReturnConstraints(returns, result, calleeSite, observeViolation);
         checkPostconditions(posts, result, context.args, calleeSite, observeViolation);
-        if (observeCompletions) emitCompleted(sink, siteObservation, now() - started, 'returned', true);
+        if (observeCompletions)
+            emitCompleted(sink, siteObservation, now() - started, 'returned', true, callId);
         return result;
     };
 }
@@ -601,10 +612,12 @@ function emitViolation(
     observation: Observation,
     facts: ViolationFacts,
     error: unknown,
+    callId: number,
 ): void {
     recordObservation(sink, {
         kind: 'violation',
         observation,
+        callId,
         violation: facts,
         error: violationErrorFacts(error, facts.constraint),
     });
@@ -621,13 +634,22 @@ function emitCompleted(
     durationMs: number,
     outcome: 'returned' | 'threw',
     settled: boolean,
+    callId: number,
     error?: unknown,
 ): void {
     recordObservation(
         sink,
         outcome === 'threw'
-            ? {kind: 'completed', observation, durationMs, outcome, settled, error: toErrorFacts(error)}
-            : {kind: 'completed', observation, durationMs, outcome, settled},
+            ? {
+                  kind: 'completed',
+                  observation,
+                  callId,
+                  durationMs,
+                  outcome,
+                  settled,
+                  error: toErrorFacts(error),
+              }
+            : {kind: 'completed', observation, callId, durationMs, outcome, settled},
     );
 }
 
@@ -642,15 +664,17 @@ function observeCompletion(
     observation: Observation,
     started: number,
     result: any,
+    callId: number,
 ): any {
     if (isThenable(result)) {
         Promise.resolve(result).then(
-            () => emitCompleted(sink, observation, now() - started, 'returned', true),
-            (error: unknown) => emitCompleted(sink, observation, now() - started, 'threw', true, error),
+            () => emitCompleted(sink, observation, now() - started, 'returned', true, callId),
+            (error: unknown) =>
+                emitCompleted(sink, observation, now() - started, 'threw', true, callId, error),
         );
         return result;
     }
-    emitCompleted(sink, observation, now() - started, 'returned', true);
+    emitCompleted(sink, observation, now() - started, 'returned', true, callId);
     return result;
 }
 
@@ -664,10 +688,11 @@ function observeSettledPromise(
     observation: Observation,
     started: number,
     checked: Promise<unknown>,
+    callId: number,
 ): void {
     checked.then(
-        () => emitCompleted(sink, observation, now() - started, 'returned', true),
-        (error: unknown) => emitCompleted(sink, observation, now() - started, 'threw', true, error),
+        () => emitCompleted(sink, observation, now() - started, 'returned', true, callId),
+        (error: unknown) => emitCompleted(sink, observation, now() - started, 'threw', true, callId, error),
     );
 }
 

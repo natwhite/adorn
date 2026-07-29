@@ -13,14 +13,17 @@
  * ## The mapping (DEC-041 §3)
  *
  *   - **`scope(call, proceed)` → an active span.** `tracer.startActiveSpan(name, {kind}, span => …)` so
- *     the span is the active context while the body runs and nested decorated methods / auto-instrumented
- *     I/O parent under it. The span is **ended at *settlement*** using the exported `settle` classifier —
- *     never a re-timed clock and never a reimplementation of the sync/thenable/observable classification,
- *     so the span's duration is the same settled number `@Time` and the `completed` event report and
- *     cannot drift (DEC-006). This is the concrete mechanism that prevents "flat, early-ended spans": an
- *     `async` method returns a pending promise in ~0 ms, but the span ends only when that promise settles.
- *   - **`completed` → a duration histogram** (optional, opt-in via a `Meter`). The span is already owned
- *     by `scope`; the record path adds the metric.
+ *     the span is the active context while the synchronous prefix runs and nested decorated methods /
+ *     auto-instrumented I/O parent under it. The `settle` classifier records the span's OUTCOME (status,
+ *     and a developer-authored throw's exception) at settlement — never a re-timed clock, never a
+ *     reimplementation of the sync/thenable/observable classification. The span is **ended by its
+ *     correlated `completed` event** (below), not inside `scope` — see "The span lifecycle" note.
+ *   - **`completed` → ends the method's own span (Q-27) + a duration histogram** (histogram optional,
+ *     opt-in via a `Meter`). Correlated to its `scope` span by the per-call `callId` (DEC-047), the
+ *     completion lands the disclosed RETURN rendering on the span and ends it at `startTime + durationMs`,
+ *     so the span duration IS the settled number `@Time` and the metric report and cannot drift (DEC-006).
+ *     An `async` method returns a pending promise in ~0 ms, but its completion — and thus its span end —
+ *     fires only when the promise settles, so spans are never "flat" or early-ended.
  *   - **`violation` → `span.recordException` + error status + a value-free span event** carrying the
  *     `ViolationFacts` (constraint / kind / trust / blame / expectation) as attributes, plus an optional
  *     `adorn.contract.violations` counter. Because adorn's enforcement wrapper is *outside* `@Observe`'s
@@ -30,14 +33,31 @@
  *     standalone span, so the exception is never silently lost.
  *   - **`message` → a span event** on the active-or-standalone span.
  *
+ * ## The span lifecycle — end at the correlated `completed`, not inside `scope` (Q-27, DEC-047)
+ *
+ * DEC-046 ended the span inside `scope` via `settle` because the event union carried no per-call
+ * correlation token, so under concurrent same-method async a record-path event could not be matched back
+ * to its span. That is now fixed: `ObservationCall` and every `ObservationEvent` carry a `callId`
+ * (Q-27), so this sink opens the span in `scope`, registers it under that id, and ends it when its
+ * **own** `completed` event arrives (Option B). The single win DEC-046 could not have: the disclosed
+ * **return-value** rendering only exists on the `completed` record event, and now lands on the method's
+ * own span (`adorn.return`) before it closes — impossible under the old end-in-`scope` lifecycle, where
+ * the span was already gone by the time the rendering was produced. Duration is unaffected: the span is
+ * ended at `startTime + completed.durationMs`, the same settled number the metric and completion carry
+ * (DEC-006, no re-timed clock). Active-context nesting is unaffected too — the span is still active only
+ * for the synchronous prefix inside `startActiveSpan`'s callback, exactly as before. `scope` always
+ * emits a correlated `completed` (returned or threw), so a registered span is always ended, exactly once.
+ *
  * ## "Seeing ≠ emitting" (DEC-036), preserved end-to-end
  *
- * Span attributes come **only** from pre-disclosed data: the `EmittedValue[]` on the `scope` call and the
- * record events, each already `[REDACTED]` unless a `@Telemetry` opt-in permitted it (and never when
- * `@Sensitive` vetoes). This sink forwards those renderings verbatim; it **never** reads a raw argument or
- * return value to put on a span. The `scope` around-wrapper *does* see the raw settled value/error through
- * its own `settle` (as `@Time` does) — but it uses that only for control flow (span status, and
- * `recordException` on a developer-authored thrown error, DEC-025), never to emit an argument/return.
+ * Span attributes come **only** from pre-disclosed data: the `EmittedValue[]` on the `scope` call (the
+ * arguments) and on the `completed` event (arguments + the return rendering), each already `[REDACTED]`
+ * unless a `@Telemetry` opt-in permitted it (and never when `@Sensitive` vetoes) — an un-opted return
+ * carries no `EmittedValue` at all, so nothing about it reaches the span. This sink forwards those
+ * renderings verbatim; it **never** reads a raw argument or return value to put on a span. The `scope`
+ * around-wrapper *does* see the raw settled value/error through its own `settle` (as `@Time` does) — but
+ * it uses that only for control flow (span status, and `recordException` on a developer-authored thrown
+ * error, DEC-025), never to emit an argument/return.
  */
 
 import {
@@ -131,27 +151,47 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
           })
         : undefined;
 
+    // Spans opened by `scope` but not yet ended, keyed by the per-call correlation id (Q-27, DEC-047).
+    // The `completed` record event for that same id ends the span — after enriching it with the disclosed
+    // RETURN rendering, which only exists on the record path. Per-sink (a closure field, not a module
+    // global) so a fresh `createOtelSink` starts clean. See the header's "The span lifecycle" note.
+    const pendingSpans = new Map<number, PendingSpan>();
+
     return {
         scope<T>(call: ObservationCall, proceed: () => T): T {
             const observation = call.observation;
+            // One epoch-ms clock for BOTH the span's start and its later explicit end (in finishPendingSpan),
+            // so the span's duration is EXACTLY the settled `completed.durationMs` and cannot drift (DEC-006).
+            const startTime = Date.now();
             return tracer.startActiveSpan(
                 observation.name,
                 {
                     kind: mapSpanKind(observation.kind),
+                    startTime,
                     // Pre-disclosed argument renderings only — never a raw value (DEC-036).
                     attributes: attributesFromValues(call.values, prefix),
                 },
-                (span: Span) =>
-                    // End at settlement via the SHARED classifier — never a re-timed clock (DEC-006).
-                    // The around-wrapper sees the raw settled value/error here, but emits neither: the
-                    // value never reaches an attribute, and only a developer-authored throw is recorded.
-                    settle(proceed, (settlement: Settlement<T>) => finishSpan(span, settlement)),
+                (span: Span) => {
+                    // Q-27/DEC-047: register the span under the per-call id so the correlated `completed`
+                    // event can end it AFTER adding the disclosed return rendering (which does not exist
+                    // yet — it is produced when the call settles, on the record path). The span is active
+                    // only for the synchronous prefix here, exactly as before; only the END is deferred.
+                    pendingSpans.set(call.callId, {span, startTime});
+                    // The SHARED settle classifier still owns the outcome (status + a developer-authored
+                    // throw's exception) from the raw settlement — control-flow only, emitting no value
+                    // (DEC-036/DEC-025). It no longer ends the span; finishPendingSpan does, at `completed`.
+                    return settle(proceed, (settlement: Settlement<T>) => markSpanOutcome(span, settlement));
+                },
             );
         },
 
         record(event: ObservationEvent): void {
             switch (event.kind) {
                 case 'completed':
+                    // End the method's own span (opened by `@Observe`'s `scope`) once its correlated
+                    // completion arrives, landing the disclosed return rendering on it (Q-27 — the win).
+                    // A completion whose id opened no span here (an enforcement-weave completion) ends none.
+                    finishPendingSpan(pendingSpans, event, prefix);
                     if (durationHistogram) {
                         durationHistogram.record(event.durationMs, {
                             [`${prefix}.method`]: event.observation.name,
@@ -180,26 +220,57 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
 }
 
 // ---------------------------------------------------------------------------
-// Span lifecycle — end via the shared settle classifier
+// Span lifecycle — settle sets the outcome, the correlated `completed` ends it (Q-27, DEC-047)
 // ---------------------------------------------------------------------------
 
+/** An opened-but-not-yet-ended span and the epoch-ms start it will be ended relative to (DEC-006). */
+interface PendingSpan {
+    readonly span: Span;
+    readonly startTime: number;
+}
+
 /**
- * End the method's own span at settlement. On a throw the raw error is developer-authored (DEC-025) and is
- * recorded as the span's exception with an ERROR status; on a return the span carries no value (the
- * disclosed return rendering, if any, is not correlatable to this span through the seam and stays off it).
+ * Record the settled OUTCOME on the span from the raw settlement — the span's status, and, on a throw, the
+ * developer-authored exception (DEC-025). Control-flow only: it emits no argument/return (DEC-036). It does
+ * NOT end the span — the end is deferred to {@link finishPendingSpan} so the disclosed return rendering,
+ * which only exists once the call has settled on the record path, can land on the span before it closes.
  */
-function finishSpan<T>(span: Span, settlement: Settlement<T>): void {
-    try {
-        if (settlement.outcome === 'threw') {
-            span.recordException(toException(settlement.error));
-            span.setStatus({code: SpanStatusCode.ERROR, message: exceptionMessage(settlement.error)});
-        } else {
-            span.setStatus({code: SpanStatusCode.OK});
-        }
-    } finally {
-        // Always end — a broken status/exception path must never leak an unfinished span.
-        span.end();
+function markSpanOutcome<T>(span: Span, settlement: Settlement<T>): void {
+    if (settlement.outcome === 'threw') {
+        span.recordException(toException(settlement.error));
+        span.setStatus({code: SpanStatusCode.ERROR, message: exceptionMessage(settlement.error)});
+    } else {
+        span.setStatus({code: SpanStatusCode.OK});
     }
+}
+
+/**
+ * End the pending span correlated to a `completed` event by its per-call id (Q-27, DEC-047) — the concrete
+ * close of the DEC-046 correlation gap. This is where the disclosed RETURN rendering (an `EmittedValue` at
+ * `RETURN_INDEX`, pre-disclosed on the record path — `[REDACTED]`/absent unless a `@Telemetry.result()`
+ * opt-in permitted it, DEC-036) finally lands on the method's OWN span, which the previous end-in-`scope`
+ * lifecycle could not attach because the rendering did not exist until after the span had closed.
+ *
+ * A completion whose id opened no span here — an enforcement-weave completion, which never opens a `scope`
+ * — matches nothing and ends nothing, exactly as before (it still feeds the duration histogram above).
+ *
+ * The span is ended at `startTime + durationMs`, so its duration IS the settled `completed.durationMs`
+ * (produced upstream by the shared `settle` classifier) and cannot drift from the metric or the completion
+ * (DEC-006) — the property DEC-046 secured by ending in `scope`, preserved here without a re-timed clock.
+ */
+function finishPendingSpan(
+    pending: Map<number, PendingSpan>,
+    event: Extract<ObservationEvent, {kind: 'completed'}>,
+    prefix: string,
+): void {
+    const entry = pending.get(event.callId);
+    if (!entry) return;
+    pending.delete(event.callId);
+    // Only the RETURN rendering — the arguments were already attached at span start by `scope`. Forwarded
+    // verbatim as the disclosure OUTCOME; no raw value is ever read (DEC-036). Absent on a throw.
+    const returns = (event.values || []).filter(value => value.index === RETURN_INDEX);
+    if (returns.length > 0) entry.span.setAttributes(attributesFromValues(returns, prefix));
+    entry.span.end(entry.startTime + event.durationMs);
 }
 
 // ---------------------------------------------------------------------------
