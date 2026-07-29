@@ -880,3 +880,19 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Consequence.** The public surface grew 72 → **75** (`OneOf`, `toolSchemaForMethod`, `EnumContracts`); `test/public-surface.test.ts`'s pinned count was updated — the DEC-039 deliberate-change signal working as designed. 52 suites / 964 tests.
 
+## DEC-050 — Compositional descriptors: carry the inner constraint as data, rebuild its predicate once
+**Status:** ACCEPTED (design) · detail in `docs/plan-contract-offering.md` · unlocks arrays (IDEA-22/GAP-15) and nested shapes (IDEA-25/GAP-16)
+
+**Context.** A descriptor's `params` must be JSON (round-trippable — DEC-010) but its `predicate` is a function, so a descriptor that constrains a *collection* whose items each satisfy an inner constraint (`@ArrayOf(itemConstraint)`), or an *object* against a class's contracts (`@Shape(FieldClass)`), cannot store the inner descriptor or its predicate directly. This is the crux that made "does adorn do object/array params?" look like it might be a wall.
+
+**Decision.** A **compositional descriptor** carries the inner constraint as its **serialized JSON** (`descriptor.toJSON()` → a `SerializedConstraint` that survives `normalizeParams` verbatim) inside its params, and **rebuilds the inner predicate exactly once in `derive`** via `constraintFromJSON` — the same pattern `matches` uses to compile its `RegExp` once at derivation. The predicate stays derived-from-params (DEC-010 holds), the whole descriptor JSON round-trips, the projection inherits the inner descriptor's own `schema()` fragment (`{type:'array', items:<item fragment>, minItems?, maxItems?}` for arrays; the class's field schema for shapes), and the fuzzer **recurses** (`fc.array(itemArb, …)` / the object's field generators) — sound by construction (DEC-031). Verified end-to-end in a spike (a full `toJSON`→`constraintFromJSON` round-trip + total-predicate behaviour).
+
+**Consequence.** One mechanism covers the compositional third of the vocabulary — arrays (IDEA-22), nested shapes (IDEA-25), and nullable — without a `$ref` graph (which schema.ts deferred and which tool providers often don't resolve; shapes inline-expand instead).
+
+## DEC-051 — `@Optional` is enforcement-aware, not schema-only (or it drifts)
+**Status:** ACCEPTED (design) · detail in `docs/plan-contract-offering.md` · resolves Q-28 in design
+
+**Context.** The tool schema marks a parameter `required` iff it carries ≥1 constraint (DEC-048), so a genuinely optional-but-constrained parameter is force-required. The tempting fix — a **schema-only** `@Optional` that just drops the parameter from `required` — is **drift**: the schema would say "omittable" while the total predicates (BUG-4) still throw on a missing `undefined` argument. That schema/enforcement disagreement is the exact failure adorn exists to prevent (DEC-006).
+
+**Decision.** `@Optional` is **enforcement-aware**: the installer treats an absent/`undefined` argument as *satisfying* the constraint (the check is skipped when the argument is absent, and runs normally when present), **and** the projections drop the parameter from tool-schema `required`. One declaration moves the runtime behaviour and the schema together, so they cannot drift. Semantics: "may be absent, OR must satisfy the constraint when present." (`@Default(value)` rides the same record-only-marker seam and additionally emits `{default:value}`.)
+
