@@ -812,3 +812,31 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 - **Class-level `@Contract()` makes the safe ordering free**: the enforcement weave installs **outermost** (a class decorator running after member decorators), so guard-before-flow-control/cache and postcondition-on-final-result hold **by construction**. The per-method `@Validate()` form is order-sensitive (mirrors the DEC-032 `@Ensures` caveat) — which is where the lint earns its keep.
 - This turns Q-22 from an open hazard into a designed-in safety property, and opens a composition-hazard / operational-profile projection reading the concern band (IDEA-19).
 
+---
+
+## DEC-044 — Add-on peer-dependency & isolation contract (the ecosystem-wide rule)
+**Status:** ACCEPTED · generalises DEC-019 to every add-on · first applied by `@adorn/otel` (DEC-046)
+
+**Decision.**
+- Every add-on's heavy dependency is a **peer** (declared in the add-on's manifest), a **devDependency** in this repo for build/test, and **never** a core `dependencies` specifier — the core runtime set stays `{tslib}`. This is the rxjs `MODULE_NOT_FOUND` lesson (DEC-019) generalised.
+- Every add-on ships an **isolation test** mirroring `addons/test/isolation.test.ts`: its heavy dep appears in no `src/` file and not in `index.ts`, has **zero requires in `dist/`**, and no add-on symbol leaks onto the root surface (frozen at 72 — DEC-039).
+- Add-ons live under `addons/<name>/`, are excluded from the build (not in `dist`), are **not** re-exported from the root, and are tested in-repo by the shared jest config — the `@adorn/test` pattern.
+
+## DEC-045 — Add-on extraction contract (consume the frozen surface, not internals)
+**Status:** ACCEPTED · pairs with DEC-039 · first validated by `@adorn/otel` (DEC-046)
+
+**Decision.**
+- An add-on's **production** code consumes only adorn's frozen public surface (DEC-039), imported from the package root exactly as a downstream consumer would, plus its own peer dep. Registry writers/`*Keys` and other Core internals are off-limits (test scaffolding may use `reset*` helpers, as the whole suite does).
+- What each add-on needs public is the measurable extraction cost: **`@adorn/otel` needs NOTHING new** (the O1 seam was built complete — DEC-046 proved it end-to-end); `@adorn/rx` needs one symbol (`setObservableConstructor`, SMELL-16); `@adorn/cache` needs the `concern` band (GAP-12) + a blessed concern-recording seam + a composition read. An add-on that finds it needs an unplanned internal is a signal the surface is incomplete — resolved by a deliberate export, never a reach-in.
+
+## DEC-046 — `@adorn/otel`: the O1-event → OpenTelemetry mapping
+**Status:** ACCEPTED · builds IDEA-14/DEC-041 · confirms DEC-045 · ships in `addons/otel/`
+
+**Decision.** `createOtelSink(options?)` returns an `ObservationSink` a host installs via the public `setObservationSink`; the host owns its OTel SDK (tracer/meter injected, else the global provider). Mapping: `scope` → active span (SpanKind mapped, pre-disclosed param attributes); `completed` → an opt-in duration histogram; `violation` → `recordException` + ERROR status + a value-free span event (+ opt-in counter); `message` → a span event.
+
+**The two non-obvious rulings this build forced.**
+- **The span is ended inside `scope` via the exported `settle`, NOT on the `completed` event.** The O1 event union carries **no per-call correlation token** — a record-path event shares only the frozen, *non-unique* `Observation` reference with its `scope` call, so under concurrent same-method async an event cannot be matched back to its span. Ending in `scope` via `settle` is per-call robust **and** reuses the same classifier that produces `completed.durationMs`, so the span duration *is* the settled duration and cannot drift (DEC-006) — exactly what `settle.ts` and DEC-041 §3 intended. The correlation gap itself is logged as **Q-27**.
+- **Violations attach to the active-or-standalone span.** adorn's enforcement wrapper is *outside* `@Observe`'s span (a precondition throws before the span opens; a postcondition after it settles), so a violation never coincides with its own method's live span. It is recorded on the currently-active span (the enclosing observed operation) when one exists, else a short standalone span — never silently lost.
+
+**"Seeing ≠ emitting" (DEC-036) preserved end-to-end.** Attributes come only from pre-disclosed `EmittedValue.rendering` and value-free facts; the sink never reads a raw arg/return to emit (the `scope` wrapper sees the raw outcome only for span status + `recordException` on a developer-authored throw — DEC-025). Pinned by a disclosure test: a `@Telemetry.value()` param appears on the span, an un-opted one is `[REDACTED]`, and the raw value appears nowhere. **DEC-045 held** — the add-on needed nothing new on the frozen surface, the first proof the O1 seam is a complete public contract.
+

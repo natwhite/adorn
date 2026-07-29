@@ -1,0 +1,373 @@
+/**
+ * `@adorn/otel` — the O1 → OpenTelemetry mapping, proven against REAL spans (DEC-041).
+ *
+ * Uses `@opentelemetry/sdk-trace-base`'s `InMemorySpanExporter` so the assertions are about spans an OTel
+ * backend would actually receive — not a mock of the API. It pins the contract the task requires:
+ *
+ *   - a `@Contract()`+`@Observe()` method produces one span named `Owner.method`, with the declared
+ *     `SpanKind`, a duration *close to the settled duration*, and completes exactly once (DEC-037);
+ *   - a contract violation produces `recordException` + an ERROR status + a value-free facts span event;
+ *   - "seeing ≠ emitting" (DEC-036): an un-opted parameter renders `[REDACTED]` on the span while a
+ *     `@Telemetry.value()` one renders its value, and the raw un-opted value appears nowhere on the span;
+ *   - an async method's span ends on *settlement*, not on its ~0 ms return;
+ *   - the opt-in metrics (duration histogram + violations counter).
+ *
+ * Decorators and the sink installer are imported from the package root (`../../index`) — the add-on is a
+ * downstream consumer of the frozen public surface (DEC-045), reaching no `src/` internal from production
+ * code. The two `reset*` helpers below are test scaffolding, as in the rest of the suite.
+ */
+
+import {SpanKind as OtelSpanKind, SpanStatusCode, type Meter} from '@opentelemetry/api';
+import {
+    BasicTracerProvider,
+    InMemorySpanExporter,
+    SimpleSpanProcessor,
+    type ReadableSpan,
+} from '@opentelemetry/sdk-trace-base';
+
+import {
+    Contract,
+    Observe,
+    Telemetry,
+    GreaterThan,
+    setObservationSink,
+    type ObservationEvent,
+    type ObservationSink,
+} from '../../index';
+import {createOtelSink, mapSpanKind} from './index';
+
+// Test scaffolding (not the public surface) — global registry/config reset between cases, as elsewhere.
+import {resetRegistry} from '../../src/Core/ContractRegistry';
+import {resetConfiguration} from '../../src/Core/Configuration';
+import {resetValueDisclosure} from '../../src/Core/redaction';
+
+// ---------------------------------------------------------------------------
+// Harness — an in-memory exporter plus a completed/violation capture
+// ---------------------------------------------------------------------------
+
+let exporter: InMemorySpanExporter;
+let provider: BasicTracerProvider;
+let completed: Array<Extract<ObservationEvent, {kind: 'completed'}>>;
+
+/** Install the otel sink, wrapped so we can also see the raw `completed` durationMs the seam produced. */
+function install(options: {meter?: Meter} = {}): void {
+    const tracer = provider.getTracer('adorn-otel-test');
+    const otel = createOtelSink({tracer, meter: options.meter});
+    const sink: ObservationSink = {
+        scope: otel.scope,
+        record: event => {
+            if (event.kind === 'completed') completed.push(event);
+            otel.record!(event);
+        },
+    };
+    setObservationSink(sink);
+}
+
+function finishedSpans(): ReadableSpan[] {
+    return exporter.getFinishedSpans();
+}
+
+function hrToMs(hr: [number, number]): number {
+    return hr[0] * 1e3 + hr[1] / 1e6;
+}
+
+function eventNamed(span: ReadableSpan, name: string) {
+    return span.events.find(e => e.name === name);
+}
+
+beforeEach(() => {
+    resetRegistry();
+    resetConfiguration();
+    resetValueDisclosure();
+    exporter = new InMemorySpanExporter();
+    provider = new BasicTracerProvider({spanProcessors: [new SimpleSpanProcessor(exporter)]});
+    completed = [];
+});
+
+afterEach(() => {
+    setObservationSink(null);
+    exporter.reset();
+});
+
+// ---------------------------------------------------------------------------
+// scope → span: name, kind, duration, single completion
+// ---------------------------------------------------------------------------
+
+describe('scope maps a @Contract()+@Observe() call to one span', () => {
+    it('produces a span named Owner.method with the internal kind and one completion', () => {
+        install();
+
+        @Contract()
+        class Ledger {
+            @Observe()
+            debit(@GreaterThan(0) amount: number): number {
+                return amount;
+            }
+        }
+
+        expect(new Ledger().debit(10)).toBe(10); // the value is unchanged
+
+        const spans = finishedSpans();
+        expect(spans).toHaveLength(1);
+        expect(spans[0].name).toBe('Ledger.debit');
+        expect(spans[0].kind).toBe(OtelSpanKind.INTERNAL);
+        expect(spans[0].status.code).toBe(SpanStatusCode.OK);
+
+        // The DEC-037 reconciliation, seen from the consumer side: the sink sees `completed` exactly once.
+        expect(completed).toHaveLength(1);
+    });
+
+    it('honours the declared @Observe({kind}) → OTel SpanKind (Q-24 R7)', () => {
+        install();
+
+        class Api {
+            @Observe({kind: 'client'})
+            fetch(id: string): string {
+                return id;
+            }
+        }
+
+        new Api().fetch('u1');
+        expect(finishedSpans()[0].kind).toBe(OtelSpanKind.CLIENT);
+    });
+
+    it('ends the span with a duration close to the settled duration (one number, no re-time)', () => {
+        install();
+
+        class Svc {
+            @Observe()
+            work(n: number): number {
+                return n * 2;
+            }
+        }
+
+        new Svc().work(21);
+
+        const spanMs = hrToMs(finishedSpans()[0].duration);
+        expect(spanMs).toBeGreaterThanOrEqual(0);
+        // The span is ended via the SAME `settle` classifier the `completed` event came from, so the two
+        // durations agree to within timing jitter — never a re-measured wall clock that could drift.
+        expect(Math.abs(spanMs - completed[0].durationMs)).toBeLessThan(5);
+    });
+
+    it('records a body throw as the span exception + ERROR status, and still propagates', () => {
+        install();
+
+        class Svc {
+            @Observe()
+            boom(): number {
+                throw new TypeError('nope');
+            }
+        }
+
+        expect(() => new Svc().boom()).toThrow(/nope/);
+
+        const span = finishedSpans()[0];
+        expect(span.status.code).toBe(SpanStatusCode.ERROR);
+        const exception = eventNamed(span, 'exception');
+        expect(exception?.attributes?.['exception.type']).toBe('TypeError');
+        expect(exception?.attributes?.['exception.message']).toBe('nope');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// async settlement — the span ends when the work settles, not when it returns
+// ---------------------------------------------------------------------------
+
+describe('an async span ends on settlement, not on return', () => {
+    it('spans an awaited delay rather than the ~0ms promise return', async () => {
+        install();
+
+        class Svc {
+            @Observe()
+            async load(): Promise<string> {
+                await new Promise(resolve => setTimeout(resolve, 30));
+                return 'done';
+            }
+        }
+
+        expect(await new Svc().load()).toBe('done');
+
+        const spans = finishedSpans();
+        expect(spans).toHaveLength(1);
+        // Had the span ended on the synchronous promise return it would be ~0ms; ending on settlement it
+        // spans the full awaited delay.
+        expect(hrToMs(spans[0].duration)).toBeGreaterThan(20);
+        expect(spans[0].status.code).toBe(SpanStatusCode.OK);
+        expect(completed).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// violation → recordException + error status + value-free facts
+// ---------------------------------------------------------------------------
+
+describe('a contract violation is recorded as a span exception with value-free facts', () => {
+    it('records the exception, sets ERROR status, and carries the value-free ViolationFacts', () => {
+        install();
+
+        @Contract()
+        class Ledger {
+            @Observe()
+            debit(@GreaterThan(0) amount: number): number {
+                return amount;
+            }
+        }
+
+        expect(() => new Ledger().debit(-1)).toThrow(/greater than 0/); // enforcement is untouched
+
+        // The precondition throws before @Observe's scope opens, so there is no method span and no
+        // active span; the violation lands on a standalone span so the exception is never lost.
+        const violationSpan = finishedSpans().find(s => eventNamed(s, 'adorn.contract.violation'));
+        expect(violationSpan).toBeDefined();
+        expect(violationSpan!.name).toBe('Ledger.debit');
+        expect(violationSpan!.status.code).toBe(SpanStatusCode.ERROR);
+
+        // recordException fired.
+        expect(eventNamed(violationSpan!, 'exception')).toBeDefined();
+
+        // The facts on the span event are value-free and groupable (DEC-035).
+        const facts = eventNamed(violationSpan!, 'adorn.contract.violation')!.attributes!;
+        expect(facts['adorn.violation.constraint']).toBe('greaterThan');
+        expect(facts['adorn.violation.trust']).toBe('guard');
+        expect(facts['adorn.violation.blame']).toBe('caller');
+
+        // No completion — the method threw before proceed() (matches the in-core DEC-037 pin).
+        expect(completed).toHaveLength(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// "seeing ≠ emitting" (DEC-036) — end to end onto span attributes
+// ---------------------------------------------------------------------------
+
+describe('disclosure is honoured on span attributes ("seeing ≠ emitting")', () => {
+    it('renders an opted-in value and REDACTS an un-opted one, leaking the raw value nowhere', () => {
+        install();
+
+        class Accounts {
+            @Observe()
+            transfer(@Telemetry.value() amount: number, memo: string): number {
+                return amount;
+            }
+        }
+
+        new Accounts().transfer(42, 'lunch');
+
+        const span = finishedSpans()[0];
+        expect(span.attributes['adorn.param.amount']).toBe(42); // opted-in → the value
+        expect(span.attributes['adorn.param.memo']).toBe('[REDACTED]'); // un-opted → redacted
+
+        // The raw un-opted value never reaches the exported span in any form.
+        expect(JSON.stringify(span.attributes)).not.toContain('lunch');
+    });
+
+    it('renders a @Telemetry.redact(type) surrogate rather than the value', () => {
+        install();
+
+        class Accounts {
+            @Observe()
+            open(@Telemetry.redact('type') account: object): void {}
+        }
+
+        new Accounts().open({iban: 'SECRET'});
+
+        const span = finishedSpans()[0];
+        expect(span.attributes['adorn.param.account']).toBe('Object'); // the type name, not the value
+        expect(JSON.stringify(span.attributes)).not.toContain('SECRET');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Metrics (opt-in) — duration histogram + violations counter
+// ---------------------------------------------------------------------------
+
+describe('metrics are recorded when a Meter is supplied (opt-in)', () => {
+    function stubMeter() {
+        const histogram: Array<{value: number; attrs: Record<string, unknown>}> = [];
+        const counter: Array<{value: number; attrs: Record<string, unknown>}> = [];
+        const meter = {
+            createHistogram: () => ({record: (value: number, attrs: any) => histogram.push({value, attrs})}),
+            createCounter: () => ({add: (value: number, attrs: any) => counter.push({value, attrs})}),
+        } as unknown as Meter;
+        return {meter, histogram, counter};
+    }
+
+    it('records the settled duration on the histogram for a completion', () => {
+        const {meter, histogram} = stubMeter();
+        install({meter});
+
+        class Svc {
+            @Observe()
+            work(n: number): number {
+                return n;
+            }
+        }
+        new Svc().work(5);
+
+        expect(histogram).toHaveLength(1);
+        expect(histogram[0].value).toBe(completed[0].durationMs);
+        expect(histogram[0].attrs['adorn.method']).toBe('Svc.work');
+        expect(histogram[0].attrs['adorn.outcome']).toBe('returned');
+    });
+
+    it('increments the violations counter dimensioned by the value-free facts', () => {
+        const {meter, counter} = stubMeter();
+        install({meter});
+
+        @Contract()
+        class Ledger {
+            debit(@GreaterThan(0) amount: number): number {
+                return amount;
+            }
+        }
+        expect(() => new Ledger().debit(-1)).toThrow();
+
+        expect(counter).toHaveLength(1);
+        expect(counter[0].value).toBe(1);
+        expect(counter[0].attrs['adorn.violation.constraint']).toBe('greaterThan');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// message events + the pure mapping helpers
+// ---------------------------------------------------------------------------
+
+describe('message events and mapping helpers', () => {
+    it('records a message event as a span event on a standalone span', () => {
+        install();
+
+        const observation = {
+            owner: 'Svc',
+            member: 'ping',
+            name: 'Svc.ping',
+            isStatic: false,
+            detail: 'always' as const,
+            kind: 'internal' as const,
+            parameters: [],
+        };
+        const event: ObservationEvent = {
+            kind: 'message',
+            observation,
+            level: 'info',
+            message: 'hello',
+            attributes: {route: '/x', count: 3},
+        };
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        sink.record!(event);
+
+        const span = finishedSpans().find(s => s.name === 'Svc.ping')!;
+        const msg = eventNamed(span, 'hello')!;
+        expect(msg.attributes?.['adorn.log.level']).toBe('info');
+        expect(msg.attributes?.['route']).toBe('/x');
+        expect(msg.attributes?.['count']).toBe(3);
+    });
+
+    it('mapSpanKind maps every adorn kind onto the OTel enum', () => {
+        expect(mapSpanKind('internal')).toBe(OtelSpanKind.INTERNAL);
+        expect(mapSpanKind('server')).toBe(OtelSpanKind.SERVER);
+        expect(mapSpanKind('client')).toBe(OtelSpanKind.CLIENT);
+        expect(mapSpanKind('producer')).toBe(OtelSpanKind.PRODUCER);
+        expect(mapSpanKind('consumer')).toBe(OtelSpanKind.CONSUMER);
+    });
+});
