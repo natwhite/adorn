@@ -12,6 +12,7 @@ import * as fc from 'fast-check';
 import {ConstraintDescriptor, defineConstraint} from '../../src/Core/Descriptor';
 import * as Numbers from '../../src/Contracts/number';
 import * as Strings from '../../src/Contracts/string';
+import * as Enums from '../../src/Contracts/enum';
 import {arbitraryForConstraint, arbitraryForParameter} from './arbitraries';
 
 const SAMPLES = 500;
@@ -104,6 +105,25 @@ describe('email and url are curated, honest-but-partial sample sets (foundation 
         const values = fc.sample(result.arbitrary!, {numRuns: SAMPLES, seed: 3}) as string[];
         expect(values.every(descriptor.predicate)).toBe(true);
         expect(values.every(v => v.startsWith('https://'))).toBe(true);
+    });
+});
+
+describe('oneOf generates only members (DEC-031 ideal case — no filter, no starvation)', () => {
+    it('is parametric via fc.constantFrom, and every generated value is an accepted member', () => {
+        const descriptor = Enums.OneOf(['celsius', 'fahrenheit']);
+        const result = arbitraryForConstraint(descriptor);
+
+        expect(result.strategy).toBe('parametric');
+        expect(result.note).toMatch(/constantFrom/);
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+    });
+
+    it('draws only from the exact member set, whatever the member types', () => {
+        const descriptor = Enums.OneOf(['x', 2, true, null]);
+        const values = fc.sample(arbitraryForConstraint(descriptor).arbitrary!, {numRuns: SAMPLES, seed: 5});
+
+        // Every sample is one of the four declared members — nothing else is ever produced.
+        expect(values.every(value => ['x', 2, true, null].some(member => member === value))).toBe(true);
     });
 });
 

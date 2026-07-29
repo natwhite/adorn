@@ -6,6 +6,7 @@ import {
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
+    OneOf,
 } from './src/ParameterDecorators/Constraints';
 
 // --- Field decorators -----------------------------------------------------
@@ -95,7 +96,10 @@ export type {PostconditionResult} from './src/Core/Postconditions';
 
 // --- Projections ----------------------------------------------------------
 import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
-import {schemaForClass, schemaForContracts, serializeSchema, generateSchema} from './src/Projections/schema';
+// prettier-ignore
+import {
+    schemaForClass, schemaForContracts, serializeSchema, generateSchema, toolSchemaForMethod,
+} from './src/Projections/schema';
 // O1d: the "what leaves the process" privacy-review projection — the sixth projection. A pure registry
 // read (DEC-012), it reports the disclosure each parameter/return carries and renders its own scanned
 // denominator (a clean table is never a clean bill of health). It makes no claim about runtime flows.
@@ -116,7 +120,7 @@ export type {
     FieldDoc,
     MarkdownOptions,
 } from './src/Projections/docs';
-export type {ClassSchema, SchemaOptions} from './src/Projections/schema';
+export type {ClassSchema, SchemaOptions, ToolSchema, ToolSchemaOptions} from './src/Projections/schema';
 
 // The observation model + the event/payload surface an ObservationSink binds to (O1a). This union is
 // semver-frozen the moment an adapter binds to it (Q-6): every event payload field is optional and
@@ -140,6 +144,10 @@ export type {Settlement, SettleKind} from './src/Core/settle';
 //     @CreateFieldDecorator(NumberContracts.MultipleOf(5)) step: number;
 import * as NumberContracts from './src/Contracts/number';
 import * as StringContracts from './src/Contracts/string';
+// `@OneOf` (IDEA-21/GAP-14): the reified enum/membership descriptor. `EnumContracts.OneOf([...])`
+// yields a descriptor for `Verify.that`/`CreateFieldDecorator`, exactly as the number/string
+// namespaces expose theirs; the flat `OneOf` above is the parameter *decorator* over the same rule.
+import * as EnumContracts from './src/Contracts/enum';
 
 // The public surface, and the one place a reader can see its whole shape at once. Both the
 // section comments and the line grouping within each section are load-bearing: they say which
@@ -152,6 +160,10 @@ export {
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
+    // @OneOf (IDEA-21/GAP-14) — a reified enum/membership constraint, type-agnostic. Projects to a
+    // JSON Schema `{enum:[…]}` (the LLM constrained-decoding target), a real docs line, and a sound
+    // `fc.constantFrom` fuzzer. The descriptor is `EnumContracts.OneOf` below.
+    OneOf,
 
     // Field decorators
     Enforce,
@@ -256,13 +268,19 @@ export {
     // Projections: JSON Schema (draft 2020-12) generated from recorded contracts
     schemaForClass, schemaForContracts, serializeSchema, generateSchema,
 
+    // Projection: the PRESCRIPTIVE LLM tool-call schema for ONE method (IDEA-20/DEC-048). A sibling of
+    // schemaForClass, not a flag on it: params-as-object and tight (required + additionalProperties:false)
+    // where schemaForClass is a descriptive instance schema that under-claims. Reuses schema.ts's merge
+    // internals (no fork, DEC-010); Core+Contracts only (DEC-012). `@OneOf` flows in as `{enum:[…]}`.
+    toolSchemaForMethod,
+
     // Projections: telemetry disclosure (O1d) — the "what leaves the process" privacy-review table.
     // A pure registry read (DEC-012) that reports the disclosure each position carries and renders its
     // own scanned denominator; it makes no claim about runtime flows.
     telemetryForClass, telemetryForContracts, serializeTelemetry, generateTelemetryReport,
 
     // Constraint descriptors (data, not decorators)
-    NumberContracts, StringContracts,
+    NumberContracts, StringContracts, EnumContracts,
 };
 
 /*

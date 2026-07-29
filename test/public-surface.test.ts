@@ -104,9 +104,34 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // is a deliberate, semver-relevant act. This number is that act's signal. If a change to index.ts
     // moves it, that is expected — update this constant IN THE SAME COMMIT and note the surface change,
     // rather than treating the failure as noise. Type-only exports don't count (they erase at runtime).
-    const PINNED_VALUE_EXPORT_COUNT = 72;
+    //
+    // 72 → 75: the tool-schema wave (DEC-048) deliberately adds three value exports — the `@OneOf`
+    // parameter decorator (IDEA-21/GAP-14), the `toolSchemaForMethod` projection (IDEA-20), and the
+    // `EnumContracts` descriptor namespace. `ToolSchema`/`ToolSchemaOptions` are type-only and do not
+    // count. This is exactly the deliberate-change signal DEC-039 designed the count to be.
+    const PINNED_VALUE_EXPORT_COUNT = 75;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
+    });
+});
+
+describe('the tool-schema wave adds exactly its intended public exports (DEC-048)', () => {
+    // The other half of the deliberate-change signal: the count moved *because these three landed*,
+    // not because something unrelated leaked. Each is asserted present and of the right runtime shape.
+    it('exports the @OneOf parameter decorator (IDEA-21/GAP-14)', () => {
+        expect(typeof (adorn as Record<string, unknown>).OneOf).toBe('function');
+    });
+
+    it('exports the toolSchemaForMethod projection (IDEA-20)', () => {
+        expect(typeof (adorn as Record<string, unknown>).toolSchemaForMethod).toBe('function');
+    });
+
+    it('exports the EnumContracts descriptor namespace, carrying the oneOf factory', () => {
+        const enumContracts = (adorn as Record<string, unknown>).EnumContracts as Record<string, unknown>;
+        expect(typeof enumContracts).toBe('object');
+        // The namespaced descriptor factory, the twin of NumberContracts.Between — usable directly in
+        // Verify.that / CreateFieldDecorator.
+        expect(typeof enumContracts.OneOf).toBe('function');
     });
 });

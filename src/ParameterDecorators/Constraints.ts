@@ -46,8 +46,10 @@
  */
 
 import {ParameterDecoratorFactory} from '../Adapters/legacy/ParameterDecoratorFactory';
+import type {JsonValue} from '../Core/Descriptor';
 import * as Numbers from '../Contracts/number';
 import * as Strings from '../Contracts/string';
+import * as Enums from '../Contracts/enum';
 
 const constraintDecorator = ParameterDecoratorFactory.CreateConstraintDecorator;
 
@@ -121,6 +123,17 @@ const Email = () => constraintDecorator(Strings.Email());
  */
 const Url = (protocols?: string[]) => constraintDecorator(Strings.Url(protocols));
 
+// ---------------------------------------------------------------------------
+// Membership (IDEA-21 / GAP-14)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rejects any value not among `values`. Type-agnostic — the members may be strings, numbers,
+ * booleans, or `null` — and it projects to a JSON Schema `{enum: values}`, the shape LLM tool-calling
+ * wants most. `values` must be a non-empty array of JSON primitives; see `src/Contracts/enum.ts`.
+ */
+const OneOf = (values: JsonValue[]) => constraintDecorator(Enums.OneOf(values));
+
 export {
     // number
     LessThanEqual,
@@ -139,4 +152,7 @@ export {
     Matches,
     Email,
     Url,
+
+    // membership
+    OneOf,
 };

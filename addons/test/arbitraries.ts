@@ -183,6 +183,26 @@ export function arbitraryForConstraint(descriptor: ConstraintDescriptor): Constr
         case 'url':
             return curatedUrl(descriptor);
 
+        // --- membership, parametric (DEC-031's ideal case) ----------------------
+        case 'oneOf': {
+            // The perfectly-sound generator: `fc.constantFrom` over the exact enum members produces
+            // ONLY members, so there is no filtering and no starvation — the generation twin of the
+            // `{enum:[…]}` schema fragment being exact rather than an under-claim. (A `@OneOf`
+            // authored through `OneOf([...])` always has a non-empty member set; a descriptor built
+            // directly with an empty set generates nothing, so decline rather than call
+            // `fc.constantFrom()` with no arguments.)
+            const values = params.values as unknown[];
+            if (!Array.isArray(values) || values.length === 0) {
+                return {strategy: 'declined', arbitrary: null, constraint, note: 'oneOf has no members'};
+            }
+            return {
+                strategy: 'parametric',
+                arbitrary: fc.constantFrom(...values),
+                constraint,
+                note: 'fc.constantFrom over the enum members — sound by construction, no filter',
+            };
+        }
+
         // --- the Q-3 floor ------------------------------------------------------
         default:
             // An identity this bridge does not know — the analogue of a hand-written predicate.

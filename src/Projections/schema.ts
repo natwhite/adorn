@@ -121,9 +121,28 @@ import {
  */
 export type ClassSchema = JsonObject;
 
+/**
+ * The prescriptive tool-call schema {@link toolSchemaForMethod} emits for one contracted method
+ * (DEC-048). It *is* plain JSON data, like {@link ClassSchema} — the artifact is itself a schema.
+ * Named separately because its posture is the opposite of `ClassSchema`'s: `ClassSchema` describes an
+ * instance and under-claims (never `required`, never `additionalProperties`), while a `ToolSchema`
+ * specifies the argument object a producer (an LLM) must send and is deliberately tight.
+ */
+export type ToolSchema = JsonObject;
+
 export interface SchemaOptions {
     /** Spaces per indent level for {@link serializeSchema}. Defaults to 2 (JSON house style). */
     readonly indent?: number;
+}
+
+export interface ToolSchemaOptions {
+    /**
+     * Natural-language description of the tool, emitted as the schema's `description`. This is the
+     * tool-level meaning ("look up a weather forecast") the model reads — distinct from each
+     * parameter's own `describe()` bound, which the fragments already carry. Omitted when absent
+     * (adorn is runtime-introspection only, so JSDoc is not a source — DEC-007).
+     */
+    readonly description?: string;
 }
 
 /** The dialect every document declares. draft 2020-12 is what `prefixItems`/`exclusiveMinimum:number` assume. */
@@ -201,6 +220,141 @@ export function schemaForClass(constructor: Function): ClassSchema {
  */
 export function schemaForContracts(): ClassSchema[] {
     return getContractedClasses().map(schemaForClass);
+}
+
+// ---------------------------------------------------------------------------
+// The tool-call schema — a PRESCRIPTIVE sibling of schemaForClass (DEC-048)
+// ---------------------------------------------------------------------------
+
+/**
+ * Project one contracted method to the tight, params-as-object schema an LLM tool-calling API wants
+ * (IDEA-20 / DEC-048).
+ *
+ * ## A sibling of `schemaForClass`, not a flag on it — because the posture is opposite
+ *
+ * `schemaForClass` is **descriptive**: it validates an *instance*, under-claims on purpose, and never
+ * emits `required` or `additionalProperties` (see the module header). A tool schema is
+ * **prescriptive**: its root is a *method's parameters*, and it is the target a producer (the model)
+ * is obligated to hit — so it emits `required` and `additionalProperties: false` and is tight enough
+ * to steer the model and reject a hallucinated or missing argument. These are not in conflict; they
+ * answer different questions for different consumers (a validator checking existing data vs a
+ * generator being steered), which is exactly why they are two functions. `schemaForClass` is
+ * untouched.
+ *
+ * ## It reuses the same merge internals — no fork (DEC-010)
+ *
+ * The per-parameter fragment is `mergeFragments(schemaFragmentsOf(...))`, the *same* extraction and
+ * DEC-029 conjunction merge `methodSchema` runs (so `@GreaterThanEqual(1) @LessThanEqual(7)` is one
+ * `{minimum:1, maximum:7}`, and a `@OneOf([...])` is one `{enum:[...]}`). Re-implementing the merge
+ * would reopen the descriptor/projection drift DEC-010 closes. Layering is unchanged (DEC-012): it
+ * reads `getContractsForClass` and `descriptor.schema()`, Core + Contracts only.
+ *
+ * ## The emitted shape
+ *
+ * ```
+ * {
+ *   title: "Class.method",
+ *   description?: <options.description>,   // only when supplied
+ *   type: "object",
+ *   properties: { "<paramName>": <merged fragment>, … },
+ *   required: [ <every param carrying ≥1 constraint> ],
+ *   additionalProperties: false
+ * }
+ * ```
+ *
+ * - **Property names are the registry's `param.name`.** A param with no recovered name degrades to
+ *   `arg{index}` but still appears — names rely on `Function.toString()` (SMELL-1), which is solid
+ *   server-side and degrades to single letters only under minification.
+ * - **`required` = "carries ≥1 constraint"** (DEC-048). This is not a guess about TS optionality —
+ *   `?`/defaults are unrecoverable at runtime (Q-10/Q-28) — it is backed by enforcement: the built-in
+ *   predicates are total (BUG-4) and reject a missing argument (Q-7), so a constrained param already
+ *   throws when absent. An unconstrained-but-known position is present in `properties` (as `{}`,
+ *   accept-anything) and **not** required, a faithful subset.
+ * - **`additionalProperties: false` always.** A method's parameter set is closed; this is the one
+ *   keyword the tool schema asserts that runtime enforcement does not check — a producer-steering
+ *   assertion, emitted honestly as prescriptive rather than as a claim about adorn's runtime.
+ *
+ * A method with contracted params carrying no expressible constraint, or one with none at all, yields
+ * `{title, type:'object', properties:{}, required:[], additionalProperties:false}` — valid, not an
+ * error. A method that does not exist on the class throws.
+ *
+ * Inherited contracts are included: `getContractsForClass` resolves the DEC-021/DEC-022 union, so a
+ * subclass's inherited method parameters project exactly as its own would.
+ */
+export function toolSchemaForMethod(
+    constructor: Function,
+    method: string | symbol,
+    options?: ToolSchemaOptions,
+): ToolSchema {
+    if (typeof constructor !== 'function') {
+        throw new TypeError('toolSchemaForMethod: expected a constructor function');
+    }
+
+    const className = constructor.name || '(anonymous class)';
+    const entry = getContractsForClass(constructor).filter(candidate => candidate.key === method)[0];
+
+    // A recorded method entry is the projectable case. When there is none, the method may still be a
+    // real-but-uncontracted method (an empty tool schema is the honest answer) — or not exist at all,
+    // which is an author error and throws.
+    if (!entry && !methodIsDeclared(constructor, method)) {
+        throw new Error(
+            `toolSchemaForMethod: ${className} has no method '${String(method)}'. Pass the name of a ` +
+                'method declared on the class (contracted or not).',
+        );
+    }
+
+    const properties: JsonObject = {};
+    const required: string[] = [];
+
+    if (entry) {
+        const params = entry.contract.params.slice().sort((a, b) => a.index - b.index);
+        params.forEach(parameter => {
+            const name =
+                typeof parameter.name === 'string' && parameter.name.length > 0
+                    ? parameter.name
+                    : `arg${parameter.index}`;
+            properties[name] = mergeFragments(schemaFragmentsOf(parameter.constraints));
+            if (parameter.constraints.length > 0) required.push(name);
+        });
+    }
+
+    const document: JsonObject = {
+        title: `${className}.${String(method)}`,
+        type: 'object',
+        properties,
+        required,
+        additionalProperties: false,
+    };
+    if (options && typeof options.description === 'string') {
+        document.description = options.description;
+    }
+
+    return canonicalize(document) as ToolSchema;
+}
+
+/**
+ * Whether `method` is a real member of `constructor` — an instance method on the prototype chain, or
+ * a static on the constructor chain — excluding the `Object.prototype`/`Function.prototype` members
+ * every object inherits, so `'toString'`/`'name'` are not mistaken for a declared method. Used only
+ * to distinguish an uncontracted-but-real method (empty tool schema) from a typo (throw).
+ */
+function methodIsDeclared(constructor: Function, method: string | symbol): boolean {
+    const owns = Object.prototype.hasOwnProperty;
+    for (
+        let proto: object | null = constructor.prototype;
+        proto && proto !== Object.prototype;
+        proto = Object.getPrototypeOf(proto)
+    ) {
+        if (owns.call(proto, method)) return true;
+    }
+    for (
+        let ctor: Function | null = constructor;
+        typeof ctor === 'function' && ctor !== Function.prototype;
+        ctor = Object.getPrototypeOf(ctor)
+    ) {
+        if (owns.call(ctor, method)) return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +564,7 @@ const KEY_ORDER = [
     'title',
     'description',
     'type',
+    'enum',
     'minimum',
     'exclusiveMinimum',
     'maximum',
@@ -424,6 +579,7 @@ const KEY_ORDER = [
     'returns',
     'items',
     'required',
+    'additionalProperties',
     'allOf',
     'anyOf',
     'oneOf',

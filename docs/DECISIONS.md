@@ -870,3 +870,13 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Build order:** (1) `@OneOf` (IDEA-21), (2) `toolSchemaForMethod` (IDEA-20), (3) defer nested + `@Describe`/`@Optional`. **End-to-end payoff verified:** one `@GreaterThanEqual(1) @LessThanEqual(7)` yields both the schema the model reads (`{minimum:1,maximum:7}`) and the runtime predicate `@Contract` enforces — same `params`, cannot drift.
 
+## DEC-049 — Tool schemas shipped (`@OneOf` + `toolSchemaForMethod`); the schema omits `$schema`
+**Status:** ACCEPTED · ships DEC-048's steps 1–2 (IDEA-21/GAP-14, IDEA-20) · surface 72 → 75
+
+**Decisions.**
+- **`@OneOf([...])` shipped** (IDEA-21, fills GAP-14): a `kind:'generic'` reified membership descriptor; predicate is **strict `===` membership** (total; `===` over `Object.is` because the latter's `-0/+0` and `NaN` divergences are both wrong for JSON membership); `schema()` → `{enum: […]}` which is **exact — neither over- nor under-claims** (the constrained-decoding target a tool schema wants); `describe()` renders members as JSON; `OneOf()` rejects an empty/non-array/non-primitive/`NaN`/`Infinity` member at authoring. Flows into schema + docs, and the add-on maps it to a sound `fc.constantFrom` (DEC-031's ideal case, no fork). Exports: `OneOf` (parameter decorator) + `EnumContracts` (namespace).
+- **`toolSchemaForMethod(C, method, {description?})` shipped** (IDEA-20): the **prescriptive** params-as-object schema, a sibling of the untouched **descriptive** `schemaForClass`, reusing `mergeFragments`/`schemaFragmentsOf` (no fork — DEC-010), Core+Contracts only (DEC-012). `required` = carries-≥1-constraint (DEC-048), `additionalProperties:false`, property names from `param.name` (SMELL-1 caveat). The no-drift claim is executable-pinned (a value the schema rejects is one the installed `@Contract` throws on).
+- **The one shipped-shape decision: the tool schema OMITS `$schema`.** A prescriptive tool schema is a *parameters sub-schema handed to an LLM function-calling provider* (OpenAI/Anthropic tool `parameters`), not a standalone JSON-Schema document — and several providers reject unknown top-level keys — so omitting the dialect anchor is the more correct artifact. `schemaForClass`, a standalone document, still emits `$schema`. This diverges from DEC-048's *illustrative* example (which listed `$schema` by analogy); the omission is deliberate.
+
+**Consequence.** The public surface grew 72 → **75** (`OneOf`, `toolSchemaForMethod`, `EnumContracts`); `test/public-surface.test.ts`'s pinned count was updated — the DEC-039 deliberate-change signal working as designed. 52 suites / 964 tests.
+
