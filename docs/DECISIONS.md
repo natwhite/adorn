@@ -852,3 +852,21 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Preserved:** settled duration with no drift (end = start + settled `durationMs`, DEC-006), "seeing ≠ emitting" (only pre-disclosed renderings become attributes; the raw return is never read, DEC-036), spans end exactly once, violations unchanged (DEC-046). The return-rendering-on-span win DEC-046 flagged as unreachable is now delivered — pinned by a test (`@Telemetry.result()` renders `adorn.return`, an un-opted return is absent, no raw leak).
 
+---
+
+## DEC-048 — Prescriptive tool schemas: a second schema posture for LLM tool-calling
+**Status:** ACCEPTED (design) · detail in `docs/decision-tool-schemas.md` · complements DEC-029 · driven by real-world feedback (AiVoiceAgent-ts)
+
+**Context.** LLM tool-calling needs both a JSON Schema the model reads **and** runtime validation of the model's (untrusted) arguments — two artifacts that normally drift, which is exactly DEC-006, and a *stronger* case than docs because the consumer is a machine that confidently produces malformed args when the schema is wrong. The runtime-validation half is **already** `@Contract` enforcement; only the schema *shape* is missing.
+
+**Empirical finding (`spike/tool-schemas.ts`): a fillable gap, not a fundamental mismatch.** Parameter names are already in the registry (BUG-14/`captureSignature`); `schema.ts.methodSchema` merely emits a positional `prefixItems` tuple. A method's named parameter *list* IS the tool's argument object, so re-keying the same merged fragments by name builds the tool schema mechanically — no fragment logic re-derived.
+
+**Decisions.**
+- **Two postures, two consumers (the DEC-029 reconciliation).** `schemaForClass` is **descriptive** — "a value enforcement accepts", validated-*against* → must under-claim (DEC-029), never falsely reject. A tool schema is **prescriptive** — "the argument object the producer must send", generated-*from* → **tight** (`required` + `additionalProperties:false`), steering the model with `@Contract` enforcement as the backstop. Tight is NOT over-claiming against enforcement — it aligns the producer's target with what enforcement accepts. Different consumer, different direction, no contradiction with DEC-029.
+- `required` = **"carries ≥1 constraint"** — sound, not a guess: total predicates (BUG-4/Q-7) already reject a missing `undefined` argument. TS `?`/defaults are unrecoverable (Q-10) and rejected as a source (the optional-but-constrained edge is **Q-28**). `additionalProperties:false` is the one prescriptive assertion — honest because a method's parameter set is closed.
+- **Shape:** a new sibling entry `toolSchemaForMethod(C, 'method', {description?})` (NOT a flag on `schemaForClass`), emitting `{type:'object', properties:{<name>:fragment}, required:[…], additionalProperties:false, description}`, reusing `mergeFragments`/`schemaFragmentsOf` (no fork — DEC-010), reading Core+Contracts only (DEC-012). Tracked as **IDEA-20**.
+- **The enum gap (GAP-14 / IDEA-21):** tool schemas need enums, adorn has none. A reified `@OneOf([...])` (kind `generic`, predicate = membership, `schema()` → `{enum:[…]}`) is the highest-value small add — strengthens schema + docs and gives fuzzing a sound `fc.constantFrom` for free.
+- **Nested objects (Q-29):** the flat param-list convention + self-contained *inline* expansion of a `@Contract`ed field class, never `$ref` (many function-calling endpoints don't resolve it); the real limiter is advisory param types (DEC-004). **Descriptions (Q-30):** `@Tool(desc)`/entry-point arg for the tool, `describe()` as the free param default, a deferred `@Describe` for semantics; JSDoc rejected (runtime-only, DEC-007).
+
+**Build order:** (1) `@OneOf` (IDEA-21), (2) `toolSchemaForMethod` (IDEA-20), (3) defer nested + `@Describe`/`@Optional`. **End-to-end payoff verified:** one `@GreaterThanEqual(1) @LessThanEqual(7)` yields both the schema the model reads (`{minimum:1,maximum:7}`) and the runtime predicate `@Contract` enforces — same `params`, cannot drift.
+

@@ -1,0 +1,18 @@
+{
+  "//": "SPIKE-only tsconfig (throwaway) — lets ts-node compile spike/tool-schemas.ts with decorators. NOT SHIPPED.",
+  "compilerOptions": {
+    "target": "es2019",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "strict": false,
+    "noEmit": true,
+    "lib": ["es2019", "dom"],
+    "types": ["node"]
+  },
+  "ts-node": {"transpileOnly": true},
+  "include": ["tool-schemas.ts"]
+}
