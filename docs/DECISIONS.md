@@ -881,7 +881,7 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 **Consequence.** The public surface grew 72 → **75** (`OneOf`, `toolSchemaForMethod`, `EnumContracts`); `test/public-surface.test.ts`'s pinned count was updated — the DEC-039 deliberate-change signal working as designed. 52 suites / 964 tests.
 
 ## DEC-050 — Compositional descriptors: carry the inner constraint as data, rebuild its predicate once
-**Status:** ACCEPTED (design) · detail in `docs/plan-contract-offering.md` · unlocks arrays (IDEA-22/GAP-15) and nested shapes (IDEA-25/GAP-16)
+**Status:** ACCEPTED · **BUILT** (Wave-1 Slice A: `@ArrayOf`, `src/Contracts/array.ts`) · detail in `docs/plan-contract-offering.md` + `impl-plan-contract-wave1.md` · also unlocks nested shapes (IDEA-25/GAP-16)
 
 **Context.** A descriptor's `params` must be JSON (round-trippable — DEC-010) but its `predicate` is a function, so a descriptor that constrains a *collection* whose items each satisfy an inner constraint (`@ArrayOf(itemConstraint)`), or an *object* against a class's contracts (`@Shape(FieldClass)`), cannot store the inner descriptor or its predicate directly. This is the crux that made "does adorn do object/array params?" look like it might be a wall.
 

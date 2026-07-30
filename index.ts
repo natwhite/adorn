@@ -6,7 +6,7 @@ import {
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
-    OneOf,
+    OneOf, ArrayOf,
 } from './src/ParameterDecorators/Constraints';
 
 // --- Field decorators -----------------------------------------------------
@@ -148,6 +148,11 @@ import * as StringContracts from './src/Contracts/string';
 // yields a descriptor for `Verify.that`/`CreateFieldDecorator`, exactly as the number/string
 // namespaces expose theirs; the flat `OneOf` above is the parameter *decorator* over the same rule.
 import * as EnumContracts from './src/Contracts/enum';
+// `@ArrayOf` (DEC-050 / IDEA-22 / GAP-15): the first *compositional* descriptor. `ArrayContracts.
+// ArrayOf(itemDescriptor, {minItems?, maxItems?})` yields a descriptor for `Verify.that`/
+// `CreateFieldDecorator`, exactly as the number/string/enum namespaces expose theirs; the flat
+// `ArrayOf` parameter *decorator* below wraps the same rule. The item rides as serialised data.
+import * as ArrayContracts from './src/Contracts/array';
 
 // The public surface, and the one place a reader can see its whole shape at once. Both the
 // section comments and the line grouping within each section are load-bearing: they say which
@@ -164,6 +169,12 @@ export {
     // JSON Schema `{enum:[…]}` (the LLM constrained-decoding target), a real docs line, and a sound
     // `fc.constantFrom` fuzzer. The descriptor is `EnumContracts.OneOf` below.
     OneOf,
+    // @ArrayOf (DEC-050/IDEA-22/GAP-15) — the first COMPOSITIONAL constraint: a list whose every
+    // element satisfies an inner descriptor carried as serialised data. Projects to a JSON Schema
+    // `{type:'array', items:<item schema>, minItems?, maxItems?}` inheriting the item's own fragment,
+    // a real docs line, and a sound recursive `fc.array` fuzzer. The descriptor is `ArrayContracts.
+    // ArrayOf` below; nests (`@ArrayOf(ArrayContracts.ArrayOf(...))`) and round-trips through JSON.
+    ArrayOf,
 
     // Field decorators
     Enforce,
@@ -279,8 +290,9 @@ export {
     // own scanned denominator; it makes no claim about runtime flows.
     telemetryForClass, telemetryForContracts, serializeTelemetry, generateTelemetryReport,
 
-    // Constraint descriptors (data, not decorators)
-    NumberContracts, StringContracts, EnumContracts,
+    // Constraint descriptors (data, not decorators). `ArrayContracts` (DEC-050) is the compositional
+    // one — its `ArrayOf` takes another descriptor as its item.
+    NumberContracts, StringContracts, EnumContracts, ArrayContracts,
 };
 
 /*

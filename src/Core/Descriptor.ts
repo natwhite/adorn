@@ -144,12 +144,23 @@ export interface ConstraintDescriptor<P extends ConstraintParams = ConstraintPar
     toJSON(): SerializedConstraint<P>;
 }
 
-/** The wire form. Rehydrate with {@link constraintFromJSON}. */
-export interface SerializedConstraint<P extends ConstraintParams = ConstraintParams> {
+/**
+ * The wire form. Rehydrate with {@link constraintFromJSON}.
+ *
+ * A **`type` alias** rather than an `interface` (DEC-050): every member type is JSON-compatible
+ * (`kind`/`constraint` are `string`, `params` is `P extends JsonObject`), so a type alias carries the
+ * implicit index signature that makes `SerializedConstraint` assignable to `JsonValue`/`JsonObject`.
+ * That is what lets a *compositional* descriptor store a serialised item in its own `params` (which
+ * must `extend JsonObject`) — e.g. `ArrayOfParams.item` in `Contracts/array.ts`. An `interface` has no
+ * implicit index signature and fails that assignment (TS2411/TS2322). This is the exact precedent
+ * `PatternSpec` records in `Contracts/string.ts`; the members are unchanged, so `toJSON()` and
+ * `constraintFromJSON` keep their signatures — pure widening, no runtime effect.
+ */
+export type SerializedConstraint<P extends ConstraintParams = ConstraintParams> = {
     readonly kind: ConstraintKind;
     readonly constraint: string;
     readonly params: P;
-}
+};
 
 /**
  * The reusable *rule*. A {@link ConstraintDescriptor} is one *application* of a definition to a

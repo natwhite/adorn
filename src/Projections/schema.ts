@@ -578,6 +578,10 @@ const KEY_ORDER = [
     'prefixItems',
     'returns',
     'items',
+    // `minItems`/`maxItems` sit immediately after `items` so an `@ArrayOf` fragment canonicalises to
+    // `{type, items, minItems, maxItems}` (DEC-050) rather than sorting to the alphabetical tail.
+    'minItems',
+    'maxItems',
     'required',
     'additionalProperties',
     'allOf',

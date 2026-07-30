@@ -46,10 +46,11 @@
  */
 
 import {ParameterDecoratorFactory} from '../Adapters/legacy/ParameterDecoratorFactory';
-import type {JsonValue} from '../Core/Descriptor';
+import type {ConstraintDescriptor, JsonValue} from '../Core/Descriptor';
 import * as Numbers from '../Contracts/number';
 import * as Strings from '../Contracts/string';
 import * as Enums from '../Contracts/enum';
+import * as Arrays from '../Contracts/array';
 
 const constraintDecorator = ParameterDecoratorFactory.CreateConstraintDecorator;
 
@@ -134,6 +135,19 @@ const Url = (protocols?: string[]) => constraintDecorator(Strings.Url(protocols)
  */
 const OneOf = (values: JsonValue[]) => constraintDecorator(Enums.OneOf(values));
 
+// ---------------------------------------------------------------------------
+// Composition — @ArrayOf (DEC-050 / IDEA-22 / GAP-15)
+// ---------------------------------------------------------------------------
+
+/**
+ * A list whose every element satisfies `item`. Type-agnostic in the container; projects to a JSON
+ * Schema `{type:'array', items:<item schema>, minItems?, maxItems?}`, inheriting the item descriptor's
+ * own fragment. `item` is a `ConstraintDescriptor` (e.g. `StringContracts.NotEmpty()`), serialised
+ * into the descriptor as data — the DEC-050 compositional mechanism; see `src/Contracts/array.ts`.
+ */
+const ArrayOf = (item: ConstraintDescriptor, options?: {minItems?: number; maxItems?: number}) =>
+    constraintDecorator(Arrays.ArrayOf(item, options));
+
 export {
     // number
     LessThanEqual,
@@ -155,4 +169,7 @@ export {
 
     // membership
     OneOf,
+
+    // composition (DEC-050)
+    ArrayOf,
 };

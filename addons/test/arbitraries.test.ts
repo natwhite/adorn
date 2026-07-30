@@ -13,6 +13,7 @@ import {ConstraintDescriptor, defineConstraint} from '../../src/Core/Descriptor'
 import * as Numbers from '../../src/Contracts/number';
 import * as Strings from '../../src/Contracts/string';
 import * as Enums from '../../src/Contracts/enum';
+import * as Arrays from '../../src/Contracts/array';
 import {arbitraryForConstraint, arbitraryForParameter} from './arbitraries';
 
 const SAMPLES = 500;
@@ -124,6 +125,66 @@ describe('oneOf generates only members (DEC-031 ideal case — no filter, no sta
 
         // Every sample is one of the four declared members — nothing else is ever produced.
         expect(values.every(value => ['x', 2, true, null].some(member => member === value))).toBe(true);
+    });
+});
+
+describe('arrayOf recurses through the item arbitrary (DEC-050 — sound by construction)', () => {
+    it('an array of a generatable item generates only valid arrays', () => {
+        const descriptor = Arrays.ArrayOf(Numbers.GreaterThanEqual(0), {minItems: 1, maxItems: 5});
+        const result = arbitraryForConstraint(descriptor);
+
+        expect(result.strategy).toBe('parametric');
+        expect(result.note).toMatch(/fc\.array/);
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+    });
+
+    it('respects the length bounds it was given', () => {
+        const descriptor = Arrays.ArrayOf(Strings.NotEmpty(), {minItems: 2, maxItems: 4});
+        const values = fc.sample(arbitraryForConstraint(descriptor).arbitrary!, {
+            numRuns: SAMPLES,
+            seed: 9,
+        }) as unknown[][];
+
+        expect(values.every(a => Array.isArray(a) && a.length >= 2 && a.length <= 4)).toBe(true);
+    });
+
+    it('nests: an array of an array of an enum generates only valid nested arrays', () => {
+        const descriptor = Arrays.ArrayOf(Arrays.ArrayOf(Enums.OneOf(['a', 'b'])));
+        const result = arbitraryForConstraint(descriptor);
+
+        expect(result.strategy).toBe('parametric');
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+    });
+
+    it('declines when the item declines and a non-empty array is required', () => {
+        const declining = defineConstraint({
+            kind: 'generic',
+            constraint: 'addon-test-arrayof-declining-item',
+            derive: () => (v: unknown) => typeof v === 'bigint',
+            describe: () => 'a bigint',
+        });
+        const result = arbitraryForConstraint(Arrays.ArrayOf(declining({}), {minItems: 1}));
+
+        expect(result.strategy).toBe('declined');
+        expect(result.arbitrary).toBeNull();
+    });
+
+    it('offers only the empty array when the item declines but the empty array is admissible', () => {
+        const declining = defineConstraint({
+            kind: 'generic',
+            constraint: 'addon-test-arrayof-declining-item-empty-ok',
+            derive: () => (v: unknown) => typeof v === 'bigint',
+            describe: () => 'a bigint',
+        });
+        const descriptor = Arrays.ArrayOf(declining({})); // no minItems ⇒ [] admissible
+        const result = arbitraryForConstraint(descriptor);
+
+        expect(result.strategy).toBe('parametric');
+        expect(result.note).toMatch(/empty array/);
+        const values = fc.sample(result.arbitrary!, {numRuns: 20, seed: 1});
+        expect(values.every(v => Array.isArray(v) && (v as unknown[]).length === 0)).toBe(true);
+        // Still sound: the descriptor's own predicate accepts every generated (empty) array.
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
     });
 });
 

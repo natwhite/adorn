@@ -37,7 +37,7 @@
  */
 
 import * as fc from 'fast-check';
-import {ConstraintDescriptor} from '../../src/Core/Descriptor';
+import {ConstraintDescriptor, constraintFromJSON, SerializedConstraint} from '../../src/Core/Descriptor';
 
 /**
  * The narrowed alias. Core's `Arbitrary = unknown` becomes `fc.Arbitrary<T>` here, and **only**
@@ -200,6 +200,47 @@ export function arbitraryForConstraint(descriptor: ConstraintDescriptor): Constr
                 arbitrary: fc.constantFrom(...values),
                 constraint,
                 note: 'fc.constantFrom over the enum members — sound by construction, no filter',
+            };
+        }
+
+        // --- composition, recursive (DEC-050 — the add-on crux) -----------------
+        case 'arrayOf': {
+            // Recurse: reconstruct the item descriptor and resolve ITS arbitrary through the same
+            // bridge, so an array of a generatable kind is sound (only valid arrays) and an array of a
+            // declining kind declines. This recursion is the generation twin of `array.ts`'s
+            // `derive`/`schema` recursion (DEC-031's ideal).
+            const p = params as {item: SerializedConstraint; minItems?: number; maxItems?: number};
+            const item = arbitraryForConstraint(constraintFromJSON(p.item));
+            const opts: {minLength?: number; maxLength?: number} = {};
+            if (p.minItems !== undefined) opts.minLength = p.minItems;
+            if (p.maxItems !== undefined) opts.maxLength = p.maxItems;
+
+            if (item.strategy === 'declined' || !item.arbitrary) {
+                // The item cannot be generated. If the empty array is admissible, still offer it;
+                // otherwise decline honestly (an array of an ungeneratable kind, required non-empty).
+                if ((p.minItems ?? 0) === 0) {
+                    return {
+                        strategy: 'parametric',
+                        arbitrary: fc.constant([] as unknown[]),
+                        constraint,
+                        note: 'item arbitrary declined; only the empty array is generated',
+                    };
+                }
+                return {
+                    strategy: 'declined',
+                    arbitrary: null,
+                    constraint,
+                    note: 'item arbitrary declined and a non-empty array is required',
+                };
+            }
+
+            // `fc.array` of a sound element arbitrary produces only valid arrays; the `.filter` guard
+            // is near-free and pins the invariant (the same discipline as `multipleOf`/`matches`).
+            return {
+                strategy: 'parametric',
+                arbitrary: fc.array(item.arbitrary, opts).filter(descriptor.predicate),
+                constraint,
+                note: `fc.array over ${item.strategy} item arbitrary`,
             };
         }
 
