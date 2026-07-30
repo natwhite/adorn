@@ -105,11 +105,18 @@
 import {ConstraintDescriptor, JsonObject, JsonValue} from '../Core/Descriptor';
 import {
     ClassMethodContract,
+    ContractTarget,
     getContractedClasses,
     getContractsForClass,
+    getDescriptionMethodKeysForClass,
+    getDescriptionParameterIndices,
+    getEffectiveMethodDescription,
     getEffectiveParameterDefault,
+    getEffectiveParameterDescription,
     getEffectiveParameterOptional,
     getFieldContractsForClass,
+    MethodKey,
+    ParameterContract,
 } from '../Core/ContractRegistry';
 
 // ---------------------------------------------------------------------------
@@ -282,6 +289,17 @@ export function schemaForContracts(): ClassSchema[] {
  *
  * Inherited contracts are included: `getContractsForClass` resolves the DEC-021/DEC-022 union, so a
  * subclass's inherited method parameters project exactly as its own would.
+ *
+ * ## The marker bands are UNIONED, not pivoted on the contract band (S1)
+ *
+ * `@Tool`/`@Describe` are recorded in their own bands, keyed independently of the contract band exactly
+ * as the telemetry/sensitivity markers are. Pivoting solely on `getContractsForClass` would (a) NPE on a
+ * `@Tool`-only method with no constrained params (no contract entry to read a marker off), and (b)
+ * silently drop a `@Describe` on an *unconstrained* parameter. So the read target is resolved from the
+ * class and the marker bands' method keys / parameter indices are unioned with the contract band —
+ * mirroring `getTelemetryMethodKeysForClass`/`getTelemetryParameterIndices`. Consequences that hold:
+ * a `@Tool('…') now(){}` projects to an empty-property schema *carrying its description*, and a
+ * `@Describe`d unconstrained parameter surfaces in `properties` as `{description:'…'}`.
  */
 export function toolSchemaForMethod(
     constructor: Function,
@@ -295,10 +313,14 @@ export function toolSchemaForMethod(
     const className = constructor.name || '(anonymous class)';
     const entry = getContractsForClass(constructor).filter(candidate => candidate.key === method)[0];
 
-    // A recorded method entry is the projectable case. When there is none, the method may still be a
-    // real-but-uncontracted method (an empty tool schema is the honest answer) — or not exist at all,
-    // which is an author error and throws.
-    if (!entry && !methodIsDeclared(constructor, method)) {
+    // S1: resolve the marker-read target from the class, unioning the description bands with the contract
+    // band. A method may carry ONLY marker bands (@Tool / @Describe) and no constraint, in which case
+    // `entry` is undefined but the method still projects.
+    const site = resolveMethodSite(constructor, method, entry);
+
+    // A projectable case is a contract entry, a marker site, or a real-but-uncontracted method (an empty
+    // tool schema is the honest answer). Anything else is a typo and throws.
+    if (!site && !methodIsDeclared(constructor, method)) {
         throw new Error(
             `toolSchemaForMethod: ${className} has no method '${String(method)}'. Pass the name of a ` +
                 'method declared on the class (contracted or not).',
@@ -308,30 +330,48 @@ export function toolSchemaForMethod(
     const properties: JsonObject = {};
     const required: string[] = [];
 
-    if (entry) {
-        const params = entry.contract.params.slice().sort((a, b) => a.index - b.index);
-        params.forEach(parameter => {
-            const name =
-                typeof parameter.name === 'string' && parameter.name.length > 0
-                    ? parameter.name
-                    : `arg${parameter.index}`;
-            const fragment = mergeFragments(schemaFragmentsOf(parameter.constraints));
+    if (site) {
+        const target = site.target;
+        const paramByIndex = new Map<number, ParameterContract>();
+        (site.params || []).forEach(parameter => paramByIndex.set(parameter.index, parameter));
 
-            // `@Default` (DEC-051): emit `{default}` as a non-asserting annotation — safe in either
-            // schema posture (a validator ignores it), so it can never over-claim (M1). Read off
-            // `entry.target`, the object the contract itself resolved from, via the chain-walking read.
-            const def = getEffectiveParameterDefault(entry.target, method, parameter.index);
-            if (def !== undefined) fragment.default = def;
+        // Union the contract-band parameter positions with the @Describe-marked indices (S1 Failure B),
+        // so a described-but-unconstrained parameter is not dropped. Sorted so `required` stays in
+        // parameter-index order.
+        const indices = new Set<number>();
+        (site.params || []).forEach(parameter => indices.add(parameter.index));
+        getDescriptionParameterIndices(target, method).forEach(index => indices.add(index));
 
-            properties[name] = fragment;
+        Array.from(indices)
+            .sort((a, b) => a - b)
+            .forEach(index => {
+                const parameter = paramByIndex.get(index);
+                const constraints = parameter ? parameter.constraints : [];
+                const name =
+                    parameter && typeof parameter.name === 'string' && parameter.name.length > 0
+                        ? parameter.name
+                        : `arg${index}`;
+                const fragment = mergeFragments(schemaFragmentsOf(constraints));
 
-            // `@Optional` (DEC-051): an effective-optional parameter stays in `properties` but is dropped
-            // from `required`. Derived from the SAME read the installer's absent-arg guard uses, so the
-            // schema and enforcement cannot drift (invariant 4). `required` still means "carries ≥1
-            // constraint" (DEC-048) for every non-optional position.
-            const optional = getEffectiveParameterOptional(entry.target, method, parameter.index);
-            if (parameter.constraints.length > 0 && !optional) required.push(name);
-        });
+                // `@Describe` (S1): the property's `description`, the SOLE source of one — the tool schema
+                // deliberately does not fall back to the constraint's `describe()` prose (plan §4.3).
+                const desc = getEffectiveParameterDescription(target, method, index);
+                if (typeof desc === 'string') fragment.description = desc;
+
+                // `@Default` (DEC-051): emit `{default}` as a non-asserting annotation — safe in either
+                // schema posture (a validator ignores it), so it can never over-claim (M1).
+                const def = getEffectiveParameterDefault(target, method, index);
+                if (def !== undefined) fragment.default = def;
+
+                properties[name] = fragment;
+
+                // `@Optional` (DEC-051): an effective-optional parameter stays in `properties` but is
+                // dropped from `required`. Derived from the SAME read the installer's absent-arg guard
+                // uses, so the schema and enforcement cannot drift (invariant 4). `required` still means
+                // "carries ≥1 constraint" (DEC-048) for every non-optional position.
+                const optional = getEffectiveParameterOptional(target, method, index);
+                if (constraints.length > 0 && !optional) required.push(name);
+            });
     }
 
     const document: JsonObject = {
@@ -341,11 +381,45 @@ export function toolSchemaForMethod(
         required,
         additionalProperties: false,
     };
-    if (options && typeof options.description === 'string') {
-        document.description = options.description;
-    }
+
+    // Tool-level description: the call-site option wins (an override point); `@Tool('…')` is the
+    // co-located declarative default. Emitted only when one is present (adorn is runtime-only — no
+    // JSDoc source, DEC-007).
+    const toolDesc =
+        options && typeof options.description === 'string'
+            ? options.description
+            : site
+              ? getEffectiveMethodDescription(site.target, method)
+              : undefined;
+    if (typeof toolDesc === 'string') document.description = toolDesc;
 
     return canonicalize(document) as ToolSchema;
+}
+
+/** Where a method's markers are read from — the contract target, or the marker-band target when the
+ * method has no contract but carries a `@Tool`/`@Describe`. `params` is present only for a contracted
+ * method (the marker-only case has no parameter contracts to carry). */
+interface MethodSite {
+    readonly isStatic: boolean;
+    readonly target: ContractTarget;
+    readonly params?: ReadonlyArray<ParameterContract>;
+}
+
+/**
+ * Resolve the marker-read site for `method`: the contract entry when there is one, else the description
+ * band's site (a `@Tool`/`@Describe`-only method), else `undefined` (a real-but-unmarked method → empty
+ * schema, or a typo caught by the caller). Mirrors the telemetry projection's `collectSites` union,
+ * narrowed to one method.
+ */
+function resolveMethodSite(
+    constructor: Function,
+    method: MethodKey,
+    entry: ClassMethodContract | undefined,
+): MethodSite | undefined {
+    if (entry) return {isStatic: entry.isStatic, target: entry.target, params: entry.contract.params};
+    const marked = getDescriptionMethodKeysForClass(constructor).filter(m => m.key === method)[0];
+    if (marked) return {isStatic: marked.isStatic, target: marked.target};
+    return undefined;
 }
 
 /**

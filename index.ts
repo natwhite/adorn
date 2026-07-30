@@ -6,6 +6,7 @@ import {
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
+    Uuid, DateTime, Ipv4, Format,
     OneOf, ArrayOf,
 } from './src/ParameterDecorators/Constraints';
 
@@ -27,6 +28,14 @@ export type {SensitiveOptions} from './src/Sensitive/Sensitive';
 // default at runtime — it annotates, the host applies it.
 import {Optional} from './src/Markers/Optional';
 import {Default} from './src/Markers/Default';
+
+// --- Description markers (Q-30) --------------------------------------------
+// Record-only, pure annotation (posture-neutral — never rejects a value). @Describe('…') is a parameter
+// description the model reads (→ the property's `description`); @Tool('…') is a method/tool description
+// (→ the tool schema's top-level `description`, overridden by the toolSchemaForMethod({description})
+// option when both are present). Both flow into docs too. JSDoc stays rejected (DEC-007).
+import {Describe} from './src/Markers/Describe';
+import {Tool} from './src/Markers/Tool';
 
 // --- Imperative assertion (for call sites with no decoration point) --------
 import {Verify} from './src/Validation/Verify';
@@ -174,6 +183,11 @@ export {
     LessThanEqual, GreaterThanEqual, LessThan, GreaterThan,
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
+    // String formats (IDEA-23) — VALIDATING, never annotate-only. Each is a real descriptor with a
+    // total, strict predicate and projects to {type:'string', format:'uuid'|'date-time'|'ipv4'} (the
+    // predicate is at-least-as-strict as the format keyword, so the emitted `format` never over-claims —
+    // DEC-029). @Format(name) is a keyed alias over the same three; an unknown name throws at decoration.
+    Uuid, DateTime, Ipv4, Format,
     // @OneOf (IDEA-21/GAP-14) — a reified enum/membership constraint, type-agnostic. Projects to a
     // JSON Schema `{enum:[…]}` (the LLM constrained-decoding target), a real docs line, and a sound
     // `fc.constantFrom` fuzzer. The descriptor is `EnumContracts.OneOf` below.
@@ -199,6 +213,12 @@ export {
     // JSON default ({default}, non-asserting) and implies @Optional. Inheritance is required-wins so a
     // subclass cannot silently weaken (DEC-016/DEC-022); adorn annotates the default, it does not inject it.
     Optional, Default,
+
+    // Description markers (Q-30), record-only + posture-neutral (pure annotation, never rejects). @Describe
+    // is a parameter description (→ the property's `description`); @Tool is a method/tool description (→ the
+    // schema's top-level `description`, overridden by the toolSchemaForMethod({description}) option). Both
+    // also flow into docs. A @Tool-only method with no constrained params still projects (the S1 union).
+    Describe, Tool,
 
     // Imperative assertion
     Verify,

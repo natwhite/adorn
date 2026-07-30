@@ -91,9 +91,13 @@ import {ConstraintDescriptor, ConstraintKind, ConstraintParams} from '../Core/De
 import {
     ClassFieldContract,
     ClassMethodContract,
+    ContractTarget,
     getContractedClasses,
     getContractsForClass,
+    getEffectiveMethodDescription,
+    getEffectiveParameterDescription,
     getFieldContractsForClass,
+    MethodKey,
 } from '../Core/ContractRegistry';
 
 // ---------------------------------------------------------------------------
@@ -133,6 +137,12 @@ export interface ParameterDoc {
      * declared type.
      */
     readonly typeName?: string;
+    /**
+     * The `@Describe('…')` natural-language description in force on this parameter (Q-30), or absent when
+     * none was declared. Present rather than defaulted-empty, exactly as {@link typeName} is, so an
+     * un-described parameter renders no Description cell.
+     */
+    readonly description?: string;
     readonly constraints: ReadonlyArray<ConstraintDoc>;
 }
 
@@ -140,6 +150,12 @@ export interface ParameterDoc {
 export interface MethodDoc {
     /** `String(key)` — a symbol key renders as `Symbol(name)`. */
     readonly name: string;
+    /**
+     * The `@Tool('…')` tool-level description in force on this method (Q-30), or absent when none was
+     * declared. Heads the method's rendered section. Present rather than defaulted-empty, so an
+     * un-described method renders no heading line.
+     */
+    readonly description?: string;
     /** Recorded against the constructor rather than the prototype. */
     readonly isStatic: boolean;
     /**
@@ -269,9 +285,11 @@ export function documentContracts(): ClassDoc[] {
 
 function toMethodDoc(className: string, entry: ClassMethodContract): MethodDoc {
     const name = String(entry.key);
-    const parameters = entry.contract.params.map(toParameterDoc);
+    const parameters = entry.contract.params.map(parameter =>
+        toParameterDoc(parameter, entry.target, entry.key),
+    );
 
-    return {
+    const doc: MethodDoc = {
         name,
         isStatic: entry.isStatic,
         signature: buildSignature(className, name, parameters),
@@ -280,6 +298,11 @@ function toMethodDoc(className: string, entry: ClassMethodContract): MethodDoc {
         pre: entry.contract.pre.map(toConstraintDoc),
         post: entry.contract.post.map(toConstraintDoc),
     };
+
+    // `@Tool('…')` (Q-30): the tool-level description, read off the same target the contract resolved
+    // from, absent when none was declared (so an un-described method's model is byte-identical).
+    const description = getEffectiveMethodDescription(entry.target, entry.key);
+    return typeof description === 'string' ? {...doc, description} : doc;
 }
 
 /**
@@ -306,15 +329,19 @@ function toFieldDoc(entry: ClassFieldContract): FieldDoc {
     return doc;
 }
 
-function toParameterDoc(parameter: {
-    readonly index: number;
-    readonly name?: string;
-    readonly type?: Function;
-    readonly constraints: ReadonlyArray<ConstraintDescriptor>;
-}): ParameterDoc {
+function toParameterDoc(
+    parameter: {
+        readonly index: number;
+        readonly name?: string;
+        readonly type?: Function;
+        readonly constraints: ReadonlyArray<ConstraintDescriptor>;
+    },
+    target: ContractTarget,
+    key: MethodKey,
+): ParameterDoc {
     const recovered = typeof parameter.name === 'string' && parameter.name.length > 0;
 
-    const doc: ParameterDoc = {
+    let doc: ParameterDoc = {
         index: parameter.index,
         name: recovered ? (parameter.name as string) : `arg${parameter.index}`,
         nameRecovered: recovered,
@@ -325,8 +352,14 @@ function toParameterDoc(parameter: {
     // Absent rather than undefined when unknown, matching how the descriptor treats its own
     // optional hooks.
     if (parameter.type && typeof parameter.type.name === 'string' && parameter.type.name.length > 0) {
-        return {...doc, typeName: parameter.type.name};
+        doc = {...doc, typeName: parameter.type.name};
     }
+
+    // `@Describe('…')` (Q-30): the parameter description, read off the same target the contract resolved
+    // from. Absent when none was declared, so an un-described parameter's model is byte-identical.
+    const description = getEffectiveParameterDescription(target, key, parameter.index);
+    if (typeof description === 'string') doc = {...doc, description};
+
     return doc;
 }
 
@@ -432,6 +465,12 @@ export function generateMarkdown(options?: MarkdownOptions): string {
 function renderMethod(method: MethodDoc, lines: string[]): void {
     lines.push(`### ${method.signature}${method.isStatic ? ' _(static)_' : ''}`, '');
 
+    // `@Tool('…')` (Q-30) heads the section when present — additive, so an un-described method renders
+    // exactly as before.
+    if (typeof method.description === 'string') {
+        lines.push(`_${escapeCell(method.description)}_`, '');
+    }
+
     if (!method.installed) {
         // Loud on purpose. An uninstalled contract is recorded but not enforced, so this document
         // would otherwise describe a guarantee that does not hold at runtime (plan §8, risk 1).
@@ -444,15 +483,27 @@ function renderMethod(method: MethodDoc, lines: string[]): void {
 
     const hasConstraints = method.parameters.some(parameter => parameter.constraints.length > 0);
     if (hasConstraints) {
-        lines.push('| Parameter | Type | Constraint | Expectation |', '| --- | --- | --- | --- |');
+        // `@Describe('…')` adds a Description column ONLY when some parameter carries one (Q-30), so the
+        // common no-description table keeps its exact four-column shape.
+        const described = method.parameters.some(parameter => typeof parameter.description === 'string');
+        lines.push(
+            described
+                ? '| Parameter | Type | Constraint | Expectation | Description |'
+                : '| Parameter | Type | Constraint | Expectation |',
+            described ? '| --- | --- | --- | --- | --- |' : '| --- | --- | --- | --- |',
+        );
 
         method.parameters.forEach(parameter => {
             parameter.constraints.forEach(constraint => {
-                lines.push(
+                const row =
                     `| \`${escapeCell(parameter.name)}\` (${parameter.index}) ` +
-                        `| ${parameter.typeName ? '`' + escapeCell(parameter.typeName) + '`' : '—'} ` +
-                        `| \`${escapeCell(constraint.constraint)}\` ` +
-                        `| ${escapeCell(constraint.expectation)} |`,
+                    `| ${parameter.typeName ? '`' + escapeCell(parameter.typeName) + '`' : '—'} ` +
+                    `| \`${escapeCell(constraint.constraint)}\` ` +
+                    `| ${escapeCell(constraint.expectation)} |`;
+                lines.push(
+                    described
+                        ? `${row} ${parameter.description ? escapeCell(parameter.description) : '—'} |`
+                        : row,
                 );
             });
         });

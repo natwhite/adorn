@@ -47,7 +47,7 @@
  * pretence of full generality (P3.3).
  */
 
-import {defineConstraint, JsonObject, Predicate} from '../Core/Descriptor';
+import {ConstraintDescriptor, defineConstraint, JsonObject, Predicate} from '../Core/Descriptor';
 
 // ---------------------------------------------------------------------------
 // Params
@@ -163,6 +163,86 @@ const EMAIL_PATTERN: PatternSpec = {source: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$', fl
 const DEFAULT_URL_PROTOCOLS = ['http:', 'https:'];
 
 // ---------------------------------------------------------------------------
+// String formats (IDEA-23) — VALIDATING, never annotate-only
+// ---------------------------------------------------------------------------
+
+/**
+ * `@Uuid`/`@DateTime`/`@Ipv4` each emit `{type:'string', format:'<name>'}` **and** enforce a real,
+ * strict predicate. The `format` keyword is a non-asserting annotation by default, so the fragment
+ * under-claims (a `format`-ignoring validator accepts a superset) — the safe DEC-029 direction, the
+ * exact `url → format:'uri'` precedent. The one direction DEC-029 forbids is *over*-claiming: emitting
+ * a `format` whose keyword rejects a value enforcement accepts. So **each predicate is at least as
+ * strict as its `format` keyword** (predicate-accepts ⊆ format-accepts):
+ *
+ *  - `date-time` uses a strict **RFC 3339** parse — NOT `Date.parse`, which accepts a superset
+ *    (`'2020'`, `'Wed Jul 29 2026'`) and would reopen the over-claim; the components are range- and
+ *    calendar-checked (real month/day, leap years).
+ *  - `uuid` is the canonical 8-4-4-4-12 hex form.
+ *  - `ipv4` is a dotted quad with every octet in `0..255`.
+ *
+ * `@Format(name)` is a keyed alias over the same three; an unknown name throws loudly at decoration
+ * (an unbacked `format` would be the over-claim). Annotate-only IANA formats are deferred for the same
+ * reason. Every predicate is total (BUG-4): a non-string is `false`, never a thrown `TypeError`.
+ */
+
+/** Canonical UUID: 8-4-4-4-12 hex (case-insensitive). */
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * Strict RFC 3339 `date-time`: `full-date "T" full-time`, with a mandatory `Z`/numeric offset. Captures
+ * the components so their ranges (and real calendar validity) can be checked — the regex alone would
+ * accept `2020-13-40T25:61:99Z`, which `format:'date-time'` rejects.
+ */
+const RFC3339_DATE_TIME_RE =
+    /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
+
+/** Dotted quad; octet ranges are checked numerically (the regex only bounds digit count). */
+const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+/** Days per month, index 0 = January. February's 29th day is gated on {@link isLeapYear}. */
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function isLeapYear(year: number): boolean {
+    return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/** Total, strict RFC 3339 `date-time` predicate — see {@link RFC3339_DATE_TIME_RE}. */
+const isRfc3339DateTime: Predicate = (value: unknown) => {
+    if (!isText(value)) return false;
+    const m = RFC3339_DATE_TIME_RE.exec(value);
+    if (!m) return false;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    const second = Number(m[6]);
+    if (month < 1 || month > 12) return false;
+    const maxDay = month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month - 1];
+    if (day < 1 || day > maxDay) return false;
+    if (hour > 23) return false;
+    if (minute > 59) return false;
+    if (second > 60) return false; // 60 permits a leap second (RFC 3339 §5.6)
+    // A numeric offset (not `Z`) present — validate its own hour/minute ranges too.
+    if (m[7] !== undefined && (Number(m[8]) > 23 || Number(m[9]) > 59)) return false;
+    return true;
+};
+
+/** Total, canonical UUID predicate. */
+const isUuid: Predicate = (value: unknown) => isText(value) && UUID_RE.test(value);
+
+/** Total, strict IPv4 dotted-quad predicate — every octet `0..255`. */
+const isIpv4: Predicate = (value: unknown) => {
+    if (!isText(value)) return false;
+    const m = IPV4_RE.exec(value);
+    if (!m) return false;
+    for (let i = 1; i <= 4; i++) {
+        if (Number(m[i]) > 255) return false;
+    }
+    return true;
+};
+
+// ---------------------------------------------------------------------------
 // Definitions
 // ---------------------------------------------------------------------------
 
@@ -254,6 +334,39 @@ export const urlConstraint = defineConstraint<UrlParams>({
      * than admitted silently.
      */
     schema: () => ({type: 'string', format: 'uri'}),
+});
+
+/**
+ * A UUID. Validates the canonical 8-4-4-4-12 hex form; emits `{type:'string', format:'uuid'}`. No
+ * `pattern` is emitted — `format:'uuid'` is the faithful hint, and the strict predicate is the backstop.
+ */
+export const uuidConstraint = defineConstraint<JsonObject>({
+    kind: 'string',
+    constraint: 'uuid',
+    derive: () => isUuid,
+    describe: () => 'a UUID',
+    schema: () => ({type: 'string', format: 'uuid'}),
+});
+
+/**
+ * An RFC 3339 `date-time`. The predicate is a **strict** RFC 3339 parse (not `Date.parse`, which accepts
+ * a superset — the DEC-029 over-claim S3 forbids); emits `{type:'string', format:'date-time'}`.
+ */
+export const dateTimeConstraint = defineConstraint<JsonObject>({
+    kind: 'string',
+    constraint: 'dateTime',
+    derive: () => isRfc3339DateTime,
+    describe: () => 'an RFC 3339 date-time',
+    schema: () => ({type: 'string', format: 'date-time'}),
+});
+
+/** An IPv4 address. Validates a dotted quad with each octet `0..255`; emits `{type:'string', format:'ipv4'}`. */
+export const ipv4Constraint = defineConstraint<JsonObject>({
+    kind: 'string',
+    constraint: 'ipv4',
+    derive: () => isIpv4,
+    describe: () => 'an IPv4 address',
+    schema: () => ({type: 'string', format: 'ipv4'}),
 });
 
 // ---------------------------------------------------------------------------
@@ -381,6 +494,54 @@ export function Url(protocols?: string[]) {
     }
     const resolved = (protocols || DEFAULT_URL_PROTOCOLS).map(normalizeProtocol);
     return urlConstraint({protocols: resolved});
+}
+
+/** Rejects any string that is not a canonical UUID (8-4-4-4-12 hex). */
+export function Uuid() {
+    return uuidConstraint({});
+}
+
+/**
+ * Rejects any string that is not a strict RFC 3339 `date-time` (e.g. `2020-01-02T03:04:05Z`). Bare
+ * `@Date` is avoided deliberately — it shadows the global `Date`; a date-only variant is deferred.
+ */
+export function DateTime() {
+    return dateTimeConstraint({});
+}
+
+/** Rejects any string that is not a dotted-quad IPv4 address with every octet `0..255`. */
+export function Ipv4() {
+    return ipv4Constraint({});
+}
+
+/**
+ * The formats `@Format(name)` keys, mapped to their descriptor factories. Kept small and explicit: an
+ * unknown name throws rather than emitting an unbacked `format` (the over-claim). Add a format here only
+ * once it has a real validating predicate.
+ */
+const FORMAT_ALIASES: {readonly [name: string]: () => ConstraintDescriptor} = {
+    uuid: Uuid,
+    'date-time': DateTime,
+    ipv4: Ipv4,
+};
+
+/** The names {@link Format} accepts, for the error message and for callers that want to enumerate them. */
+export const SUPPORTED_FORMATS: ReadonlyArray<string> = Object.keys(FORMAT_ALIASES);
+
+/**
+ * A keyed alias over the validating format descriptors — `Format('uuid') ≡ Uuid()`. An unknown name is
+ * refused **loudly at decoration time** with a `TypeError` listing the supported names (the `@Telemetry.
+ * redact` precedent): emitting an unvalidated `format` would be the exact DEC-029 over-claim, so an
+ * annotate-only / unbacked format is deferred, not silently produced.
+ */
+export function Format(name: string): ConstraintDescriptor {
+    const factory = typeof name === 'string' ? FORMAT_ALIASES[name] : undefined;
+    if (!factory) {
+        throw new TypeError(
+            `Format: unknown format '${String(name)}'. Supported formats are ${SUPPORTED_FORMATS.join(', ')}.`,
+        );
+    }
+    return factory();
 }
 
 /**

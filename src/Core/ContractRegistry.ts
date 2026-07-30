@@ -356,6 +356,24 @@ let parameterOptionalByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<n
  */
 let parameterDefaultByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, JsonValue>>>();
 
+/**
+ * The `@Describe` parameter-description band (Q-30) — target → method key → parameter index → the
+ * natural-language description the model reads. Own-scoped and index-keyed, record-only: no key here
+ * ever causes an installer to attach anything, exactly like the sensitivity/telemetry/`@Optional` bands.
+ * Resolution is **nearest-declaration-wins** ({@link getEffectiveParameterDescription}), the same rule
+ * `@Default` uses — a description is a plain annotation, not a precondition, so there is nothing to
+ * conjoin (contrast the constraint band's DEC-022 union).
+ */
+let parameterDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, string>>>();
+
+/**
+ * The `@Tool` method-description band (Q-30) — target → method key → the tool-level description. The
+ * method-level twin of {@link parameterDescriptionByTarget}; own-scoped, record-only, and resolved
+ * nearest-declaration-wins ({@link getEffectiveMethodDescription}). It is the recorded twin of the
+ * `toolSchemaForMethod(C, m, {description})` option — the option overrides it when both are present.
+ */
+let methodDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, string>>();
+
 let classEnumerationEnabled = true;
 
 const EMPTY_CONTRACTS: ReadonlyMap<MethodKey, MethodContract> = new Map<MethodKey, MethodContract>();
@@ -1679,6 +1697,149 @@ export function getEffectiveParameterDefault(
     return undefined;
 }
 
+// --- @Describe / @Tool band writes (Q-30) ----------------------------------
+//
+// Record-only, exactly like the sensitivity/telemetry/@Optional bands above: none install anything or
+// touch an enforcement band. Own-scoped, so there is no write API that reaches an ancestor.
+
+/**
+ * Record the `@Describe` text for parameter `index` of `target[key]`. Index-keyed, so minification-safe.
+ * `text` is validated non-empty at authoring time (`Markers/Describe.ts`); stored verbatim.
+ */
+export function recordParameterDescription(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+    text: string,
+): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError(
+            'recordParameterDescription: target must be an object (a prototype or constructor)',
+        );
+    }
+    if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
+        throw new TypeError(
+            `recordParameterDescription: parameter index must be a non-negative integer, received ${String(index)}`,
+        );
+    }
+    let methods = parameterDescriptionByTarget.get(target);
+    if (!methods) {
+        methods = new Map<MethodKey, Map<number, string>>();
+        parameterDescriptionByTarget.set(target, methods);
+    }
+    let params = methods.get(key);
+    if (!params) {
+        params = new Map<number, string>();
+        methods.set(key, params);
+    }
+    params.set(index, text);
+}
+
+/**
+ * Record the `@Tool` description for `target[key]`. `text` is validated non-empty at authoring time
+ * (`Markers/Tool.ts`); stored verbatim.
+ */
+export function recordMethodDescription(target: ContractTarget, key: MethodKey, text: string): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('recordMethodDescription: target must be an object (a prototype or constructor)');
+    }
+    let methods = methodDescriptionByTarget.get(target);
+    if (!methods) {
+        methods = new Map<MethodKey, string>();
+        methodDescriptionByTarget.set(target, methods);
+    }
+    methods.set(key, text);
+}
+
+// --- @Describe / @Tool band reads (Q-30) -----------------------------------
+
+/** The `@Describe` text declared **directly** on parameter `index` of `target[key]`, or `undefined`. Own-scoped. */
+export function getParameterDescription(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): string | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const params = parameterDescriptionByTarget.get(target)?.get(key);
+    return params ? params.get(index) : undefined;
+}
+
+/**
+ * The `@Describe` text **in force** on parameter `index` of `target[key]`, honouring inheritance: the
+ * nearest declaration on the prototype chain wins (a subclass override's description shadows the base's).
+ * A description is an annotation, not a precondition — nearest-wins, not the constraint band's union.
+ */
+export function getEffectiveParameterDescription(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): string | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const params = parameterDescriptionByTarget.get(cursor)?.get(key);
+        if (params && params.has(index)) return params.get(index);
+    }
+    return undefined;
+}
+
+/** The `@Tool` description declared **directly** on `target[key]`, or `undefined`. Own-scoped. */
+export function getMethodDescription(target: ContractTarget, key: MethodKey): string | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const methods = methodDescriptionByTarget.get(target);
+    return methods ? methods.get(key) : undefined;
+}
+
+/** The `@Tool` description **in force** on `target[key]`, honouring inheritance (nearest declaration wins). */
+export function getEffectiveMethodDescription(target: ContractTarget, key: MethodKey): string | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const own = methodDescriptionByTarget.get(cursor)?.get(key);
+        if (own !== undefined) return own;
+    }
+    return undefined;
+}
+
+/**
+ * Parameter indices carrying a `@Describe` marking on `target[key]`, own-scoped — the description-band
+ * twin of {@link getTelemetryParameterIndices}. The tool-schema projection unions these with the
+ * constraint band's parameter indices, so a `@Describe` on a parameter that carries no *constraint* is
+ * still surfaced (the S1 fix) rather than silently dropped from `properties`.
+ */
+export function getDescriptionParameterIndices(target: ContractTarget, key: MethodKey): number[] {
+    if (!isRegisterableTarget(target)) return [];
+    const params = parameterDescriptionByTarget.get(target)?.get(key);
+    if (!params) return [];
+    const indices: number[] = [];
+    params.forEach((_text, index) => indices.push(index));
+    return indices;
+}
+
+/**
+ * Method keys carrying **any** description marking (`@Tool` or a parameter `@Describe`) on a class, from
+ * both key bands — the description-band twin of {@link getTelemetryMethodKeysForClass}. The tool-schema
+ * projection unions these with {@link getContractsForClass} so a `@Tool`-only method with no *constraint*
+ * still projects (the S1 fix: it would otherwise NPE reading a marker off an absent contract entry).
+ */
+export function getDescriptionMethodKeysForClass(
+    constructor: Function,
+): Array<{key: MethodKey; isStatic: boolean; target: ContractTarget}> {
+    if (typeof constructor !== 'function') {
+        throw new TypeError('getDescriptionMethodKeysForClass: expected a constructor function');
+    }
+    const out: Array<{key: MethodKey; isStatic: boolean; target: ContractTarget}> = [];
+    const collect = (target: ContractTarget, isStatic: boolean) => {
+        const seen = new Set<MethodKey>();
+        const paramMethods = parameterDescriptionByTarget.get(target);
+        if (paramMethods) paramMethods.forEach((_params, key) => seen.add(key));
+        const methodDescs = methodDescriptionByTarget.get(target);
+        if (methodDescs) methodDescs.forEach((_text, key) => seen.add(key));
+        seen.forEach(key => out.push({key, isStatic, target}));
+    };
+    if (constructor.prototype) collect(constructor.prototype, false);
+    collect(constructor, true);
+    return out;
+}
+
 /**
  * Add a class to the enumerable registry. Called by the `@Contract()` installer (P1.3) — *not* by
  * constraint recording, so `getContractedClasses()` reports exactly the classes that were
@@ -1743,6 +1904,8 @@ export function resetRegistry(): void {
     returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
     parameterOptionalByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, OptionalMarking>>>();
     parameterDefaultByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, JsonValue>>>();
+    parameterDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, string>>>();
+    methodDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, string>>();
     classEnumerationEnabled = true;
 }
 

@@ -63,6 +63,9 @@ const INTERNAL_REGISTRY_WRITERS = [
     // @Optional / @Default band (DEC-051)
     'recordParameterOptional',
     'recordParameterDefault',
+    // @Describe / @Tool description band (Q-30)
+    'recordParameterDescription',
+    'recordMethodDescription',
     // Enumerable-registry + configuration/test-support mutators
     'registerContractedClass',
     'setClassEnumerationEnabled',
@@ -121,7 +124,15 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // `@Default` enforcement-aware parameter markers. Their registry bands' writers
     // (`recordParameterOptional`/`recordParameterDefault`) and reads stay internal — only the two
     // decorators join the surface.
-    const PINNED_VALUE_EXPORT_COUNT = 79;
+    //
+    // 79 → 85: contract-offering Wave 1 Slice C (Q-30 / IDEA-23) completes the wave with SIX value
+    // exports — the `@Describe`/`@Tool` record-only description markers, and four validating string-format
+    // parameter decorators `@Uuid`/`@DateTime`/`@Ipv4`/`@Format`. The format *descriptor* factories ride
+    // the existing `StringContracts` namespace (no new namespace export); the description bands' writers
+    // (`recordParameterDescription`/`recordMethodDescription`) and reads stay internal, like the other
+    // marker bands. `@Format` is kept (not folded into the three named ones) for the string-keyed
+    // ergonomics, a conscious +1.
+    const PINNED_VALUE_EXPORT_COUNT = 85;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -182,5 +193,40 @@ describe('contract-offering Wave 1 Slice B adds exactly its intended public expo
         expect(adorn).not.toHaveProperty('getEffectiveParameterDefault');
         expect(adorn).not.toHaveProperty('getParameterOptional');
         expect(adorn).not.toHaveProperty('getParameterDefault');
+    });
+});
+
+describe('contract-offering Wave 1 Slice C adds exactly its intended public exports (Q-30 / IDEA-23)', () => {
+    // The +6 (79→85) moved *because these six landed* — the `@Describe`/`@Tool` description markers and
+    // the four validating string-format decorators — not because something unrelated leaked.
+    it('exports the @Describe parameter marker and the @Tool method marker (Q-30)', () => {
+        expect(typeof (adorn as Record<string, unknown>).Describe).toBe('function');
+        expect(typeof (adorn as Record<string, unknown>).Tool).toBe('function');
+    });
+
+    it('exports the @Uuid/@DateTime/@Ipv4/@Format string-format decorators (IDEA-23)', () => {
+        expect(typeof (adorn as Record<string, unknown>).Uuid).toBe('function');
+        expect(typeof (adorn as Record<string, unknown>).DateTime).toBe('function');
+        expect(typeof (adorn as Record<string, unknown>).Ipv4).toBe('function');
+        expect(typeof (adorn as Record<string, unknown>).Format).toBe('function');
+    });
+
+    it('exposes the format descriptor factories on the EXISTING StringContracts namespace (no new namespace)', () => {
+        const stringContracts = (adorn as Record<string, unknown>).StringContracts as Record<string, unknown>;
+        expect(typeof stringContracts.Uuid).toBe('function');
+        expect(typeof stringContracts.DateTime).toBe('function');
+        expect(typeof stringContracts.Ipv4).toBe('function');
+        expect(typeof stringContracts.Format).toBe('function');
+    });
+
+    it('keeps the @Describe/@Tool registry reads and union helpers OFF the root surface (Q-6)', () => {
+        // The tool-schema + docs projections read these internally, exactly as the sensitivity/telemetry
+        // effective reads and `*KeysForClass` union helpers stay internal.
+        expect(adorn).not.toHaveProperty('getEffectiveParameterDescription');
+        expect(adorn).not.toHaveProperty('getEffectiveMethodDescription');
+        expect(adorn).not.toHaveProperty('getParameterDescription');
+        expect(adorn).not.toHaveProperty('getMethodDescription');
+        expect(adorn).not.toHaveProperty('getDescriptionParameterIndices');
+        expect(adorn).not.toHaveProperty('getDescriptionMethodKeysForClass');
     });
 });

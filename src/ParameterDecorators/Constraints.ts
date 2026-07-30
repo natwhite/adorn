@@ -125,6 +125,29 @@ const Email = () => constraintDecorator(Strings.Email());
 const Url = (protocols?: string[]) => constraintDecorator(Strings.Url(protocols));
 
 // ---------------------------------------------------------------------------
+// String formats (IDEA-23) — VALIDATING; each emits {type:'string', format:'…'}
+// ---------------------------------------------------------------------------
+
+/** Rejects any string that is not a canonical UUID. Projects to `{type:'string', format:'uuid'}`. */
+const Uuid = () => constraintDecorator(Strings.Uuid());
+
+/**
+ * Rejects any string that is not a strict RFC 3339 `date-time`. Projects to `{type:'string',
+ * format:'date-time'}`. Named `@DateTime` (not `@Date`) to avoid shadowing the global `Date`.
+ */
+const DateTime = () => constraintDecorator(Strings.DateTime());
+
+/** Rejects any string that is not a dotted-quad IPv4 address. Projects to `{type:'string', format:'ipv4'}`. */
+const Ipv4 = () => constraintDecorator(Strings.Ipv4());
+
+/**
+ * A keyed alias over the validating format descriptors — `@Format('uuid') ≡ @Uuid()`. An unknown name
+ * throws a `TypeError` at decoration time (an unbacked `format` would be an over-claim; see
+ * `src/Contracts/string.ts`). Supported names: `uuid`, `date-time`, `ipv4`.
+ */
+const Format = (name: string) => constraintDecorator(Strings.Format(name));
+
+// ---------------------------------------------------------------------------
 // Membership (IDEA-21 / GAP-14)
 // ---------------------------------------------------------------------------
 
@@ -166,6 +189,12 @@ export {
     Matches,
     Email,
     Url,
+
+    // string formats (IDEA-23)
+    Uuid,
+    DateTime,
+    Ipv4,
+    Format,
 
     // membership
     OneOf,
