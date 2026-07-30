@@ -19,6 +19,15 @@ import {CreateFieldDecorator, installFieldContracts} from './src/Adapters/legacy
 import {Sensitive} from './src/Sensitive/Sensitive';
 export type {SensitiveOptions} from './src/Sensitive/Sensitive';
 
+// --- Contract markers (DEC-051) -------------------------------------------
+// Record-only parameter markers, enforcement-aware. @Optional makes an ABSENT (undefined) argument
+// satisfy the position (skipped by the installer, dropped from the tool schema's `required`); @Default
+// annotates a JSON default (emitted as a non-asserting `{default}`) and implies @Optional. Inheritance
+// is REQUIRED-WINS so a subclass cannot silently weaken (DEC-016/DEC-022); adorn does NOT inject the
+// default at runtime — it annotates, the host applies it.
+import {Optional} from './src/Markers/Optional';
+import {Default} from './src/Markers/Default';
+
 // --- Imperative assertion (for call sites with no decoration point) --------
 import {Verify} from './src/Validation/Verify';
 
@@ -184,6 +193,12 @@ export {
     // Sensitive marker (record-only; DEC-PII-1/2). Marks data as sensitive for the build-time
     // detector and a future exposure report — it does not redact. See docs/sensitive.md.
     Sensitive,
+
+    // Contract markers (DEC-051), record-only + enforcement-aware. @Optional makes an absent (undefined)
+    // argument satisfy the position and drops it from the tool schema's `required`; @Default annotates a
+    // JSON default ({default}, non-asserting) and implies @Optional. Inheritance is required-wins so a
+    // subclass cannot silently weaken (DEC-016/DEC-022); adorn annotates the default, it does not inject it.
+    Optional, Default,
 
     // Imperative assertion
     Verify,

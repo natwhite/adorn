@@ -58,6 +58,7 @@ import {
     ClassFieldContract,
     ClassMethodContract,
     getContractsForClass,
+    getEffectiveParameterOptional,
     getFieldContractsForClass,
     Postcondition,
 } from '../../src/Core/ContractRegistry';
@@ -725,9 +726,52 @@ function buildCoverage(entry: ClassMethodContract): ParameterArbitrary[] {
     for (let index = 0; index <= highest; index++) {
         const match = params.filter(p => p.index === index)[0];
         const constraints: ReadonlyArray<ConstraintDescriptor> = match ? match.constraints : [];
-        coverage.push(arbitraryForParameter(constraints, index, match ? match.name : undefined));
+        const plan = arbitraryForParameter(constraints, index, match ? match.name : undefined);
+        // `@Optional` (DEC-051): an effective-optional position is satisfied by an ABSENT (`undefined`)
+        // argument, so the generator must sometimes produce absence to exercise the optional path — and
+        // the installed wrapper's guard (which this run's real method carries) simply skips an absent
+        // optional position, so the oracle never mistakes that absence for a violation. The optional flag
+        // is read from the registry band (kept off adorn's root surface, so imported from src like the
+        // other reads this add-on consumes).
+        coverage.push(
+            getEffectiveParameterOptional(entry.target, entry.key, index) ? makeOptional(plan) : plan,
+        );
     }
     return coverage;
+}
+
+/**
+ * Wrap one position's plan so it sometimes generates absence (`undefined`) — the generation twin of the
+ * installer's absent-arg guard (M2).
+ *
+ *   - A generatable present-value plan is wrapped `fc.option(arb, {nil: undefined})`: sometimes a sound
+ *     present value, sometimes `undefined`. Both satisfy an optional position, so generation stays sound.
+ *   - A *declined* plan is rescued rather than declining the whole method: an optional position needs no
+ *     present-value generator, so it generates absence only (`fc.constant(undefined)`).
+ *   - A `gap-fill` plan (no registry-visible constraint, `arbitrary === null`) is left untouched: the
+ *     method composer supplies a broad arbitrary, and with no constraint to skip an absent argument is
+ *     enforcement-equivalent to a present one.
+ */
+function makeOptional(plan: ParameterArbitrary): ParameterArbitrary {
+    if (plan.declined) {
+        return {
+            ...plan,
+            strategy: 'parametric',
+            arbitrary: fc.constant(undefined),
+            filtered: false,
+            starved: false,
+            declined: false,
+            note: 'optional position whose present-value generator declined — generating absence (undefined) only',
+        };
+    }
+    if (!plan.arbitrary) return plan; // gap-fill: nothing to wrap
+    return {
+        ...plan,
+        arbitrary: fc.option(plan.arbitrary, {nil: undefined}),
+        note: plan.note
+            ? `${plan.note}; optional (sometimes absent/undefined)`
+            : 'optional (sometimes absent/undefined)',
+    };
 }
 
 /** Compose the per-position arbitraries into the argument tuple, gap-filling positions with no generator. */

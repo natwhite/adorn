@@ -58,7 +58,7 @@
  * plumbing before; it is a published surface now.
  */
 
-import {ConstraintDescriptor} from './Descriptor';
+import {ConstraintDescriptor, JsonValue} from './Descriptor';
 
 /** A prototype or constructor. Deliberately not a decorator-specific type. */
 export type ContractTarget = object;
@@ -247,6 +247,21 @@ export interface TelemetryMarking {
     readonly name?: string;
 }
 
+/**
+ * A **record-only** marking that a parameter is `@Optional` (DEC-051) — an *absent* argument satisfies
+ * that position. Own-scoped and index-keyed exactly like {@link SensitivityMarking}/
+ * {@link TelemetryMarking}, so it is minification-safe and installs nothing.
+ *
+ * A small object rather than a bare `Set<number>` membership (the adversarial-review S2 point):
+ * `optional` is stored explicitly so a future explicit-`@Required` tri-state (`optional: false`) is
+ * expressible without a data migration. Today only `optional: true` is ever recorded — a position with
+ * no marking is simply absent from the band. The *effective* resolution ({@link getEffectiveParameterOptional})
+ * is **required-wins**, not over-marking; see its note for why (DEC-016/DEC-022).
+ */
+export interface OptionalMarking {
+    readonly optional: boolean;
+}
+
 // --- internal mutable twins -------------------------------------------------
 
 interface MutableParameterContract {
@@ -324,6 +339,22 @@ let parameterTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<
 
 /** Return telemetry: target → method key → marking (`@Telemetry.result()`). The disclosure-side of Q-23. */
 let returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
+
+/**
+ * The `@Optional` band (DEC-051) — the twin of {@link parameterSensitivityByTarget}. Own-scoped and
+ * index-keyed, record-only: no key here ever causes an installer to attach anything. Resolution is
+ * **required-wins** ({@link getEffectiveParameterOptional}), the safe direction for a precondition
+ * *weakening* (DEC-016/DEC-022), which is why it is NOT the over-marking rule the sensitivity band uses.
+ */
+let parameterOptionalByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, OptionalMarking>>>();
+
+/**
+ * The `@Default` band (DEC-051) — target → method key → parameter index → the (JSON-serialisable)
+ * default value. Own-scoped and index-keyed, record-only. The value is stored directly (a `JsonValue`),
+ * so a stored `null` default is distinguishable from "no default" (a missing map entry) — `Map.get`
+ * returns `undefined` only when the key is absent. Nearest-declaration-wins ({@link getEffectiveParameterDefault}).
+ */
+let parameterDefaultByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, JsonValue>>>();
 
 let classEnumerationEnabled = true;
 
@@ -1500,6 +1531,154 @@ export function getTelemetryMethodKeysForClass(
     return out;
 }
 
+// --- @Optional / @Default band writes (DEC-051) ----------------------------
+//
+// Record-only, exactly like the sensitivity/telemetry bands above: none of these install anything or
+// touch an enforcement band. Own-scoped, so there is no write API that reaches an ancestor.
+
+/** Record that parameter `index` of `target[key]` is `@Optional`. Index-keyed, so minification-safe. */
+export function recordParameterOptional(target: ContractTarget, key: MethodKey, index: number): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('recordParameterOptional: target must be an object (a prototype or constructor)');
+    }
+    if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
+        throw new TypeError(
+            `recordParameterOptional: parameter index must be a non-negative integer, received ${String(index)}`,
+        );
+    }
+    let methods = parameterOptionalByTarget.get(target);
+    if (!methods) {
+        methods = new Map<MethodKey, Map<number, OptionalMarking>>();
+        parameterOptionalByTarget.set(target, methods);
+    }
+    let params = methods.get(key);
+    if (!params) {
+        params = new Map<number, OptionalMarking>();
+        methods.set(key, params);
+    }
+    params.set(index, {optional: true});
+}
+
+/**
+ * Record a `@Default` value for parameter `index` of `target[key]`. `value` must already be a plain
+ * JSON value — the decorator validates that at authoring time (`Markers/Default.ts`), so the emitted
+ * `{default}` fragment is always valid JSON. Index-keyed, so minification-safe.
+ */
+export function recordParameterDefault(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+    value: JsonValue,
+): void {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('recordParameterDefault: target must be an object (a prototype or constructor)');
+    }
+    if (typeof index !== 'number' || index < 0 || !isFinite(index) || Math.floor(index) !== index) {
+        throw new TypeError(
+            `recordParameterDefault: parameter index must be a non-negative integer, received ${String(index)}`,
+        );
+    }
+    let methods = parameterDefaultByTarget.get(target);
+    if (!methods) {
+        methods = new Map<MethodKey, Map<number, JsonValue>>();
+        parameterDefaultByTarget.set(target, methods);
+    }
+    let params = methods.get(key);
+    if (!params) {
+        params = new Map<number, JsonValue>();
+        methods.set(key, params);
+    }
+    params.set(index, value);
+}
+
+// --- @Optional / @Default band reads (DEC-051) -----------------------------
+
+/** Whether parameter `index` of `target[key]` is marked `@Optional` **directly** here. Own-scoped. */
+export function getParameterOptional(target: ContractTarget, key: MethodKey, index: number): boolean {
+    if (!isRegisterableTarget(target)) return false;
+    return parameterOptionalByTarget.get(target)?.get(key)?.get(index)?.optional === true;
+}
+
+/**
+ * Whether parameter `index` of `target[key]` is **effectively** optional — the single read BOTH the
+ * installer guard (`ParameterDecoratorFactory.planChecks`) and the tool schema's `required` derive from,
+ * so enforcement and the schema cannot drift (DEC-051 invariant 4).
+ *
+ * ## Required-wins, NOT over-marking (the S2 safety fix — DEC-016/DEC-022)
+ *
+ * `@Optional` is a precondition *weakening* (it removes a check and drops a `required` entry), so —
+ * unlike the sensitivity band, where over-marking is the *safe* direction — resolving it by
+ * "optional anywhere on the chain ⇒ optional" would let a subclass **silently** weaken a value its
+ * base genuinely constrains, the exact under-enforcement DEC-016 forbids. So the rule is:
+ *
+ *   effective-optional **iff** `@Optional` is marked on ≥1 declaration for the position **AND** no
+ *   declaration on the chain *requires* it, where a declaration "requires" it = it carries ≥1 own
+ *   constraint at that position AND does not itself mark the position `@Optional`.
+ *
+ * A single requiring declaration anywhere on the chain wins (returns `false`) regardless of any
+ * `@Optional` marking elsewhere. This satisfies the four pinned invariants: (1) marked-and-never-required
+ * ⇒ optional; (2) constrained-required base + `@Optional` subclass ⇒ REQUIRED (no silent weakening);
+ * (3) `@Optional` base + constrained subclass override ⇒ REQUIRED (subclass strengthened); (4) same read
+ * feeds enforcement and schema.
+ *
+ * Note: "requires" is measured against the *descriptor* constraint band only (`contractsByTarget`); a
+ * hand-written `CreateSimpleDecorator` closure is invisible to the registry by design (SMELL-14), so it
+ * does not count as a requiring declaration here — the same limitation every projection already carries.
+ */
+export function getEffectiveParameterOptional(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): boolean {
+    if (!isRegisterableTarget(target)) return false;
+
+    let markedOptional = false;
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const optionalHere = parameterOptionalByTarget.get(cursor)?.get(key)?.get(index)?.optional === true;
+        if (optionalHere) {
+            markedOptional = true;
+            // A declaration that marks the position optional does not "require" it, even if it also
+            // constrains it (the `@Optional() @GreaterThanEqual(1)` common case) — skip the requires test.
+            continue;
+        }
+        // Does THIS declaration require the position? ≥1 own constraint and no own `@Optional` mark.
+        const contract = contractsByTarget.get(cursor)?.get(key);
+        const parameter = contract && findParameterEntry(contract, index);
+        if (parameter && parameter.constraints.length > 0) return false;
+    }
+    return markedOptional;
+}
+
+/** The `@Default` value declared **directly** on parameter `index` of `target[key]`, or `undefined`. Own-scoped. */
+export function getParameterDefault(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): JsonValue | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    const params = parameterDefaultByTarget.get(target)?.get(key);
+    return params ? params.get(index) : undefined;
+}
+
+/**
+ * The `@Default` value **in force** on parameter `index` of `target[key]`, honouring inheritance:
+ * nearest declaration on the prototype chain wins (a subclass override's default shadows the base's).
+ * Returns `undefined` when no declaration on the chain supplies one; a stored `null` default is a real,
+ * distinct value (the map holds it explicitly).
+ */
+export function getEffectiveParameterDefault(
+    target: ContractTarget,
+    key: MethodKey,
+    index: number,
+): JsonValue | undefined {
+    if (!isRegisterableTarget(target)) return undefined;
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const params = parameterDefaultByTarget.get(cursor)?.get(key);
+        if (params && params.has(index)) return params.get(index);
+    }
+    return undefined;
+}
+
 /**
  * Add a class to the enumerable registry. Called by the `@Contract()` installer (P1.3) — *not* by
  * constraint recording, so `getContractedClasses()` reports exactly the classes that were
@@ -1562,6 +1741,8 @@ export function resetRegistry(): void {
     classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
     parameterTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, TelemetryMarking>>>();
     returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
+    parameterOptionalByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, OptionalMarking>>>();
+    parameterDefaultByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, JsonValue>>>();
     classEnumerationEnabled = true;
 }
 

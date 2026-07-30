@@ -890,7 +890,9 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 **Consequence.** One mechanism covers the compositional third of the vocabulary — arrays (IDEA-22), nested shapes (IDEA-25), and nullable — without a `$ref` graph (which schema.ts deferred and which tool providers often don't resolve; shapes inline-expand instead).
 
 ## DEC-051 — `@Optional` is enforcement-aware, not schema-only (or it drifts)
-**Status:** ACCEPTED (design) · detail in `docs/plan-contract-offering.md` · resolves Q-28 in design
+**Status:** ACCEPTED · **BUILT** (Wave-1 Slice B: `@Optional`/`@Default`, required-wins inheritance) · detail in `docs/plan-contract-offering.md` + `impl-plan-contract-wave1.md` · resolves Q-28
+
+> **Inheritance is required-wins (adversarial-review fix S2).** `@Optional` is a precondition *weakening*, so it obeys DEC-022's parameter strengthen-only discipline: effective-optional iff `@Optional` is marked on ≥1 declaration AND **no** declaration on the chain requires the position (has ≥1 own constraint without `@Optional`). A subclass can always *re-require* an inherited-optional param; it can **never** silently weaken a required one (DEC-016). Enforcement (an absent-arg guard hoisted above the per-position checks, skipping only its own index) and the tool-schema `required` derive from the **same** effective read, so they cannot drift. `@Default(v)` implies `@Optional` and emits the non-asserting `{default:v}` annotation (safe to emit — validators ignore it — unlike an unbacked `format`); adorn does not inject the default at runtime. Four invariants pinned by test.
 
 **Context.** The tool schema marks a parameter `required` iff it carries ≥1 constraint (DEC-048), so a genuinely optional-but-constrained parameter is force-required. The tempting fix — a **schema-only** `@Optional` that just drops the parameter from `required` — is **drift**: the schema would say "omittable" while the total predicates (BUG-4) still throw on a missing `undefined` argument. That schema/enforcement disagreement is the exact failure adorn exists to prevent (DEC-006).
 

@@ -73,6 +73,7 @@ import {ConstraintDescriptor} from '../../Core/Descriptor';
 import {
     getContract,
     getEffectiveContract,
+    getEffectiveParameterOptional,
     getParameterSensitivity,
     MethodContract,
     MethodKey,
@@ -384,6 +385,20 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
     const plan: PlannedCheck[] = [];
 
     for (const index of ordered) {
+        // `@Optional` (DEC-051), resolved once at install time from the SAME effective read the tool
+        // schema's `required` uses (invariant 4 — they cannot drift). Hoisted ABOVE the `if (parameter)`
+        // branch so it wraps a staged-only position too. The guard skips the position's checks **iff the
+        // argument is `undefined`** — a present value, `null` included, runs every check. It wraps the
+        // WHOLE position (descriptor + staged checks) together and only ever short-circuits its own
+        // index, so it never changes which violation another position reports (M3).
+        const optional = getEffectiveParameterOptional(target, propertyKey, index);
+        const guard: (check: PlannedCheck) => PlannedCheck = optional
+            ? check => (args: any[]) => {
+                  if (args[index] === undefined) return; // absent ⇒ satisfied
+                  check(args);
+              }
+            : check => check;
+
         // Both sources arrive base-most first (DEC-022), so a violation reports the most general
         // broken constraint first — matching how a reader scans a hierarchy top-down, and matching
         // the order DEC-021 chose for fields.
@@ -396,13 +411,15 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
             const reflected = paramTypes && paramTypes[index];
             const typeName = typeof reflected === 'function' ? reflected.name : undefined;
             for (const constraint of parameter.constraints) {
-                plan.push(descriptorCheck(constraint, index, signatureFor, paramNames, sensitive, typeName));
+                plan.push(
+                    guard(descriptorCheck(constraint, index, signatureFor, paramNames, sensitive, typeName)),
+                );
             }
         }
 
         const atIndex = stagedChecks.filter(check => check.index === index);
         for (const check of atIndex) {
-            plan.push(args => check.decorator(paramObjectFor(index, args)));
+            plan.push(guard(args => check.decorator(paramObjectFor(index, args))));
         }
     }
 

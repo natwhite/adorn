@@ -60,6 +60,9 @@ const INTERNAL_REGISTRY_WRITERS = [
     // Telemetry-disclosure band (O1c, DEC-036)
     'recordParameterTelemetry',
     'recordReturnTelemetry',
+    // @Optional / @Default band (DEC-051)
+    'recordParameterOptional',
+    'recordParameterDefault',
     // Enumerable-registry + configuration/test-support mutators
     'registerContractedClass',
     'setClassEnumerationEnabled',
@@ -113,7 +116,12 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // 75 → 77: contract-offering Wave 1 Slice A (DEC-050/IDEA-22/GAP-15) adds the `@ArrayOf` parameter
     // decorator and the `ArrayContracts` descriptor namespace — the first compositional descriptor.
     // `ArrayOfParams` is type-only and does not count.
-    const PINNED_VALUE_EXPORT_COUNT = 77;
+    //
+    // 77 → 79: contract-offering Wave 1 Slice B (DEC-051, resolves Q-28) adds the `@Optional` and
+    // `@Default` enforcement-aware parameter markers. Their registry bands' writers
+    // (`recordParameterOptional`/`recordParameterDefault`) and reads stay internal — only the two
+    // decorators join the surface.
+    const PINNED_VALUE_EXPORT_COUNT = 79;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -153,5 +161,26 @@ describe('contract-offering Wave 1 Slice A adds exactly its intended public expo
         // The namespaced compositional descriptor factory, usable directly in Verify.that /
         // CreateFieldDecorator — its item is another descriptor (DEC-050).
         expect(typeof arrayContracts.ArrayOf).toBe('function');
+    });
+});
+
+describe('contract-offering Wave 1 Slice B adds exactly its intended public exports (DEC-051)', () => {
+    // The +2 (77→79) moved *because these two landed* — the `@Optional` and `@Default` enforcement-aware
+    // parameter markers — not because something unrelated leaked.
+    it('exports the @Optional parameter marker (DEC-051)', () => {
+        expect(typeof (adorn as Record<string, unknown>).Optional).toBe('function');
+    });
+
+    it('exports the @Default parameter marker (DEC-051)', () => {
+        expect(typeof (adorn as Record<string, unknown>).Default).toBe('function');
+    });
+
+    it('keeps the @Optional/@Default registry reads OFF the root surface (Q-6, like the other bands)', () => {
+        // Enforcement + the tool schema read these internally; a consumer reads neither, exactly as the
+        // sensitivity/telemetry effective reads stay internal.
+        expect(adorn).not.toHaveProperty('getEffectiveParameterOptional');
+        expect(adorn).not.toHaveProperty('getEffectiveParameterDefault');
+        expect(adorn).not.toHaveProperty('getParameterOptional');
+        expect(adorn).not.toHaveProperty('getParameterDefault');
     });
 });

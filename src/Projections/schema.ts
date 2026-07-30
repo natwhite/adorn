@@ -107,6 +107,8 @@ import {
     ClassMethodContract,
     getContractedClasses,
     getContractsForClass,
+    getEffectiveParameterDefault,
+    getEffectiveParameterOptional,
     getFieldContractsForClass,
 } from '../Core/ContractRegistry';
 
@@ -313,8 +315,22 @@ export function toolSchemaForMethod(
                 typeof parameter.name === 'string' && parameter.name.length > 0
                     ? parameter.name
                     : `arg${parameter.index}`;
-            properties[name] = mergeFragments(schemaFragmentsOf(parameter.constraints));
-            if (parameter.constraints.length > 0) required.push(name);
+            const fragment = mergeFragments(schemaFragmentsOf(parameter.constraints));
+
+            // `@Default` (DEC-051): emit `{default}` as a non-asserting annotation — safe in either
+            // schema posture (a validator ignores it), so it can never over-claim (M1). Read off
+            // `entry.target`, the object the contract itself resolved from, via the chain-walking read.
+            const def = getEffectiveParameterDefault(entry.target, method, parameter.index);
+            if (def !== undefined) fragment.default = def;
+
+            properties[name] = fragment;
+
+            // `@Optional` (DEC-051): an effective-optional parameter stays in `properties` but is dropped
+            // from `required`. Derived from the SAME read the installer's absent-arg guard uses, so the
+            // schema and enforcement cannot drift (invariant 4). `required` still means "carries ≥1
+            // constraint" (DEC-048) for every non-optional position.
+            const optional = getEffectiveParameterOptional(entry.target, method, parameter.index);
+            if (parameter.constraints.length > 0 && !optional) required.push(name);
         });
     }
 
@@ -574,6 +590,9 @@ const KEY_ORDER = [
     'maxLength',
     'pattern',
     'format',
+    // `default` (DEC-051 `@Default`) sits immediately after `format` so a fragment canonicalises to
+    // `{type, …bounds…, format, default}` rather than sorting `default` to the alphabetical tail.
+    'default',
     'properties',
     'prefixItems',
     'returns',
