@@ -363,7 +363,9 @@ export function toolSchemaForMethod(
                 const def = getEffectiveParameterDefault(target, method, index);
                 if (def !== undefined) fragment.default = def;
 
-                properties[name] = fragment;
+                // Prescriptive recursive tightening (DEC-055): a `@Shape` fragment is closed here (only in
+                // the tool schema, never in `schemaForClass`). A no-op for every non-object fragment.
+                properties[name] = tightenObjects(fragment);
 
                 // `@Optional` (DEC-051): an effective-optional parameter stays in `properties` but is
                 // dropped from `required`. Derived from the SAME read the installer's absent-arg guard
@@ -576,6 +578,56 @@ function mergeFragments(fragments: JsonObject[]): JsonObject {
 
     if (conflicted) return {allOf: fragments.map(fragment => ({...fragment}))};
     return merged;
+}
+
+/**
+ * Prescriptive recursive tightening (DEC-055), applied by {@link toolSchemaForMethod} to each parameter
+ * fragment — never by `schemaForClass`, which stays descriptive (DEC-029).
+ *
+ * A FIXED-key object (`@Shape`: carries `properties` and is not already an open map) is closed with
+ * `additionalProperties:false` and `required` = **every** property it emits — each is a contracted field
+ * whose total predicate rejects a missing value (BUG-4/Q-7), so all are runtime-required, and this
+ * matches enforcement exactly (no drift; the sound top-level rule applied one level down). Recursion
+ * descends through array `items` and through an OPEN dictionary's `additionalProperties` schema (which
+ * stays open — `@Dictionary` is not a fixed object), so a nested `@Shape` inside a `@Dictionary` or
+ * `@ArrayOf` is tightened too. Every other shape — a primitive fragment, an `allOf`, a leaf — passes
+ * through untouched; only the two container shapes the descriptors actually emit are descended.
+ */
+function tightenObjects(fragment: JsonValue): JsonValue {
+    if (!isObjectFragment(fragment)) return fragment;
+
+    if (fragment.type === 'object') {
+        const properties = fragment.properties;
+        const additional = fragment.additionalProperties;
+        // `@Shape` (closed DTO): carries `properties`, no `additionalProperties` yet → close + require all.
+        if (isObjectFragment(properties) && !('additionalProperties' in fragment)) {
+            const tightened: JsonObject = {};
+            const required: string[] = [];
+            Object.keys(properties).forEach(name => {
+                tightened[name] = tightenObjects(properties[name]);
+                required.push(name);
+            });
+            return {...fragment, properties: tightened, required, additionalProperties: false};
+        }
+        // `@Dictionary` (open map): stays open, but tighten its value schema (e.g. a dict of `@Shape`).
+        if (isObjectFragment(additional)) {
+            return {...fragment, additionalProperties: tightenObjects(additional)};
+        }
+        return fragment;
+    }
+
+    // `@ArrayOf` (list): tighten the element schema (e.g. an array of `@Shape`).
+    if (fragment.type === 'array') {
+        const items = fragment.items;
+        if (isObjectFragment(items)) return {...fragment, items: tightenObjects(items)};
+    }
+
+    return fragment;
+}
+
+/** A `JsonValue` that is a plain object (not null, not an array) — the fragments the tightener descends. */
+function isObjectFragment(value: JsonValue | undefined): value is JsonObject {
+    return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** The `minimum`/`exclusiveMinimum`/`minLength` family: a conjunction takes the **tighter** (higher) bound. */

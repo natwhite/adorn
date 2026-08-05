@@ -361,6 +361,12 @@ support the single highest-value remaining contract item (an unconstrained objec
 `description` with no `type`), ahead of the literal/nullable polish. `Verify.check` (DEC-053, the non-throwing
 imperative entry) also landed from that round's §3.
 
+**Update (2026-08, Wave-2 Slices 1–2 shipped):** the object vocabulary is BUILT as **two** kinds the review
+(MAJOR-1) separated — **`@Dictionary`** (open `Record<string,V>`, DEC-054) and **`@Shape`** (closed DTO +
+recursive tool-schema tightening, DEC-055). The consumer's `Record<string,string>` blocker is `@Dictionary`;
+`@Shape` fills the general fixed-DTO GAP-16. Surface 85 → 88. **Next up: #6 `@Const` + `@Nullable`** (IDEA-24),
+then `@Requires` (#7).
+
 Every item, before merge, owes the same four things the existing built-ins do: the descriptor
 (kind/params/derived-predicate/describe/schema), the schema fragment with its stated posture, a **sound**
 `fast-check` generator in `addons/test/arbitraries.ts` (or an honest decline), and the public-surface count

@@ -935,3 +935,21 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Surface.** +`@Dictionary` decorator +`ObjectContracts` namespace = 85 → 87; `DictionaryParams` is type-only. Enforcement + tool schema derive from one declaration and agree (a `''` value the schema's value-fragment rejects is the same one the runtime predicate rejects) — DEC-006.
 
+## DEC-055 — Object vocabulary, Slice 2: `@Shape` — the CLOSED DTO + recursive prescriptive tightening
+**Status:** ACCEPTED · **BUILT** (Wave-2 Slice 2) · a DEC-050 consumer · resolves GAP-16 / IDEA-25 / Q-29 · surface 87 → 88
+
+**Context.** The general nested-object gap (GAP-16): a tool argument that is a structured, fixed-key object. Reprioritized ahead of `@Const`/`@Nullable` (round-2 §2), and the Wave-2 review's three MAJOR findings are folded in below.
+
+**Decision.** `@Shape(FieldClass)` — a compositional descriptor (DEC-050) validating an object against `FieldClass`'s `@Contract`ed **instance** fields. Predicate: a **total** plain-object gate (BUG-4) ∧ every field's rebuilt constraint stack holds on `value[name]`; a **missing** field is `undefined`, which the total field predicates reject, so every contracted field is required (present AND valid). `ObjectContracts.Shape(FieldClass)` reads `getFieldContractsForClass` at authoring time (DEC-007 ordering; statics excluded; DEC-021 inheritance honoured) and stores `{fields:{name: SerializedConstraint[]}}`; `@Shape` the parameter decorator over it.
+
+**Posture — one hook, tightened by the projection (not forked).** `schema()` emits the **descriptive** `{type:'object', properties}` (no `required`/`additionalProperties`), so `schemaForClass` under-claims (DEC-029). `toolSchemaForMethod` applies a new recursive `tightenObjects` to each parameter fragment: a fixed-key object (carries `properties`, not already an open map) is closed with `additionalProperties:false` and `required` = **every emitted field**; the recursion descends array `items` and an open dictionary's `additionalProperties` (which stays open), so a `@Shape` nested in `@ArrayOf`/`@Dictionary` tightens too. Only `toolSchemaForMethod` tightens — `schemaForClass` is untouched.
+
+**The three review MAJORs, resolved.**
+- **MAJOR-1 (scope):** `@Shape` (fixed keys) is NOT the consumer's `Record<string,string>` blocker — that is `@Dictionary` (DEC-054, shipped first). `@Shape` fills the general GAP-16 for fixed DTOs.
+- **MAJOR-2 (drift):** nested `required` = **all** emitted fields, NOT the plan's "non-empty fragment" rule — a constrained field whose descriptor has no `schema()` hook emits `{}` yet its predicate still rejects `undefined`, so the plan's rule would have marked it optional while enforcement required it. All-fields-required matches enforcement exactly (pinned by a drift-parity test: runtime rejects a missing field ⇔ the tool schema lists it required).
+- **MAJOR-3 (silent empty shape):** `Shape(FieldClass)` **throws** when `FieldClass` has no contracted instance field (undecorated / not-yet-defined / not a class) — an empty shape would accept any object, the "looks complete, isn't" failure DEC-006/DEC-016 reject.
+
+**v1 limits, stated.** A nested field cannot yet carry `@Optional`/`@Default`/`@Describe` (those are param-index bands, not field bands), so a `@Shape` has no optional-but-constrained field and no per-field description. A field carrying `@Shape` PLUS another constraint serialises as `allOf`, which the tightener does not descend (rare; the common single-constraint nested object tightens). Layering (DEC-012): `Contracts/object.ts` imports `getFieldContractsForClass` from `Core` — allowed (the guard forbids only `Adapters/`; the read takes a constructor, no decorator types).
+
+**Surface.** +`@Shape` decorator (rides the existing `ObjectContracts` namespace) = 87 → 88; `ShapeParams` is type-only.
+

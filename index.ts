@@ -7,7 +7,7 @@ import {
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
     Uuid, DateTime, Ipv4, Format,
-    OneOf, ArrayOf, Dictionary,
+    OneOf, ArrayOf, Dictionary, Shape,
 } from './src/ParameterDecorators/Constraints';
 
 // --- Field decorators -----------------------------------------------------
@@ -208,9 +208,13 @@ export {
     // @Dictionary (DEC-054) — the OPEN-map compositional constraint: `Record<string, V>`, every value
     // satisfying an inner descriptor carried as serialised data. Projects to `{type:'object',
     // additionalProperties:<value fragment>}` (open by construction) — the shape a `Record<string,string>`
-    // tool argument needs. The descriptor is `ObjectContracts.Dictionary` below; the sibling `@Shape`
-    // (closed DTO) lands in a later slice.
+    // tool argument needs. The descriptor is `ObjectContracts.Dictionary` below.
     Dictionary,
+    // @Shape (DEC-055) — the CLOSED-DTO compositional constraint: an object validated against another
+    // class's `@Contract`ed instance fields, read as serialised data at authoring time (DEC-007). Projects
+    // descriptively to `{type:'object', properties}`; `toolSchemaForMethod` tightens it recursively to
+    // `required` + `additionalProperties:false`. The descriptor is `ObjectContracts.Shape` below.
+    Shape,
 
     // Field decorators
     Enforce,

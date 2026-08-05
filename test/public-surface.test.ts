@@ -137,7 +137,11 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // decorator and the `ObjectContracts` descriptor namespace (the second compositional namespace after
     // `ArrayContracts`). `DictionaryParams` is type-only and does not count. The `@Shape` decorator lands
     // in the next slice (DEC-055) on the same `ObjectContracts` namespace, so only two exports here.
-    const PINNED_VALUE_EXPORT_COUNT = 87;
+    //
+    // 87 → 88: Wave-2 object vocabulary, Slice 2 (DEC-055) adds the `@Shape` closed-DTO parameter
+    // decorator. It rides the EXISTING `ObjectContracts` namespace (`ShapeParams` is type-only), so only
+    // one export moves the count.
+    const PINNED_VALUE_EXPORT_COUNT = 88;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -249,5 +253,17 @@ describe('Wave-2 object vocabulary Slice 1 adds exactly its intended public expo
         // The namespaced open-map descriptor factory, usable directly in Verify.that / CreateFieldDecorator —
         // its value is another descriptor (DEC-050).
         expect(typeof objectContracts.Dictionary).toBe('function');
+    });
+});
+
+describe('Wave-2 object vocabulary Slice 2 adds exactly its intended public exports (DEC-055)', () => {
+    // The +1 (87→88) moved *because @Shape landed* — the closed-DTO decorator on the existing namespace.
+    it('exports the @Shape parameter decorator (DEC-055)', () => {
+        expect(typeof (adorn as Record<string, unknown>).Shape).toBe('function');
+    });
+
+    it('exposes the Shape descriptor factory on the EXISTING ObjectContracts namespace (no new namespace)', () => {
+        const objectContracts = (adorn as Record<string, unknown>).ObjectContracts as Record<string, unknown>;
+        expect(typeof objectContracts.Shape).toBe('function');
     });
 });

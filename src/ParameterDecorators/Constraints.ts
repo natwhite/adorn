@@ -184,6 +184,14 @@ const ArrayOf = (item: ConstraintDescriptor, options?: {minItems?: number; maxIt
  */
 const Dictionary = (value: ConstraintDescriptor) => constraintDecorator(Objects.Dictionary(value));
 
+/**
+ * A closed DTO: an object validated against the `@Contract`ed instance fields of `fieldClass`. Projects
+ * (descriptively) to `{type:'object', properties}`; a tool schema tightens it to `required` +
+ * `additionalProperties:false` (DEC-055). `fieldClass` must be decorated *before* `@Shape` reads it
+ * (DEC-007); a class with no contracted instance field throws. See `src/Contracts/object.ts`.
+ */
+const Shape = (fieldClass: Function) => constraintDecorator(Objects.Shape(fieldClass));
+
 export {
     // number
     LessThanEqual,
@@ -215,6 +223,7 @@ export {
     // composition (DEC-050)
     ArrayOf,
 
-    // object composition (DEC-054)
+    // object composition (DEC-054 / DEC-055)
     Dictionary,
+    Shape,
 };

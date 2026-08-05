@@ -7,7 +7,11 @@
  *   satisfying `value`. Projects to `{type:'object', additionalProperties:<value schema>}` — open by
  *   construction. This is the shape a `Record<string,string>` tool argument needs (round-2 §2).
  * - **`Shape(FieldClass)`** — a CLOSED DTO: the fixed set of `@Contract`ed fields on `FieldClass`, each
- *   validated by its own field constraints (added in a later slice — DEC-055).
+ *   validated by its own field constraints. Projects (descriptively) to `{type:'object', properties}`;
+ *   the prescriptive tool schema tightens it to `required` + `additionalProperties:false` (DEC-055).
+ *   It reads `FieldClass`'s field contracts at authoring time (DEC-007 ordering) via a `Core` registry
+ *   read that takes a constructor — no decorator types, so DEC-012-clean (the layering guard forbids only
+ *   `Adapters/` imports).
  *
  * Both ride `kind:'generic'` (as `arrayOf`/`oneOf` do) and both are TOTAL (BUG-4): the predicate gates
  * `value` to a plain object — rejecting `null`, an array, or a non-object — before touching any entry.
@@ -28,6 +32,7 @@ import {
     Predicate,
     SerializedConstraint,
 } from '../Core/Descriptor';
+import {getFieldContractsForClass} from '../Core/ContractRegistry';
 
 /** A plain (non-null, non-array) object — the container gate both object kinds apply first (BUG-4). */
 const isPlainObjectValue = (value: unknown): value is {[key: string]: unknown} =>
@@ -87,4 +92,94 @@ export function Dictionary(value: ConstraintDescriptor): ConstraintDescriptor<Di
         );
     }
     return dictionaryConstraint({value: value.toJSON()});
+}
+
+// ---------------------------------------------------------------------------
+// @Shape — a closed DTO over another class's field contracts (DEC-055)
+// ---------------------------------------------------------------------------
+
+/**
+ * The modelled class's field contracts, flattened to data: each instance field name mapped to its
+ * serialised constraint stack. Read once at authoring time by {@link Shape}.
+ */
+export interface ShapeParams extends JsonObject {
+    fields: {[name: string]: SerializedConstraint[]};
+}
+
+const isShape = (params: Readonly<ShapeParams>): Predicate => {
+    // Rebuild each field's predicate stack ONCE (DEC-050), not per call.
+    const fieldPredicates: Array<[string, Predicate[]]> = Object.keys(params.fields).map(name => [
+        name,
+        params.fields[name].map(serialized => constraintFromJSON(serialized).predicate),
+    ]);
+    return (value: unknown) => {
+        if (!isPlainObjectValue(value)) return false;
+        // Every field's stack must hold on value[name]. A MISSING field is `undefined`, which the total
+        // field predicates (BUG-4) reject — so every contracted field is required (present AND valid),
+        // matching the tool schema's `required: <all fields>` exactly (DEC-055, no drift).
+        return fieldPredicates.every(([name, predicates]) =>
+            predicates.every(predicate => predicate(value[name])),
+        );
+    };
+};
+
+/**
+ * A field's schema fragment, self-contained (DEC-012): rebuild each of the field's constraints' own
+ * `schema()` and conjoin with `allOf` — never the projection's `mergeFragments`. A single constraint
+ * contributes its fragment directly (so a nested `@Shape`/`@Dictionary` field stays a recursible
+ * `{type:'object',…}` the tool tightener can descend); `{}` is the hookless floor.
+ */
+function fieldFragment(serialized: SerializedConstraint[]): JsonObject {
+    const fragments = serialized.map(entry => {
+        const descriptor = constraintFromJSON(entry);
+        return descriptor.schema ? descriptor.schema() : {};
+    });
+    if (fragments.length === 1) return fragments[0];
+    return {allOf: fragments};
+}
+
+export const shapeConstraint = defineConstraint<ShapeParams>({
+    kind: 'generic',
+    constraint: 'shape',
+    derive: isShape,
+    describe: params => `an object with fields ${Object.keys(params.fields).join(', ')}`,
+    schema: params => {
+        // DESCRIPTIVE, under-claim (DEC-029): `properties` only, NO `required`/`additionalProperties`.
+        // The prescriptive tool projection tightens recursively (DEC-055); `schemaForClass` leaves it open.
+        const properties: JsonObject = {};
+        Object.keys(params.fields).forEach(name => {
+            properties[name] = fieldFragment(params.fields[name]);
+        });
+        return {type: 'object', properties};
+    },
+});
+
+/**
+ * A descriptor validating an object against the `@Contract`ed **instance** fields of `FieldClass`.
+ *
+ * Reads `FieldClass`'s field contracts NOW (DEC-007 ordering — decorate `FieldClass` first, earlier in
+ * module order). Statics are excluded (a DTO's shape is its instance fields); inheritance is honoured
+ * (`getFieldContractsForClass` resolves the DEC-021 union). A class with no contracted instance field is
+ * an authoring error and **throws** — an empty shape would project to an object schema that accepts
+ * anything, the "looks complete, isn't" failure DEC-006/DEC-016 reject (the review's MAJOR-3).
+ */
+export function Shape(fieldClass: Function): ConstraintDescriptor<ShapeParams> {
+    if (typeof fieldClass !== 'function') {
+        throw new TypeError('Shape: expected a class (constructor function) whose fields carry contracts');
+    }
+    const fields: {[name: string]: SerializedConstraint[]} = {};
+    getFieldContractsForClass(fieldClass)
+        .filter(entry => !entry.isStatic)
+        .forEach(entry => {
+            const serialized = entry.contract.constraints.map(constraint => constraint.toJSON());
+            if (serialized.length > 0) fields[String(entry.key)] = serialized;
+        });
+    if (Object.keys(fields).length === 0) {
+        throw new TypeError(
+            `Shape: ${fieldClass.name || '(anonymous class)'} has no contracted instance fields to ` +
+                'model. Decorate its fields (e.g. @Enforce / CreateFieldDecorator) and make sure the ' +
+                'class is defined before @Shape reads it (DEC-007).',
+        );
+    }
+    return shapeConstraint({fields});
 }
