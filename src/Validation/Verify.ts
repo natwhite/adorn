@@ -67,9 +67,26 @@
  *    where the vocabulary still encoded a boundary in a name.
  */
 
-import {ConstraintDescriptor} from '../Core/Descriptor';
+import {ConstraintDescriptor, ConstraintKind} from '../Core/Descriptor';
 import {GreaterThanEqual, LessThanEqual} from '../Contracts/number';
 import {shouldDiscloseValue} from '../Core/redaction';
+
+/**
+ * The result of {@link Verify.check} — a discriminated union so a caller can branch on a violation
+ * *without* a try/catch. `ok: true` carries the validated value; `ok: false` carries the same redacted
+ * message {@link Verify.that} would have thrown, plus the descriptor's `constraint` identity and `kind`
+ * so an I/O boundary can map a violation to a status/code programmatically. The received value is
+ * deliberately absent — the message is already redacted by default (DEC-030) and the caller still holds
+ * the value it passed in. See DEC-053.
+ */
+export type CheckResult<T> =
+    | {readonly ok: true; readonly value: T}
+    | {
+          readonly ok: false;
+          readonly message: string;
+          readonly constraint: string;
+          readonly kind: ConstraintKind;
+      };
 
 export class Verify {
     /**
@@ -98,6 +115,39 @@ export class Verify {
         if (typeof capture === 'function') capture(error, Verify.that);
 
         throw error;
+    }
+
+    /**
+     * Non-throwing sibling of {@link Verify.that}: returns a {@link CheckResult} instead of throwing.
+     *
+     * The boundary answer to Q-6 (DEC-053). An I/O handler turning an untrusted body into a `400` needs
+     * the violation as a **value, in this call** — not as an exception to catch, and not out-of-band
+     * through the observation sink (an async stream of facts, the wrong shape for choosing *this*
+     * response's status synchronously). Same predicate, same redacted message as {@link Verify.that};
+     * the only difference is that a failure comes back rather than being thrown. Because it reuses the
+     * exact predicate and message call `that` uses, the two cannot drift (DEC-010).
+     *
+     * ```ts
+     * const r = Verify.check(NumberContracts.Between(1, 7), 'days', body.days);
+     * if (!r.ok) return badRequest(r.message);
+     * // r.value is the validated value here
+     * ```
+     */
+    static check<T>(constraint: ConstraintDescriptor, keyName: string | symbol, value: T): CheckResult<T> {
+        if (constraint.predicate(value)) return {ok: true, value};
+
+        // The same redacted rendering Verify.that throws — an imperative call has no `@Sensitive` site,
+        // so disclosure follows the global switch alone (BUG-19/DEC-030). The value is never in the result.
+        return {
+            ok: false,
+            message: constraint.message({
+                value,
+                signature: String(keyName),
+                disclose: shouldDiscloseValue(false),
+            }),
+            constraint: constraint.constraint,
+            kind: constraint.kind,
+        };
     }
 
     /*

@@ -38,7 +38,10 @@ import {Describe} from './src/Markers/Describe';
 import {Tool} from './src/Markers/Tool';
 
 // --- Imperative assertion (for call sites with no decoration point) --------
+// `Verify.that` throws; `Verify.check` (DEC-053) returns a discriminated `CheckResult` instead — the
+// non-throwing path an untrusted I/O boundary needs (a bad body → a `400` as a value, not an exception).
 import {Verify} from './src/Validation/Verify';
+export type {CheckResult} from './src/Validation/Verify';
 
 // --- Method decorators ----------------------------------------------------
 import {Log} from './src/MethodDecorators/Log';
