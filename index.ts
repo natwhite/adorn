@@ -7,7 +7,7 @@ import {
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
     Uuid, DateTime, Ipv4, Format,
-    OneOf, ArrayOf,
+    OneOf, ArrayOf, Dictionary,
 } from './src/ParameterDecorators/Constraints';
 
 // --- Field decorators -----------------------------------------------------
@@ -174,6 +174,10 @@ import * as EnumContracts from './src/Contracts/enum';
 // `CreateFieldDecorator`, exactly as the number/string/enum namespaces expose theirs; the flat
 // `ArrayOf` parameter *decorator* below wraps the same rule. The item rides as serialised data.
 import * as ArrayContracts from './src/Contracts/array';
+// `@Dictionary` (DEC-054) and `@Shape` (DEC-055) live here — the object compositional descriptors.
+// `ObjectContracts.Dictionary(valueDescriptor)` yields an open-map descriptor for `Verify.that`/
+// `CreateFieldDecorator`, exactly as the array namespace exposes `ArrayOf`.
+import * as ObjectContracts from './src/Contracts/object';
 
 // The public surface, and the one place a reader can see its whole shape at once. Both the
 // section comments and the line grouping within each section are load-bearing: they say which
@@ -201,6 +205,12 @@ export {
     // a real docs line, and a sound recursive `fc.array` fuzzer. The descriptor is `ArrayContracts.
     // ArrayOf` below; nests (`@ArrayOf(ArrayContracts.ArrayOf(...))`) and round-trips through JSON.
     ArrayOf,
+    // @Dictionary (DEC-054) — the OPEN-map compositional constraint: `Record<string, V>`, every value
+    // satisfying an inner descriptor carried as serialised data. Projects to `{type:'object',
+    // additionalProperties:<value fragment>}` (open by construction) — the shape a `Record<string,string>`
+    // tool argument needs. The descriptor is `ObjectContracts.Dictionary` below; the sibling `@Shape`
+    // (closed DTO) lands in a later slice.
+    Dictionary,
 
     // Field decorators
     Enforce,
@@ -330,7 +340,7 @@ export {
 
     // Constraint descriptors (data, not decorators). `ArrayContracts` (DEC-050) is the compositional
     // one — its `ArrayOf` takes another descriptor as its item.
-    NumberContracts, StringContracts, EnumContracts, ArrayContracts,
+    NumberContracts, StringContracts, EnumContracts, ArrayContracts, ObjectContracts,
 };
 
 /*

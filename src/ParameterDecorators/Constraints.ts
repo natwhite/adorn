@@ -51,6 +51,7 @@ import * as Numbers from '../Contracts/number';
 import * as Strings from '../Contracts/string';
 import * as Enums from '../Contracts/enum';
 import * as Arrays from '../Contracts/array';
+import * as Objects from '../Contracts/object';
 
 const constraintDecorator = ParameterDecoratorFactory.CreateConstraintDecorator;
 
@@ -171,6 +172,18 @@ const OneOf = (values: JsonValue[]) => constraintDecorator(Enums.OneOf(values));
 const ArrayOf = (item: ConstraintDescriptor, options?: {minItems?: number; maxItems?: number}) =>
     constraintDecorator(Arrays.ArrayOf(item, options));
 
+// ---------------------------------------------------------------------------
+// Object composition (DEC-050 / DEC-054) — @Dictionary
+// ---------------------------------------------------------------------------
+
+/**
+ * An open map whose every value satisfies `value` — a validated `Record<string, V>`. Projects to a JSON
+ * Schema `{type:'object', additionalProperties:<value schema>}` (open by construction), inheriting the
+ * value descriptor's own fragment. `value` is a `ConstraintDescriptor` (e.g. `StringContracts.NotEmpty()`),
+ * serialised into the descriptor as data — the DEC-050 mechanism; see `src/Contracts/object.ts`.
+ */
+const Dictionary = (value: ConstraintDescriptor) => constraintDecorator(Objects.Dictionary(value));
+
 export {
     // number
     LessThanEqual,
@@ -201,4 +214,7 @@ export {
 
     // composition (DEC-050)
     ArrayOf,
+
+    // object composition (DEC-054)
+    Dictionary,
 };
