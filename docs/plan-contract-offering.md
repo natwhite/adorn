@@ -346,14 +346,20 @@ compositional family depends on it.
 | 2 | **`@Optional`** (enforcement-aware) + **`@Default`** | Q-28, (Q-30) | **S–M** | Closes a real drift; gate on every optional-arg tool. Touches the installer, so slightly bigger than a pure marker. |
 | 3 | **`@Describe`** + **`@Tool`** | Q-30 | **S** | Pure markers; the semantic meaning the model actually reads. High value, trivial. |
 | 4 | **String formats** (`@Uuid`/`@DateTime`/`@Ipv4`/`@Format`) | IDEA-23 | **S** | Ubiquitous, cheap, sound generators free, annotation-safe. |
-| 5 | **`@Const`** + **`@Nullable`** | IDEA-24 | **S (edge)** | Small polish over existing machinery. |
-| 6 | **`@Shape`** nested objects + recursive tool-tightening | Q-29, IDEA-25, GAP-16 | **M** | Second DEC-050 consumer; the tool-projection recursion. Real but behind arrays/markers. |
+| 5 | **`@Shape`** nested objects + recursive tool-tightening | Q-29, IDEA-25, GAP-16 | **M** | Second DEC-050 consumer; the tool-projection recursion. **Reprioritized ahead of `@Const`/`@Nullable`** — the highest-value remaining item per AiVoiceAgent-node round-2 §2 (the object shapes real tool args need). |
+| 6 | **`@Const`** + **`@Nullable`** | IDEA-24 | **S (edge)** | Small polish over existing machinery. |
 | 7 | **`@Requires`** cross-param (pre-band first writer) | IDEA-6, IDEA-26 | **M** | Highest marginal value as *enforcement*; unprojectable, so gated behind the schema-serving items. |
 | 8 | **`dependentRequired`/`if-then`** structured subset | IDEA-6 (2nd half) | **M (defer)** | The only cross-param slice that projects; low real demand, provider-variable support. |
 
 Recommended first wave: **1 → 2 → 3 → 4**. That is arrays + the three tool-schema deferrals + formats — which
 covers essentially every tool people actually expose (primitives, enums, arrays, uuids/dates, optional args,
 descriptions). 5–8 are the deliberate long tail.
+
+**Update (2026-08, post-Wave-1):** items 1–4 are shipped (DEC-050/051/052). For the next wave, **`@Shape`
+(now #5) moves ahead of `@Const`/`@Nullable` (now #6)** — AiVoiceAgent-node round-2 §2 ranks nested-object
+support the single highest-value remaining contract item (an unconstrained object param projects to a
+`description` with no `type`), ahead of the literal/nullable polish. `Verify.check` (DEC-053, the non-throwing
+imperative entry) also landed from that round's §3.
 
 Every item, before merge, owes the same four things the existing built-ins do: the descriptor
 (kind/params/derived-predicate/describe/schema), the schema fragment with its stated posture, a **sound**

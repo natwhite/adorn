@@ -37,6 +37,8 @@ The same declaration projects into every other artifact:
 
 The load-bearing consequence is that a constraint is not an opaque closure that throws — it is a **reified descriptor**: an identity plus JSON-serialisable params, with the predicate *derived* from those params (DEC-010). Derivation is what makes enforcement and every generated artifact unable to disagree.
 
+**Scope — a validator, not a coercion library.** adorn *rejects* an invalid value; it never silently coerces, defaults, or transforms one. A malformed argument is a violation, not something to degrade into a fallback — validation and coercion are different jobs, and adorn does the first. (A defensive reader that returns `null`/`[]` for anything unusable and is contractually guaranteed *never* to throw is a coercer; adorn is deliberately the wrong tool there.) At an untrusted I/O boundary that needs the failure as a value rather than an exception, reach for `Verify.check` (a non-throwing check returning a discriminated result — DEC-053) instead of the throwing decorator path.
+
 ---
 
 ## LLM tool-calling
@@ -351,6 +353,7 @@ npm run demo       # ts-node examples/demo.ts
 - Method-parameter inheritance — an overridden method inherits its parent's preconditions (DEC-022).
 - Postconditions — `@Ensures` (closure, DEC-032) and `@Returns` (reified + projectable, DEC-033), the shared `evaluatePostconditions` oracle, blame-driven trust.
 - Enforcement-aware `@Optional` / `@Default` (DEC-051) and record-only `@Describe` / `@Tool` (DEC-052).
+- Imperative validation for call sites with no decoration point — `Verify.that` (throws) and `Verify.check` (non-throwing, returns a discriminated `CheckResult` for I/O boundaries that need a failure as a *value* — DEC-053).
 - `@Log()`, `@Time()`, and `@Observe()`.
 - Six projections: Markdown docs, descriptive JSON Schema (draft 2020-12), prescriptive tool schema (`toolSchemaForMethod`), property-test generation (`@adorn/test`, Phase A+B), observability (O1 sink), and the privacy-review telemetry report.
 - `@Sensitive` / `@Telemetry` plus safe-by-default redaction — adorn's own emissions redact by default (DEC-028/DEC-030).
