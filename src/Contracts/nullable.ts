@@ -37,6 +37,16 @@ export const nullableConstraint = defineConstraint<NullableParams>({
     kind: 'generic',
     constraint: 'nullable',
     derive: isNullable,
+    // Transparent (DEC-060): adds NO segment of its own — `Nullable(Dictionary(...))` points straight inside.
+    locate: params => {
+        const inner = constraintFromJSON(params.item);
+        const pred = inner.predicate;
+        const deeper = inner.locate;
+        return (value: unknown) => {
+            if (value === null || pred(value)) return undefined; // passes → nothing to locate
+            return deeper ? deeper(value) : undefined;
+        };
+    },
     describe: params => `${constraintFromJSON(params.item).describe()} or null`,
     schema: params => {
         const inner = constraintFromJSON(params.item);

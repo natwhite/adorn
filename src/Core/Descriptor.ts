@@ -139,6 +139,14 @@ export interface ConstraintDescriptor<P extends ConstraintParams = ConstraintPar
     readonly arbitrary?: () => Arbitrary;
     /** Optional JSON Schema fragment. Absent unless the definition supplies one. */
     readonly schema?: () => JsonObject;
+    /**
+     * Optional failure localizer (DEC-060). Given a value the predicate REJECTED, returns the path to the
+     * first failing sub-location — `["slotInput", "when"]` for a bad nested field — or `undefined` when the
+     * failure is at this value's own level (a container-type gate or a length bound, where the top-level
+     * `message` already says everything and there is no key to point at). Absent for primitives, so
+     * `'locate' in descriptor` is an honest "can this failure be localized?".
+     */
+    readonly locate?: (value: unknown) => ReadonlyArray<string | number> | undefined;
 
     /** Makes `JSON.stringify(descriptor)` produce a rehydratable form. */
     toJSON(): SerializedConstraint<P>;
@@ -193,6 +201,11 @@ export interface ConstraintDefinition<P extends ConstraintParams = ConstraintPar
     readonly arbitrary?: (params: Readonly<P>) => Arbitrary;
     /** Optional JSON Schema fragment producer. Not supplied by any P1.0 built-in. */
     readonly schema?: (params: Readonly<P>) => JsonObject;
+    /**
+     * Optional failure localizer (DEC-060). Higher-order like `derive`: applied to `params` ONCE (rebuilding
+     * any inner descriptors once), returning a per-value walker that reports the first failing sub-path.
+     */
+    readonly locate?: (params: Readonly<P>) => (value: unknown) => ReadonlyArray<string | number> | undefined;
 }
 
 /**
@@ -335,6 +348,14 @@ function createDescriptor<P extends ConstraintParams>(
             value: () => schemaOf(params),
             enumerable: true,
         });
+    }
+    // `locate` (DEC-060) is wired EAGERLY: the definition's `(params) => (value) => path` is applied to
+    // `params` ONCE here (rebuilding any inner descriptors a single time, like `derive`), and the resulting
+    // per-value walker is stored. This differs from `schema` above (stored deferred) because `schema`'s hook
+    // is `(params) => fragment`, not higher-order — so the eager form is the correct mirror for `locate`.
+    const locateOf = definition.locate;
+    if (locateOf) {
+        Object.defineProperty(descriptor, 'locate', {value: locateOf(params), enumerable: true});
     }
 
     return Object.freeze(descriptor);

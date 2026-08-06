@@ -65,6 +65,23 @@ export const dictionaryConstraint = defineConstraint<DictionaryParams>({
     kind: 'generic',
     constraint: 'dictionary',
     derive: isDictionary,
+    // First failing KEY (DEC-060): re-walks in the same order as `isDictionary`'s `every`, delegating into
+    // the value descriptor so a dict of shapes yields a deep path (`["slotInput", "when"]`).
+    locate: params => {
+        const inner = constraintFromJSON(params.value);
+        const pred = inner.predicate;
+        const deeper = inner.locate;
+        return (value: unknown) => {
+            if (!isPlainObjectValue(value)) return undefined; // container gate → root, no sub-path
+            for (const key of Object.keys(value)) {
+                if (!pred(value[key])) {
+                    const sub = deeper ? deeper(value[key]) : undefined;
+                    return sub ? [key, ...sub] : [key];
+                }
+            }
+            return undefined;
+        };
+    },
     describe: params =>
         `an object mapping string keys to ${constraintFromJSON(params.value).describe()}`,
     schema: params => {
@@ -148,6 +165,25 @@ export const shapeConstraint = defineConstraint<ShapeParams>({
     kind: 'generic',
     constraint: 'shape',
     derive: isShape,
+    // First failing FIELD (DEC-060): same field-then-stack order as `isShape`'s nested `every`. The stack
+    // index is NOT a path segment (it is the same field); a nested compositional field deepens the path.
+    locate: params => {
+        const fields = Object.keys(params.fields).map(
+            name => [name, params.fields[name].map(serialized => constraintFromJSON(serialized))] as const,
+        );
+        return (value: unknown) => {
+            if (!isPlainObjectValue(value)) return undefined;
+            for (const [name, descriptors] of fields) {
+                for (const descriptor of descriptors) {
+                    if (!descriptor.predicate(value[name])) {
+                        const sub = descriptor.locate ? descriptor.locate(value[name]) : undefined;
+                        return sub ? [name, ...sub] : [name];
+                    }
+                }
+            }
+            return undefined;
+        };
+    },
     describe: params => `an object with fields ${Object.keys(params.fields).join(', ')}`,
     schema: params => {
         // DESCRIPTIVE, under-claim (DEC-029): `properties` only, NO `required`/`additionalProperties`.

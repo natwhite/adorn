@@ -116,6 +116,26 @@ export const arrayOfConstraint = defineConstraint<ArrayOfParams>({
     kind: 'generic',
     constraint: 'arrayOf',
     derive: isArrayOf,
+    // First failing INDEX (DEC-060): container/length failures return `undefined` (→ root) BEFORE the
+    // element loop, matching `isArrayOf`'s short-circuit; then the same left-to-right element order.
+    locate: params => {
+        const inner = constraintFromJSON(params.item);
+        const pred = inner.predicate;
+        const deeper = inner.locate;
+        const {minItems, maxItems} = params;
+        return (value: unknown) => {
+            if (!Array.isArray(value)) return undefined;
+            if (minItems !== undefined && value.length < minItems) return undefined;
+            if (maxItems !== undefined && value.length > maxItems) return undefined;
+            for (let index = 0; index < value.length; index++) {
+                if (!pred(value[index])) {
+                    const sub = deeper ? deeper(value[index]) : undefined;
+                    return sub ? [index, ...sub] : [index];
+                }
+            }
+            return undefined;
+        };
+    },
     describe: params =>
         `an array of ${constraintFromJSON(params.item).describe()}` +
         boundsPhrase(params.minItems, params.maxItems),

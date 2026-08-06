@@ -86,6 +86,14 @@ export type CheckResult<T> =
           readonly message: string;
           readonly constraint: string;
           readonly kind: ConstraintKind;
+          /**
+           * The path to the first failing sub-location for a COMPOSITIONAL descriptor (DEC-060) —
+           * `['slotInput', 'when']` for a bad nested field, `['tags', 2]` for a bad array element. Present
+           * only when the descriptor can localize the failure (it supplies a `locate` hook) AND the failure
+           * is below the value's own level; absent for a primitive constraint or a container-gate/length
+           * failure, where `message` already names everything. Lets a handler build a per-field 400.
+           */
+          readonly path?: ReadonlyArray<string | number>;
       };
 
 export class Verify {
@@ -148,6 +156,11 @@ export class Verify {
         // returns `CheckResult<Record<string, string>>`. The cast runs only after `predicate` returned true.
         if (constraint.predicate(value)) return {ok: true, value: value as T};
 
+        // Localize the failure for a compositional descriptor (DEC-060) — the first failing key/index chain.
+        // Runs once, only on the failure path; absent (`undefined`) for a primitive or a container-gate
+        // failure, in which case `path` is omitted and the message stands alone.
+        const path = constraint.locate ? constraint.locate(value) : undefined;
+
         // The same redacted rendering Verify.that throws — an imperative call has no `@Sensitive` site,
         // so disclosure follows the global switch alone (BUG-19/DEC-030). The value is never in the result.
         return {
@@ -159,6 +172,7 @@ export class Verify {
             }),
             constraint: constraint.constraint,
             kind: constraint.kind,
+            ...(path && path.length > 0 ? {path} : {}),
         };
     }
 
