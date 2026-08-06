@@ -585,11 +585,20 @@ function mergeFragments(fragments: JsonObject[]): JsonObject {
  * fragment — never by `schemaForClass`, which stays descriptive (DEC-029).
  *
  * A FIXED-key object (`@Shape`: carries `properties` and is not already an open map) is closed with
- * `additionalProperties:false` and `required` = **every** property it emits — each is a contracted field
- * whose total predicate rejects a missing value (BUG-4/Q-7), so all are runtime-required, and this
- * matches enforcement exactly (no drift; the sound top-level rule applied one level down). Recursion
- * descends through array `items` and through an OPEN dictionary's `additionalProperties` schema (which
- * stays open — `@Dictionary` is not a fixed object), so a nested `@Shape` inside a `@Dictionary` or
+ * `additionalProperties:false` and `required` = **every** property it emits. The two halves have DIFFERENT
+ * postures — the same split the top level already makes (module header / DEC-048), applied one level down:
+ *
+ * - **`required` is exact (no drift):** each is a contracted field whose total predicate rejects a missing
+ *   value (BUG-4/Q-7), so every emitted field is runtime-required — the tool schema's `required` is exactly
+ *   what enforcement rejects a missing field for.
+ * - **`additionalProperties:false` is PRESCRIPTIVE-ONLY, not a no-drift claim:** `isShape` validates the
+ *   declared fields but does NOT enumerate the object's own keys, so an object with EXTRA keys passes
+ *   enforcement while this keyword steers the model against it. That is drift in the *safe* direction (the
+ *   model is held tighter than adorn enforces) — a producer-steering assertion, exactly like the top-level
+ *   `additionalProperties:false`, never a claim about adorn's runtime (the round-3 review, §6).
+ *
+ * Recursion descends through array `items` and through an OPEN dictionary's `additionalProperties` schema
+ * (which stays open — `@Dictionary` is not a fixed object), so a nested `@Shape` inside a `@Dictionary` or
  * `@ArrayOf` is tightened too. Every other shape — a primitive fragment, an `allOf`, a leaf — passes
  * through untouched; only the two container shapes the descriptors actually emit are descended.
  */
