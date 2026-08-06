@@ -50,6 +50,11 @@
 import {CreateFieldDecorator} from '../Adapters/legacy/FieldDecoratorFactory';
 import * as Numbers from '../Contracts/number';
 import * as Strings from '../Contracts/string';
+import * as Enums from '../Contracts/enum';
+import * as Arrays from '../Contracts/array';
+import * as Objects from '../Contracts/object';
+import * as Nullables from '../Contracts/nullable';
+import type {ConstraintDescriptor, JsonValue} from '../Core/Descriptor';
 
 export class Enforce {
     // --- numbers ------------------------------------------------------------
@@ -109,4 +114,39 @@ export class Enforce {
 
     /** Rejects strings that do not parse as a URL with an allowed protocol. */
     static url = (protocols?: string[]) => CreateFieldDecorator(Strings.Url(protocols));
+
+    // --- membership & string formats (round-3 §7 / GAP-21 / DEC-062) --------
+
+    /** Rejects any value not among `values`. Projects to `{enum: values}` (the `@OneOf` twin). */
+    static oneOf = (values: JsonValue[]) => CreateFieldDecorator(Enums.OneOf(values));
+
+    /** Rejects any value that is not exactly `value`. Projects to `{const: value}` (the `@Const` twin). */
+    static const = (value: JsonValue) => CreateFieldDecorator(Enums.Const(value));
+
+    /** Rejects any string that is not a canonical UUID. */
+    static uuid = () => CreateFieldDecorator(Strings.Uuid());
+
+    /** Rejects any string that is not a strict RFC 3339 date-time. */
+    static dateTime = () => CreateFieldDecorator(Strings.DateTime());
+
+    /** Rejects any string that is not a dotted-quad IPv4 address. */
+    static ipv4 = () => CreateFieldDecorator(Strings.Ipv4());
+
+    /** A keyed alias over the validating string formats — e.g. `@Enforce.format('uuid')`. */
+    static format = (name: string) => CreateFieldDecorator(Strings.Format(name));
+
+    // --- composition (round-3 §7 / GAP-21 / DEC-062) — the ergonomic `@Shape` field path -----------
+
+    /** A list whose every element satisfies `item` (an inner descriptor). The `@ArrayOf` twin. */
+    static arrayOf = (item: ConstraintDescriptor, options?: {minItems?: number; maxItems?: number}) =>
+        CreateFieldDecorator(Arrays.ArrayOf(item, options));
+
+    /** An open map (`Record<string, V>`) whose every value satisfies `value`. The `@Dictionary` twin. */
+    static dictionary = (value: ConstraintDescriptor) => CreateFieldDecorator(Objects.Dictionary(value));
+
+    /** A closed DTO validated against `fieldClass`'s `@Contract`ed instance fields. The `@Shape` twin. */
+    static shape = (fieldClass: Function) => CreateFieldDecorator(Objects.Shape(fieldClass));
+
+    /** Widens `item` to also accept `null` (distinct from an absent field). The `@Nullable` twin. */
+    static nullable = (item: ConstraintDescriptor) => CreateFieldDecorator(Nullables.Nullable(item));
 }

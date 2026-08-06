@@ -1027,3 +1027,10 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Surface.** +`toolSchemaFrom` value = 94 → 95; `ToolSchemaFromInput`/`ToolParamSpec` are type-only. +7 tests (`test/toolSchemaFrom.test.ts` + the surface pin); suite 67 suites / 1157 tests.
 
+## DEC-062 — `Enforce.*` compositional statics (GAP-21) + the decorator-free-path README note (IDEA-31)
+**Status:** ACCEPTED · **BUILT** (round-3 §7 / §4) · no new root export · surface 95
+
+**GAP-21 — `Enforce.*` statics for the new kinds.** `Enforce.*` (the field-decorator surface) stopped at 13 numeric/string primitives, so a compositional FIELD forced the verbose `@CreateFieldDecorator(ArrayContracts.ArrayOf(...))` — and that bit `@Shape` specifically, since its prerequisite is decorating a field class. Added ten statics — `oneOf`, `const`, `arrayOf`, `dictionary`, `shape`, `nullable`, `uuid`, `dateTime`, `ipv4`, `format` — each `CreateFieldDecorator(<descriptor>)`, the same one-line-of-wiring pattern the existing 13 use, so both bands stay mirror images of `Contracts/`. `Enforce.const` is a legal member name (reserved words are permitted as class members) and matches the `@Const` decorator. No new root export (`Enforce` is already exported); surface unchanged. The ergonomic `@Shape` path is pinned end-to-end: a field class decorated with `@Enforce.arrayOf` is read by `@Shape`.
+
+**IDEA-31 — README: the validation half needs no decorators.** The `Verify.check` + `*Contracts` path is plain function calls — it compiles with `experimentalDecorators`/`emitDecoratorMetadata` **off** (the reviewer compiled it against the consumer's tsconfig verbatim), so the most-cited adoption objection (the decorator tax, DEC-004) is false for that half of the library. One README paragraph now says so, and notes the DEC-059 narrowing + DEC-060 `path`. Doc-only.
+

@@ -39,6 +39,8 @@ The load-bearing consequence is that a constraint is not an opaque closure that 
 
 **Scope — a validator, not a coercion library.** adorn *rejects* an invalid value; it never silently coerces, defaults, or transforms one. A malformed argument is a violation, not something to degrade into a fallback — validation and coercion are different jobs, and adorn does the first. (A defensive reader that returns `null`/`[]` for anything unusable and is contractually guaranteed *never* to throw is a coercer; adorn is deliberately the wrong tool there.) At an untrusted I/O boundary that needs the failure as a value rather than an exception, reach for `Verify.check` (a non-throwing check returning a discriminated result — DEC-053) instead of the throwing decorator path.
 
+**No decorators required for the validation half.** `Verify.check`/`Verify.that` composed with the `*Contracts` descriptor namespaces (`Verify.check(ObjectContracts.Dictionary(StringContracts.NotEmpty()), 'slots', body.slots)`) is plain function calls — it compiles and runs with `experimentalDecorators`/`emitDecoratorMetadata` **off**, so it carries none of the decorator-toolchain constraint DEC-004 forecloses (esbuild/SWC/Vite/Bun stay available). Only the `@`-decorator authoring path needs those flags. And since DEC-059, `Verify.check` **narrows** `unknown` to the constraint's output type — `Verify.check(Dictionary(NotEmpty()), …)` returns `CheckResult<Record<string, string>>`, with the failing key on `path` (DEC-060) — so a body validator built on it is *shorter* than a hand-written one, not longer.
+
 ---
 
 ## LLM tool-calling
