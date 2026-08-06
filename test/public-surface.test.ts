@@ -34,6 +34,7 @@ const PUBLIC_REGISTRY_READS = [
     'getEffectiveContract',
     'getEffectiveParameterConstraints',
     'getEffectivePostconditions',
+    'getEffectivePreconditions',
 ] as const;
 
 // The registry WRITERS. Every one is `export function` in ContractRegistry.ts and every one is
@@ -50,8 +51,9 @@ const INTERNAL_REGISTRY_WRITERS = [
     'recordFieldConstraint',
     'setFieldMetadata',
     'markFieldInstalled',
-    // Postcondition + reified-return bands
+    // Pre/postcondition + reified-return bands
     'recordPostcondition',
+    'recordPrecondition',
     'recordReturnConstraint',
     // Sensitivity band (DEC-PII-1/2)
     'recordFieldSensitivity',
@@ -79,6 +81,8 @@ const INTERNAL_KEY_HELPERS = [
     'getEffectiveContractKeys',
     'getPostconditionKeys',
     'getEffectivePostconditionKeys',
+    'getPreconditionKeys',
+    'getEffectivePreconditionKeys',
     'getEffectiveReturnConstraints',
 ] as const;
 
@@ -146,7 +150,13 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // (its `EnumContracts.Const` factory rides the existing enum namespace), the `@Nullable` combinator
     // decorator, and the `NullableContracts` descriptor namespace it lives in. `ConstParams`/`NullableParams`
     // are type-only and do not count.
-    const PINNED_VALUE_EXPORT_COUNT = 91;
+    //
+    // 91 → 94: @Requires cross-parameter preconditions (DEC-057) add THREE value exports — the `@Requires`
+    // method decorator, the public inheritance-aware read `getEffectivePreconditions`, and the
+    // `evaluatePreconditions` oracle (the fuzzer's arg filter). Its writer (`recordPrecondition`) and the
+    // `*PreconditionKeys` helpers stay internal, like the postcondition band. `PreconditionResult` is
+    // type-only.
+    const PINNED_VALUE_EXPORT_COUNT = 94;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -289,5 +299,24 @@ describe('Wave-2 polish adds exactly its intended public exports (DEC-056)', () 
         const nullableContracts = (adorn as Record<string, unknown>).NullableContracts as Record<string, unknown>;
         expect(typeof nullableContracts).toBe('object');
         expect(typeof nullableContracts.Nullable).toBe('function');
+    });
+});
+
+describe('@Requires cross-parameter preconditions add exactly their intended public exports (DEC-057)', () => {
+    // The +3 (91→94): the @Requires decorator, the getEffectivePreconditions read, the evaluatePreconditions
+    // oracle. The write surface (recordPrecondition) and *PreconditionKeys helpers stay internal (Q-6).
+    it('exports the @Requires method decorator', () => {
+        expect(typeof (adorn as Record<string, unknown>).Requires).toBe('function');
+    });
+
+    it('exports the evaluatePreconditions oracle (the fuzzer arg filter)', () => {
+        expect(typeof (adorn as Record<string, unknown>).evaluatePreconditions).toBe('function');
+    });
+
+    it('keeps the precondition writer and key helpers OFF the root surface (Q-6)', () => {
+        expect(adorn).not.toHaveProperty('recordPrecondition');
+        expect(adorn).not.toHaveProperty('getPreconditionKeys');
+        expect(adorn).not.toHaveProperty('getEffectivePreconditionKeys');
+        expect(adorn).not.toHaveProperty('getPreconditions');
     });
 });

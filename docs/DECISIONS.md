@@ -964,3 +964,18 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Surface.** +`@Const` decorator (`EnumContracts.Const` rides the existing enum namespace) +`@Nullable` decorator +`NullableContracts` namespace = 88 → 91; `ConstParams`/`NullableParams` are type-only.
 
+## DEC-057 — `@Requires`: cross-parameter preconditions, the input-side twin of `@Ensures`
+**Status:** ACCEPTED · **BUILT** (Wave-2 #7) · resolves IDEA-26, advances IDEA-6 · surface 91 → 94
+
+**Context.** Cross-parameter relations (`start < end`; "if mode=custom then config required") are the highest-marginal-value contract rules and the hardest to maintain by hand (IDEA-6). They relate **multiple parameters**, so they are not a per-position `ConstraintDescriptor` (which tests one value) and cannot ride the existing bands.
+
+**Decision.** `@Requires((...args) => boolean, description?)` — a method decorator recording a **closure** into a new `preconditionsByTarget` band, the exact input-side twin of `@Ensures`'s `postconditionsByTarget`. The class-level `@Contract()`/`@Validate()` installs enforcement, which runs the closure **before** `proceed()`, under the method's `trust` and blaming the **caller** — precisely where reified per-position constraints run, and after them (so a specific-parameter violation is reported first). A predicate that throws is a precondition *failure*, not a method crash.
+
+**Why a closure band, not the reserved descriptor `pre` slot.** Identical reasoning to `@Ensures`/DEC-032: a closure relating several args carries no identity or serialisable params (Q-3/SMELL-14), so it is enforceable and fuzzable but **not projectable** — a `@Requires`-only method emits an empty tool schema and nothing into docs, the accepted `@Ensures` trade applied to the input side. The reserved `MethodContract.pre` *descriptor* slot stays reserved for a future reified precondition. The `dependentRequired`/`if-then` *projectable* subset is the deliberately-deferred later slice (#8).
+
+**One oracle, two consumers (no drift).** `evaluatePreconditions(pres, args)` is the single function BOTH the runtime wrapper and a fuzz driver call — so a fuzzer filtering its generated arguments through it checks byte-for-byte what enforcement rejects, and never mistakes a precondition it violated for a method crash (DEC-006). It is exported alongside `getEffectivePreconditions` (the inheritance-aware read the installer and fuzzer consume) exactly as the postcondition twins are.
+
+**Inheritance.** `getEffectivePreconditions` unions base-most-first down the prototype chain (DEC-022): a subclass may strengthen, never weaken, and an override that redeclares nothing still inherits its parent's `@Requires` — the installer collects effective precondition keys so the override is wrapped. This is DEC-022's considered departure from classical contravariant weakening, the same ruling parameter constraints already follow.
+
+**Surface.** +`@Requires` decorator +`getEffectivePreconditions` (public read) +`evaluatePreconditions` (oracle) = 91 → 94. Writer (`recordPrecondition`) + `*PreconditionKeys` helpers stay internal (Q-6); `PreconditionResult` is type-only. Fuzzer *integration* (addons/test consuming the filter) is deferred — the oracle is exported and ready, but the add-on's generator does not yet respect `@Requires`, so fuzzing a `@Requires` method can still surface precondition failures as false positives until it does.
+

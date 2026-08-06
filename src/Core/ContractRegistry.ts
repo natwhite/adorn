@@ -153,6 +153,28 @@ export interface Postcondition {
 }
 
 /**
+ * The predicate a precondition evaluates: the arguments the method was actually called with, in order.
+ * `any[]` mirrors `InvocationContext.args`. A precondition relates *multiple parameters*
+ * (`(...args) => boolean`) where a per-position descriptor tests one value, and it carries no identity
+ * or serialisable params — exactly what makes it enforceable and fuzzable but NOT projectable.
+ */
+export type PreconditionPredicate = (...args: any[]) => boolean;
+
+/**
+ * One recorded cross-parameter precondition (`@Requires`, IDEA-26/DEC-057). A **closure, not a
+ * {@link ConstraintDescriptor}**, for the same two fundamental reasons a {@link Postcondition} is: its
+ * predicate relates several arguments, and it carries no identity/serialisable params (Q-3). It gets its
+ * **own band** — the input-side twin of the postcondition band — and, like `@Ensures`, is enforceable
+ * and fuzzable but unprojectable (the reserved descriptor `pre` slot stays for a future *reified*
+ * precondition).
+ */
+export interface Precondition {
+    readonly predicate: PreconditionPredicate;
+    /** Optional human phrase for the violation message, e.g. "start is before end". */
+    readonly description?: string;
+}
+
+/**
  * Everything recorded about one contracted **field** (GAP-9).
  *
  * ## Why the registry needs a field band at all
@@ -777,6 +799,143 @@ export function getEffectivePostconditionKeys(target: ContractTarget): MethodKey
     }
 
     return keys;
+}
+
+// --- precondition band (IDEA-26 / DEC-057) — the input-side twin of the postcondition band ----------
+
+/**
+ * Cross-parameter preconditions (`@Requires`), keyed by target then method — the input-side twin of
+ * {@link postconditionsByTarget}. A separate closure band (not the reserved descriptor `pre` slot) for
+ * the same reason postconditions are: a {@link Precondition} is a closure with no identity/params.
+ */
+let preconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Precondition[]>>();
+
+const NO_PRECONDITIONS: ReadonlyArray<Precondition> = Object.freeze([]);
+
+/**
+ * Preconditions declared **directly** on `target[key]`. Own-scoped, exactly as {@link getPostconditions}.
+ * For what is enforced, use {@link getEffectivePreconditions}.
+ */
+export function getPreconditions(target: ContractTarget, key: MethodKey): ReadonlyArray<Precondition> {
+    if (!isRegisterableTarget(target)) return NO_PRECONDITIONS;
+    const list = preconditionsByTarget.get(target)?.get(key);
+    return list ? list : NO_PRECONDITIONS;
+}
+
+/**
+ * Every precondition in force on `target[key]`, base-most class first — the read the installer plans
+ * from AND the read a fuzzer's argument oracle consumes. Mechanism identical to
+ * {@link getEffectivePostconditions}: own-scoped storage unioned down the prototype chain, so a subclass
+ * can only add conjuncts (strengthen). For preconditions this union is DEC-022's considered departure
+ * from classical contravariant weakening — the same ruling parameter constraints already follow.
+ */
+export function getEffectivePreconditions(
+    target: ContractTarget,
+    key: MethodKey,
+): ReadonlyArray<Precondition> {
+    if (!isRegisterableTarget(target)) return NO_PRECONDITIONS;
+
+    let nearest: Precondition[] | undefined;
+    let bands: Precondition[][] | undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const list = preconditionsByTarget.get(cursor)?.get(key);
+        if (!list || list.length === 0) continue;
+
+        if (!nearest) {
+            nearest = list;
+        } else {
+            if (!bands) bands = [nearest];
+            bands.push(list);
+        }
+    }
+
+    if (!nearest) return NO_PRECONDITIONS;
+    if (!bands) return nearest;
+
+    const merged: Precondition[] = [];
+    for (let level = bands.length - 1; level >= 0; level--) {
+        const band = bands[level];
+        for (let i = 0; i < band.length; i++) merged.push(band[i]);
+    }
+    return merged;
+}
+
+/** Method keys carrying preconditions on `target` (own) — the twin of {@link getPostconditionKeys}. */
+export function getPreconditionKeys(target: ContractTarget): MethodKey[] {
+    if (!isRegisterableTarget(target)) return [];
+    const byKey = preconditionsByTarget.get(target);
+    if (!byKey) return [];
+    const keys: MethodKey[] = [];
+    byKey.forEach((_list, key) => keys.push(key));
+    return keys;
+}
+
+/**
+ * Method keys carrying preconditions anywhere on `target`'s prototype chain — the twin of
+ * {@link getEffectivePostconditionKeys}, needed by the installer so a subclass override of a method whose
+ * precondition only an ancestor declared does not escape the check.
+ */
+export function getEffectivePreconditionKeys(target: ContractTarget): MethodKey[] {
+    if (!isRegisterableTarget(target)) return [];
+
+    const keys: MethodKey[] = [];
+    const seen = new Set<MethodKey>();
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const byKey = preconditionsByTarget.get(cursor);
+        if (!byKey) continue;
+        byKey.forEach((_list, key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            keys.push(key);
+        });
+    }
+
+    return keys;
+}
+
+/**
+ * Record a precondition against `target[key]`. A method may carry several, recorded in declaration order
+ * (the `@Requires` decorator passes `'prepend'` to normalise `__decorate`'s reversal, exactly as
+ * `@Ensures`/`recordPostcondition`). Accepts a bare `{predicate}` — a precondition is a closure by
+ * design, so the descriptor bands' "no bare predicates" rule does not apply (it has its own band).
+ */
+export function recordPrecondition(
+    target: ContractTarget,
+    key: MethodKey,
+    precondition: Precondition,
+    position: ConstraintPosition = 'append',
+): void {
+    if (!precondition || typeof precondition.predicate !== 'function') {
+        throw new TypeError('recordPrecondition: expected a { predicate } object with a function predicate');
+    }
+    if (position !== 'append' && position !== 'prepend') {
+        throw new TypeError(
+            `recordPrecondition: position must be 'append' or 'prepend', received ${String(position)}`,
+        );
+    }
+
+    const list = preconditionEntry(target, key);
+    if (position === 'prepend') list.unshift(precondition);
+    else list.push(precondition);
+}
+
+function preconditionEntry(target: ContractTarget, key: MethodKey): Precondition[] {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('ContractRegistry: target must be an object (a prototype or constructor)');
+    }
+    let byKey = preconditionsByTarget.get(target);
+    if (!byKey) {
+        byKey = new Map<MethodKey, Precondition[]>();
+        preconditionsByTarget.set(target, byKey);
+    }
+    let list = byKey.get(key);
+    if (!list) {
+        list = [];
+        byKey.set(key, list);
+    }
+    return list;
 }
 
 // --- reified return-constraint band reads (DEC-033, Q-11) ------------------
@@ -1893,6 +2052,7 @@ export function resetRegistry(): void {
     contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>();
     fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
     postconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Postcondition[]>>();
+    preconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Precondition[]>>();
     contractedClasses = new Set<Function>();
     fieldSensitivityByTarget = new WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>();
     parameterSensitivityByTarget = new WeakMap<

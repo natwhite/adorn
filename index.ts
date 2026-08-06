@@ -47,6 +47,7 @@ export type {CheckResult} from './src/Validation/Verify';
 import {Log} from './src/MethodDecorators/Log';
 import {Time, setTimingSink} from './src/MethodDecorators/Time';
 import {Ensures} from './src/MethodDecorators/Ensures';
+import {Requires} from './src/MethodDecorators/Requires';
 import {Returns} from './src/MethodDecorators/Returns';
 import {Observe} from './src/MethodDecorators/Observe';
 export type {ObserveOptions} from './src/MethodDecorators/Observe';
@@ -106,7 +107,7 @@ import {
     getFieldContract, getFieldContracts, getFieldContractsForClass,
     getEffectiveFieldConstraints, getEffectiveFieldContract,
     getEffectiveContract, getEffectiveParameterConstraints,
-    getEffectivePostconditions,
+    getEffectivePostconditions, getEffectivePreconditions,
 } from './src/Core/ContractRegistry';
 
 // --- Postcondition evaluation (DEC-032) -----------------------------------
@@ -114,6 +115,10 @@ import {
 // (Phase B) checking the oracle checks exactly what enforcement enforces — no drift.
 import {evaluatePostconditions} from './src/Core/Postconditions';
 export type {PostconditionResult} from './src/Core/Postconditions';
+// `@Requires` cross-parameter preconditions (DEC-057). `evaluatePreconditions` is the SAME function the
+// runtime wrapper calls, so a fuzzer that filters generated args by it checks exactly what enforcement runs.
+import {evaluatePreconditions} from './src/Core/Preconditions';
+export type {PreconditionResult} from './src/Core/Preconditions';
 
 // --- Projections ----------------------------------------------------------
 import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
@@ -272,6 +277,10 @@ export {
     // checked first; a descriptor relates one value, a closure relates result-to-inputs. The registry
     // writer/reader (recordReturnConstraint / getEffectiveReturnConstraints) stay internal (Q-6).
     Returns,
+    // `@Requires((...args)=>bool)` (DEC-057) — cross-parameter preconditions, the `pre` closure band's
+    // first writer. Enforced before the call (caller-blamed), consumed by a fuzzer as an argument filter;
+    // like `@Ensures` it is a closure, so it is enforced-but-UNPROJECTABLE (emits nothing to docs/schema).
+    Requires,
 
     /**
      * BREAKING (P1.3) — required on any class using parameter constraints.
@@ -329,11 +338,12 @@ export {
     // and Q-6 makes every registry export semver-relevant.
     getEffectiveFieldConstraints, getEffectiveFieldContract,
     getEffectiveContract, getEffectiveParameterConstraints,
-    getEffectivePostconditions,
+    getEffectivePostconditions, getEffectivePreconditions,
 
     // The postcondition oracle — the same evaluator the runtime wrapper runs, exposed so a
-    // fuzzer (Phase B) checks exactly what enforcement enforces.
-    evaluatePostconditions,
+    // fuzzer (Phase B) checks exactly what enforcement enforces. `evaluatePreconditions` is its
+    // input-side twin (DEC-057): a fuzzer filters generated args through the same function enforcement runs.
+    evaluatePostconditions, evaluatePreconditions,
 
     // Projections: documentation generated from recorded contracts
     documentClass, documentContracts, renderMarkdown, generateMarkdown,

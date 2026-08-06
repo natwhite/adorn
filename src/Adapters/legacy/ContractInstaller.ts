@@ -62,16 +62,21 @@ import {
     getEffectiveContractKeys,
     getEffectivePostconditionKeys,
     getEffectivePostconditions,
+    getEffectivePreconditionKeys,
+    getEffectivePreconditions,
     getEffectiveReturnConstraints,
     getPostconditionKeys,
+    getPreconditionKeys,
     markInstalled,
     MethodKey,
     Postcondition,
+    Precondition,
     registerContractedClass,
 } from '../../Core/ContractRegistry';
 import {ConstraintDescriptor} from '../../Core/Descriptor';
 import {shouldDiscloseValue} from '../../Core/redaction';
 import {evaluatePostconditions, postconditionMessage} from '../../Core/Postconditions';
+import {evaluatePreconditions, preconditionMessage} from '../../Core/Preconditions';
 import {
     applyViolationPolicy,
     ContractTrust,
@@ -195,11 +200,12 @@ export function Validate(options?: TrustOptions): MethodDecorator {
         // `@Validate()` runs at member-decoration time, it only sees clauses that recorded first —
         // i.e. `@Ensures`/`@Returns` must sit *below* `@Validate()` in source. Class-level `@Contract()`
         // runs last and has no such caveat (see the `@Ensures`/`@Returns` docs).
+        const pres = getEffectivePreconditions(target, propertyKey);
         const posts = getEffectivePostconditions(target, propertyKey);
         const returns = getEffectiveReturnConstraints(target, propertyKey);
-        if (!enforce && posts.length === 0 && returns.length === 0) {
+        if (!enforce && pres.length === 0 && posts.length === 0 && returns.length === 0) {
             // Nothing recorded. Returning the descriptor untouched keeps `@Validate()` harmless on
-            // a method that has neither parameter constraints nor postconditions (yet).
+            // a method that has neither parameter constraints nor pre/postconditions (yet).
             return descriptor;
         }
 
@@ -207,7 +213,7 @@ export function Validate(options?: TrustOptions): MethodDecorator {
         // second one (plan §5). Detected here off the method being wrapped — zero per-call cost.
         const observed = ownsCompletion(original);
         const decorate = CreateMethodDecorator(
-            enforcementBehavior(enforce, posts, returns, target, propertyKey, trust, observed),
+            enforcementBehavior(enforce, pres, posts, returns, target, propertyKey, trust, observed),
         );
         const result = decorate(target, propertyKey, descriptor as any) || descriptor;
 
@@ -273,6 +279,7 @@ function installOn(host: object, trust: ContractTrust): void {
     getContracts(host).forEach((_contract, key) => own.add(key));
     getStagedMethodKeys(host).forEach(key => own.add(key));
     getPostconditionKeys(host).forEach(key => own.add(key));
+    getPreconditionKeys(host).forEach(key => own.add(key));
 
     const keys = new Set<MethodKey>(own);
 
@@ -280,6 +287,7 @@ function installOn(host: object, trust: ContractTrust): void {
     getEffectiveContractKeys(host).forEach(key => inherited.add(key));
     getEffectiveStagedMethodKeys(host).forEach(key => inherited.add(key));
     getEffectivePostconditionKeys(host).forEach(key => inherited.add(key));
+    getEffectivePreconditionKeys(host).forEach(key => inherited.add(key));
 
     inherited.forEach(key => {
         if (own.has(key)) return;
@@ -311,14 +319,19 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
     }
 
     const enforce = buildParameterEnforcement(host, key, original);
+    const pres = getEffectivePreconditions(host, key);
     const posts = getEffectivePostconditions(host, key);
     const returns = getEffectiveReturnConstraints(host, key);
-    if (!enforce && posts.length === 0 && returns.length === 0) return;
+    if (!enforce && pres.length === 0 && posts.length === 0 && returns.length === 0) return;
 
     // An inner `@Observe` (applied before the class decorator ran) already owns the completed emit;
     // enforcement then defers its own so the sink sees `completed` once (plan §5). Zero per-call cost.
     const observed = ownsCompletion(original);
-    installMethodWrapper(host, key, enforcementBehavior(enforce, posts, returns, host, key, trust, observed));
+    installMethodWrapper(
+        host,
+        key,
+        enforcementBehavior(enforce, pres, posts, returns, host, key, trust, observed),
+    );
     noteInstalled(host, key);
 }
 
@@ -378,6 +391,7 @@ const POSTCONDITION_TRUST: ContractTrust = 'assert';
  */
 function enforcementBehavior(
     enforce: ((context: InvocationContext) => void) | undefined,
+    pres: ReadonlyArray<Precondition>,
     posts: ReadonlyArray<Postcondition>,
     returns: ReadonlyArray<ConstraintDescriptor>,
     host: object,
@@ -407,6 +421,8 @@ function enforcementBehavior(
     Object.freeze(siteObservation.parameters);
     Object.freeze(siteObservation);
 
+    // The `@Requires` closure band makes the before-call cross-parameter stage live.
+    const hasPreChecks = pres.length > 0;
     // Either postcondition band makes the after-call stage live.
     const hasPostChecks = posts.length > 0 || returns.length > 0;
 
@@ -434,27 +450,35 @@ function enforcementBehavior(
         const observeCompletions = observing && !observed;
 
         // --- preconditions ---------------------------------------------------
-        if (enforce && shouldEnforce(trust)) {
-            try {
-                enforce(context);
-            } catch (violation) {
-                // Side-channel: emitted before, and independent of, the policy. A reified precondition
-                // throws a ViolationError carrying facts; a hand-written closure (SMELL-14) is invisible
-                // here and emits nothing, exactly as it is invisible to every projection.
-                if (observing && violation instanceof ViolationError) {
-                    emitViolation(
-                        sink,
-                        siteObservation,
-                        {...violation.facts, trust, blame: 'caller'},
-                        violation,
-                        callId,
-                    );
+        // Reified per-position constraints AND cross-parameter `@Requires` both run here, before the
+        // call, under the same caller-blaming `trust` gate (a precondition guards untrusted input).
+        if ((enforce || hasPreChecks) && shouldEnforce(trust)) {
+            if (enforce) {
+                try {
+                    enforce(context);
+                } catch (violation) {
+                    // Side-channel: emitted before, and independent of, the policy. A reified precondition
+                    // throws a ViolationError carrying facts; a hand-written closure (SMELL-14) is invisible
+                    // here and emits nothing, exactly as it is invisible to every projection.
+                    if (observing && violation instanceof ViolationError) {
+                        emitViolation(
+                            sink,
+                            siteObservation,
+                            {...violation.facts, trust, blame: 'caller'},
+                            violation,
+                            callId,
+                        );
+                    }
+                    // Rethrows unless the configured policy suppresses it ('warn', or a handler that
+                    // returns). Suppression falls through deliberately: 'warn' stages a contract over
+                    // live traffic, so the call must still happen.
+                    applyViolationPolicy(violation, callerSite);
                 }
-                // Rethrows unless the configured policy suppresses it ('warn', or a handler that
-                // returns). Suppression falls through deliberately: 'warn' stages a contract over
-                // live traffic, so the call must still happen.
-                applyViolationPolicy(violation, callerSite);
             }
+            // Cross-parameter `@Requires` — checked after the per-position constraints so a specific
+            // parameter violation is reported first. Same caller blame; low-fidelity facts (a closure
+            // carries no identity, SMELL-14), so it degrades to `_OTHER` exactly as `@Ensures` does.
+            if (hasPreChecks) checkPreconditions(pres, context.args, callerSite, observeViolation);
         }
 
         // Nothing to check after the call, or postconditions are stripped in this build.
@@ -545,6 +569,45 @@ function checkReturnConstraints(
         applyViolationPolicy(error, site);
         return; // first-failure-wins, base-most first (getEffectiveContract().post orders it so)
     }
+}
+
+/**
+ * Evaluate the `@Requires` cross-parameter preconditions against the call's arguments and route the
+ * first failure through the same violation policy the reified precondition uses. Returns normally when
+ * they hold OR when the policy suppresses (`'warn'`/handler), so the call still proceeds.
+ *
+ * Calls the exact {@link evaluatePreconditions} a fuzz driver calls to FILTER generated arguments — one
+ * oracle, checked and enforced through the same function, so the fuzzer never mistakes a precondition it
+ * itself violated for a method crash (no drift, DEC-006).
+ */
+function checkPreconditions(
+    pres: ReadonlyArray<Precondition>,
+    args: ReadonlyArray<unknown>,
+    site: ViolationSite,
+    observe?: (facts: ViolationFacts, error: unknown) => void,
+): void {
+    const outcome = evaluatePreconditions(pres, args);
+    if (outcome.ok || !outcome.failed) return;
+
+    const message = preconditionMessage(site.owner, site.member, outcome.failed);
+    const error = new Error(message);
+    // Low-fidelity by nature: a `@Requires` closure carries no identity or params (Q-3, SMELL-14), so it
+    // degrades to the `_OTHER` fallback — no `constraint` dimension. Stated, not hidden.
+    if (observe) {
+        observe(
+            {
+                constraint: OTHER_CONSTRAINT,
+                kind: 'generic',
+                params: {},
+                expectation: outcome.failed.description || '',
+                parameterIndex: RETURN_INDEX,
+                trust: site.trust,
+                blame: site.blame,
+            },
+            error,
+        );
+    }
+    applyViolationPolicy(error, site);
 }
 
 /**
