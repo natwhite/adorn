@@ -2,7 +2,7 @@
 
 > TypeScript decorators that treat a contract as **data** — one declaration, projected into the JSON Schema an LLM reads, the runtime validation its arguments face, documentation, generated tests, and observability. They descend from one source, so they cannot drift.
 
-**Status: experimental, but substantial.** adorn is not a released package and still has named rough edges (see [Project state](#project-state)), but it is well past a prototype. `index.ts` exports **85 values** (plus the projection and observation model types) across **58 test suites / 1061 tests**, all passing. The shipped set includes a working decorator core with method and field inheritance semantics, closure and reified postconditions, six projections (docs, JSON Schema, prescriptive tool schema, property-test generation, observability, privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow detector, a CLI, and two add-ons (`@adorn/test`, `@adorn/otel`). Treat it as a proof of concept you can read and run, not something to depend on in production.
+**Status: experimental, but substantial.** adorn is not a released package and still has named rough edges (see [Project state](#project-state)), but it is well past a prototype. `index.ts` exports **94 values** (plus the projection and observation model types) across **63 test suites / 1130 tests**, all passing. The shipped set includes a working decorator core with method and field inheritance semantics, closure and reified pre- and postconditions, six projections (docs, JSON Schema, prescriptive tool schema, property-test generation, observability, privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow detector, a CLI, and two add-ons (`@adorn/test`, `@adorn/otel`). Treat it as a proof of concept you can read and run, not something to depend on in production.
 
 ---
 
@@ -152,7 +152,11 @@ The public surface groups by what it constrains or produces. Every category belo
 Numeric: `GreaterThan` · `GreaterThanEqual` · `LessThan` · `LessThanEqual` · `Between` · `Integer` · `MultipleOf`. String length and pattern: `StringMinLength` · `MinLength` · `MaxLength` · `NotEmpty` · `Matches` · `Email` · `Url`. Every predicate is **total** (a `null`/`NaN`/wrong-type argument reports a contract violation, never a bare `TypeError`), which matters because a fuzzer feeds it those inputs first and a schema claims a `type` on the strength of it (BUG-4).
 
 - **`@OneOf([...])`** — a reified enum/membership constraint, type-agnostic (DEC-049). Projects to a JSON Schema `{enum: [...]}` — the LLM constrained-decoding target — plus a real docs line and a sound `fc.constantFrom` fuzzer. Predicate is strict `===` membership.
+- **`@Const(value)`** — the single-literal sibling of `@OneOf` (DEC-056): `value === v`, projecting to the exact `{const: v}`.
 - **`@ArrayOf(item, {minItems?, maxItems?})`** — the first **compositional** constraint (DEC-050): a list whose every element satisfies an inner descriptor, carried as serialised data and rebuilt once. Projects to `{type: 'array', items: <item fragment>, minItems?, maxItems?}`, inheriting the item's own fragment, and fuzzes via a recursive `fc.array`. Nests (`@ArrayOf(ArrayContracts.ArrayOf(...))`) and round-trips through JSON.
+- **`@Dictionary(value)`** — an **open** map (`Record<string, V>`, DEC-054): arbitrary string keys, every value satisfying an inner descriptor. Projects to `{type: 'object', additionalProperties: <value fragment>}` — open by construction, so the tool projection leaves it open. The shape a `Record<string, string>` tool argument needs.
+- **`@Shape(FieldClass)`** — a **closed** DTO (DEC-055): an object validated against another class's `@Contract`ed instance fields, read as serialised data at authoring time (decorate the field class first — DEC-007). `schema()` emits the descriptive `{type: 'object', properties}`; `toolSchemaForMethod` tightens it recursively (`required` = every field, `additionalProperties: false`), descending array items and dictionary values too. A class with no contracted field throws — never a silent accept-any.
+- **`@Nullable(item)`** — a compositional combinator (DEC-056) widening any constraint to also accept `null`, distinct from `@Optional`'s "may be absent". Projects to the item's fragment with `null` added to its `type` (or an `anyOf` union), and stays *required* in a tool schema (the model must send it — a value or explicit `null`).
 - **String formats** — `@Uuid` · `@DateTime` · `@Ipv4`, and `@Format(name)` as a keyed alias over them (DEC-052). Each is a **validating** descriptor (never annotate-only): the predicate is at-least-as-strict as the `format` keyword it emits (`{type: 'string', format: 'uuid' | 'date-time' | 'ipv4'}`), so the schema never over-claims (DEC-029). `date-time` uses a strict RFC-3339 check with real-calendar validation, not `Date.parse` (which accepts a superset).
 
 > `@Positive()`, `@Negative()`, `@NonNegative()` and `@NonPositive()` were **removed** (DEC-020). A name cannot carry a boundary, so write the boundary you mean: `@GreaterThan(0)`, `@LessThan(0)`, `@GreaterThanEqual(0)`, `@LessThanEqual(0)`.
@@ -166,14 +170,16 @@ Numeric: `GreaterThan` · `GreaterThanEqual` · `LessThan` · `LessThanEqual` ·
 - **`@Optional` / `@Default(value)`** (DEC-051) — enforcement-aware. `@Optional` makes an *absent* (`undefined`) argument satisfy the position (skipped by the installer, dropped from the tool schema's `required`); `@Default` annotates a JSON default (emitted as a non-asserting `{default}`) and implies `@Optional`. Inheritance is **required-wins**, so a subclass can re-require but never silently weaken (DEC-016/DEC-022); adorn annotates the default, it does not inject it at runtime.
 - **`@Describe('…')` / `@Tool('…')`** (DEC-052) — pure annotation, never rejects a value. `@Describe` is a parameter description (the sole source of a property's `description`); `@Tool` is a method/tool description. Both also flow into docs.
 
-### Contracts, including postconditions
+### Contracts, pre- and postconditions
 
 `Contract()` (class) installs every contract recorded on the class and registers it for projection; `Validate()` (method) is the per-method alternative. Two postcondition tiers run after a method returns (a throw skips them; an async method awaits the settled value then checks; inheritance conjoins covariantly):
 
 - **`@Ensures((result, ...args) => boolean, description?)`** — a **closure** postcondition (DEC-032). Fully general, but enforced-but-unprojectable (a closure carries no identity — Q-3).
 - **`@Returns(<descriptor>)`** — a **reified** postcondition (DEC-033). Writes a descriptor into the reserved `post` slot, so the return value is checked by the same predicate machinery preconditions use *and* emitted into docs (a Returns row) and schema (a `returns` fragment). Coexists with `@Ensures`; the reified band is checked first.
 
-`evaluatePostconditions` is exported because it is the *same* oracle the runtime wrapper runs — a fuzzer checking it checks exactly what enforcement enforces, with no drift.
+- **`@Requires((...args) => boolean, description?)`** — the input-side twin (DEC-057): a **closure** *cross-parameter precondition* (`start < end`; "if mode=custom then config required") checked *before* the call, blaming the caller and running after the per-position parameter checks. Like `@Ensures` it is enforced-but-unprojectable — a `@Requires`-only method emits an empty tool schema.
+
+`evaluatePostconditions` and `evaluatePreconditions` are exported because they are the *same* oracles the runtime wrapper runs — a fuzzer checking (or filtering its generated arguments through) them checks exactly what enforcement enforces, with no drift.
 
 ### Method decorators
 
@@ -212,7 +218,7 @@ A neutral, zero-dependency observation seam (DEC-035/036/037). `setObservationSi
 
 ### Constraint descriptors (data, not decorators)
 
-`NumberContracts` · `StringContracts` · `EnumContracts` · `ArrayContracts` are the underlying descriptors namespaced (`NumberContracts.Between(1, 10)`, `ArrayContracts.ArrayOf(...)`), for use wherever a descriptor is wanted directly — feeding `Verify.that`, `CreateFieldDecorator`, or a projection. `ArrayContracts` is the compositional one (its `ArrayOf` takes another descriptor as its item). A constraint authored as a descriptor is registry-visible data; a hand-written predicate closure carries no identity or params and **cannot be projected** (Q-3/SMELL-14).
+`NumberContracts` · `StringContracts` · `EnumContracts` · `ArrayContracts` · `ObjectContracts` · `NullableContracts` are the underlying descriptors namespaced (`NumberContracts.Between(1, 10)`, `ArrayContracts.ArrayOf(...)`, `ObjectContracts.Dictionary(...)` / `.Shape(...)`, `EnumContracts.Const(...)`, `NullableContracts.Nullable(...)`), for use wherever a descriptor is wanted directly — feeding `Verify.that`, `CreateFieldDecorator`, or another compositional constraint's item. `ArrayContracts`, `ObjectContracts`, and `NullableContracts` are the compositional ones (they take another descriptor as their item/value). A constraint authored as a descriptor is registry-visible data; a hand-written predicate closure carries no identity or params and **cannot be projected** (Q-3/SMELL-14).
 
 ### Add-ons and tooling
 
@@ -262,7 +268,7 @@ adorn check  <tsconfig-or-globs...>      # report @Sensitive values reaching an 
 
 ```
 adorn/
-├── index.ts                              # Public entry point (85 value exports + model types)
+├── index.ts                              # Public entry point (94 value exports + model types)
 ├── src/
 │   ├── Core/                             # Decorator-agnostic model — imports no adapter (DEC-012)
 │   │   ├── Descriptor.ts                 # Constraints as data (identity + params -> predicate); constraintFromJSON (DEC-050)
@@ -335,7 +341,7 @@ The only runtime dependency is `tslib`. The package exposes a single CJS entry t
 ```bash
 npm install
 npm run build      # tsc -> ./dist, then the CLI build (tsconfig.cli.json)
-npm test           # jest — 58 suites, 1061 tests
+npm test           # jest — 63 suites, 1130 tests
 npm run typecheck  # tsc --noEmit over src, tests, addons, and tools (tsconfig.test.json)
 npm run demo       # ts-node examples/demo.ts
 ```
@@ -348,10 +354,11 @@ npm run demo       # ts-node examples/demo.ts
 
 ### Working
 
-- Parameter-constraint decorators (numeric, string, `@OneOf` enum, `@ArrayOf` arrays, `@Uuid`/`@DateTime`/`@Ipv4`/`@Format` formats), the reified descriptor model behind them, and the `@Contract()` / `@Validate()` installer that enforces them.
+- Parameter-constraint decorators (numeric, string, `@OneOf` / `@Const` membership, `@ArrayOf` arrays, `@Dictionary` open maps + `@Shape` closed DTOs, the `@Nullable` combinator, `@Uuid`/`@DateTime`/`@Ipv4`/`@Format` formats), the reified descriptor model behind them, and the `@Contract()` / `@Validate()` installer that enforces them.
 - Field decorators (`@Enforce.*`, `CreateFieldDecorator`) with inheritance — a subclass strengthens, never weakens (DEC-021).
 - Method-parameter inheritance — an overridden method inherits its parent's preconditions (DEC-022).
 - Postconditions — `@Ensures` (closure, DEC-032) and `@Returns` (reified + projectable, DEC-033), the shared `evaluatePostconditions` oracle, blame-driven trust.
+- Cross-parameter preconditions — `@Requires((...args) => bool)` (DEC-057), the input-side twin of `@Ensures`: enforced before the call (caller-blamed, after per-position checks), the shared `evaluatePreconditions` oracle; enforced-but-unprojectable.
 - Enforcement-aware `@Optional` / `@Default` (DEC-051) and record-only `@Describe` / `@Tool` (DEC-052).
 - Imperative validation for call sites with no decoration point — `Verify.that` (throws) and `Verify.check` (non-throwing, returns a discriminated `CheckResult` for I/O boundaries that need a failure as a *value* — DEC-053).
 - `@Log()`, `@Time()`, and `@Observe()`.
@@ -364,12 +371,16 @@ npm run demo       # ts-node examples/demo.ts
 
 ### Roadmap / next steps
 
-**Wave 2 contract vocabulary** (see [`docs/plan-contract-offering.md`](docs/plan-contract-offering.md); Wave 1 — arrays, optional/default, markers, formats — is complete per DEC-050/051/052):
+**Wave 2 contract vocabulary is complete** (see [`docs/plan-contract-offering.md`](docs/plan-contract-offering.md); DEC-050 through DEC-057) — on top of Wave 1 (arrays, optional/default, markers, formats):
 
-- **`@Shape(FieldClass)`** — nested object parameters (IDEA-25/GAP-16), the second consumer of the DEC-050 compositional mechanism; inline-expanded, never `$ref`, with the tool projection tightening `required`/`additionalProperties` recursively.
-- **`@Const` / `@Nullable`** (IDEA-24) — single-literal and null-union polish over the existing enum/compositional machinery.
-- **`@Requires(...)`** — cross-parameter contracts (IDEA-26, building IDEA-6: `start < end`, "if mode=custom then config required"). The first writer of the reserved `pre` band; enforcement + fuzzing only, explicitly unprojectable like `@Ensures`.
-- Smaller: string-format fast-check arbitraries (the current fuzzer *declines* on formats).
+- **`@Dictionary(value)`** open maps (`Record<string, V>`, DEC-054) and **`@Shape(FieldClass)`** closed DTOs (DEC-055) — the object vocabulary. `@Shape` is inline-expanded (never `$ref`), and the tool projection tightens `required`/`additionalProperties` recursively while leaving a `@Dictionary` open.
+- **`@Const` / `@Nullable`** (DEC-056) — single-literal `{const}` and the null-widening combinator (distinct from `@Optional`'s "may be absent").
+- **`@Requires(...)`** cross-parameter preconditions (DEC-057, building IDEA-6) — enforced + fuzzable, explicitly unprojectable like `@Ensures`.
+
+**Remaining / next:**
+
+- The `dependentRequired`/`if-then` *projectable* cross-parameter subset (the one slice of IDEA-6 that emits a schema; low real demand); wiring the `@adorn/test` generator to filter on `@Requires` (the `evaluatePreconditions` oracle is exported and ready); and string-format fast-check arbitraries (the fuzzer currently *declines* on formats).
+- A documentation pass putting consumer-facing JSDoc on the source *declarations*, so guidance survives into the shipped `dist/index.d.ts` (GAP-17).
 
 **Bigger directions:**
 
@@ -383,14 +394,14 @@ npm run demo       # ts-node examples/demo.ts
 
 - **Parameter names come from `Function.prototype.toString()`.** Minification degrades them (`["message","someNumber"]` → `["s","t"]`), and that degradation propagates into generated documents, schemas, and tool schemas. Enforcement and every projection degrade *together*, which is the property that matters — a schema saying `s` about a check saying `s` beats one saying `arg0` about a check saying `sku` (SMELL-1, OPEN).
 - **Arity is lost.** A wrapped method reports `length === 0` rather than its real arity; its `.name` is correct. Destructured/rest signatures also yield no arity and can misalign recovered names (Q-10, PARTIAL) — which is why a faithful OpenAPI path emitter is still blocked.
-- **Hand-written predicate closures can't be projected.** A constraint that is a closure rather than a descriptor (`@Ensures`, and the future `@Requires`) is enforced but invisible to docs, schema, and fuzzing (Q-3/SMELL-14) — "decorate your code, get a fuzz suite" is partial by construction. `@Ensures` additionally types its `result` as `unknown`, so under `strict` the author must annotate (SMELL-20).
+- **Hand-written predicate closures can't be projected.** A constraint that is a closure rather than a descriptor (`@Ensures`, `@Requires`) is enforced but invisible to docs, schema, and fuzzing (Q-3/SMELL-14) — "decorate your code, get a fuzz suite" is partial by construction, and a `@Requires`-only method emits an empty tool schema. `@Ensures` additionally types its `result` as `unknown`, so under `strict` the author must annotate (SMELL-20).
 - **`strict: false` is still set.** The zero-cost sub-flags are on (`strictFunctionTypes`, `strictBindCallApply`, `noImplicitThis`, `useUnknownInCatchVariables`, `alwaysStrict`); `strictNullChecks` / `noImplicitAny` / `strictPropertyInitialization` carry real, measured cost and are deferred (SMELL-12, PARTIAL).
 - **`compileOnSave: true` makes the IDE emit stray sibling `.js` files** for edited `.ts`, which are neither git-ignored nor in eslint's `ignores` and pollute `git status` / `eslint .` until removed (SMELL-21, OPEN).
 - **`DecoratorConfiguration.ts` is inert**, retained only as a migration shim; the live configuration is `Core/Configuration.ts` (SMELL-4).
 - **The `@Sensitive` primitive-parameter gap is permanent.** `transfer(ssn: string)` must be marked on the parameter; the connection to a `@Sensitive` field is destroyed by JavaScript's value semantics (DEC-PII-5). A method *return* likewise cannot be directly `@Sensitive` (a TS signature limit — Q-23); `@Telemetry.result()` gives it the opt-in half but the veto half needs class-level `@Sensitive`.
 - The reactive `@Memoize` decorator and `rxjs` were removed from core (they will return as `@adorn/rx` — IDEA-8), so `@Time` degrades to `settled: false` when no Observable library is present.
 
-For the full picture, [`docs/DECISIONS.md`](docs/DECISIONS.md) is the decision log (DEC-001…DEC-052) and [`docs/ISSUES.md`](docs/ISSUES.md) the running issue tracker.
+For the full picture, [`docs/DECISIONS.md`](docs/DECISIONS.md) is the decision log (DEC-001…DEC-057) and [`docs/ISSUES.md`](docs/ISSUES.md) the running issue tracker.
 
 ---
 
