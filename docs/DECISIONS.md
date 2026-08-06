@@ -953,3 +953,14 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Surface.** +`@Shape` decorator (rides the existing `ObjectContracts` namespace) = 87 → 88; `ShapeParams` is type-only.
 
+## DEC-056 — Wave-2 polish: `@Const` (single literal) + `@Nullable` (null-widening combinator)
+**Status:** ACCEPTED · **BUILT** (Wave-2 #6) · resolves IDEA-24 · surface 88 → 91
+
+**`@Const(value)`.** The single-literal sibling of `@OneOf` — predicate `value === v`, projecting to the exact `{const: v}` keyword. Shipped as a **distinct identity** (in `Contracts/enum.ts`, on the existing `EnumContracts` namespace) rather than an alias of `@OneOf([v])`, because it reads better in every artifact: `describe` = "exactly v", `schema` = `{const: v}` (the natural keyword a validator and a model both understand), fuzzer → `fc.constant(v)`. Total (BUG-4); `value` must be a JSON primitive (same rule as `@OneOf` members), so it round-trips (DEC-010). Exact, never an under-claim. `const` added to the projection's `KEY_ORDER` beside `enum` (the review's MINOR-3).
+
+**`@Nullable(item)`.** A compositional combinator (DEC-050, the `@ArrayOf` mechanism) that widens any constraint to also accept `null` — the principled home for "may be **null**", deliberately distinct from `@Optional`'s "may be **absent** (`undefined`)"; combine them for "omittable OR null". Predicate: `value === null || itemPredicate(value)` (the `null` short-circuit runs *before* the item predicate, so a total item that would reject `null` does not veto the explicit allow). Schema: a single string `type` widens to `[<type>, 'null']` (every other keyword only bites the non-null branch, so `{type:['string','null'], minLength:5}` is exactly "string≥5 OR null"); a no-single-`type` inner (`enum`/`const`) becomes `{anyOf:[<inner>, {type:'null'}]}` (exact); a hookless `{}` stays `{}`. Lives in `Contracts/nullable.ts` on a new `NullableContracts` namespace. **Nullable ≠ optional:** a `@Nullable` param carries a constraint and is not `@Optional`, so it stays in the tool schema's `required` (the model must send it — as a value or explicit `null`).
+
+**v1 limit, stated.** `@Nullable(@Shape(...))` emits `type:['object','null']`, which the tool tightener (DEC-055) keys on `type === 'object'` and therefore leaves open (a nullable object is not recursively tightened) — under-claim-safe, just less tight; a clean extension later.
+
+**Surface.** +`@Const` decorator (`EnumContracts.Const` rides the existing enum namespace) +`@Nullable` decorator +`NullableContracts` namespace = 88 → 91; `ConstParams`/`NullableParams` are type-only.
+

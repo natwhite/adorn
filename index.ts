@@ -7,7 +7,7 @@ import {
     Between, Integer, MultipleOf,
     StringMinLength, MinLength, MaxLength, NotEmpty, Matches, Email, Url,
     Uuid, DateTime, Ipv4, Format,
-    OneOf, ArrayOf, Dictionary, Shape,
+    OneOf, Const, ArrayOf, Dictionary, Shape, Nullable,
 } from './src/ParameterDecorators/Constraints';
 
 // --- Field decorators -----------------------------------------------------
@@ -178,6 +178,9 @@ import * as ArrayContracts from './src/Contracts/array';
 // `ObjectContracts.Dictionary(valueDescriptor)` yields an open-map descriptor for `Verify.that`/
 // `CreateFieldDecorator`, exactly as the array namespace exposes `ArrayOf`.
 import * as ObjectContracts from './src/Contracts/object';
+// `@Nullable` (DEC-056) — the compositional null-widening combinator. `NullableContracts.Nullable(inner)`
+// yields a descriptor usable directly (`Verify.that`, `CreateFieldDecorator`, an `@ArrayOf` item).
+import * as NullableContracts from './src/Contracts/nullable';
 
 // The public surface, and the one place a reader can see its whole shape at once. Both the
 // section comments and the line grouping within each section are load-bearing: they say which
@@ -199,6 +202,9 @@ export {
     // JSON Schema `{enum:[…]}` (the LLM constrained-decoding target), a real docs line, and a sound
     // `fc.constantFrom` fuzzer. The descriptor is `EnumContracts.OneOf` below.
     OneOf,
+    // @Const (DEC-056) — the single-literal sibling of `@OneOf`: `value === v`, projecting to the exact
+    // `{const: v}` keyword. The descriptor is `EnumContracts.Const` below (it rides the enum namespace).
+    Const,
     // @ArrayOf (DEC-050/IDEA-22/GAP-15) — the first COMPOSITIONAL constraint: a list whose every
     // element satisfies an inner descriptor carried as serialised data. Projects to a JSON Schema
     // `{type:'array', items:<item schema>, minItems?, maxItems?}` inheriting the item's own fragment,
@@ -215,6 +221,10 @@ export {
     // descriptively to `{type:'object', properties}`; `toolSchemaForMethod` tightens it recursively to
     // `required` + `additionalProperties:false`. The descriptor is `ObjectContracts.Shape` below.
     Shape,
+    // @Nullable (DEC-056) — the compositional combinator that widens any constraint to also accept `null`
+    // (distinct from `@Optional`'s "may be absent"). Projects to the item fragment with `null` added to
+    // its `type` (or an `anyOf` union). The descriptor is `NullableContracts.Nullable` below.
+    Nullable,
 
     // Field decorators
     Enforce,
@@ -344,7 +354,7 @@ export {
 
     // Constraint descriptors (data, not decorators). `ArrayContracts` (DEC-050) is the compositional
     // one — its `ArrayOf` takes another descriptor as its item.
-    NumberContracts, StringContracts, EnumContracts, ArrayContracts, ObjectContracts,
+    NumberContracts, StringContracts, EnumContracts, ArrayContracts, ObjectContracts, NullableContracts,
 };
 
 /*

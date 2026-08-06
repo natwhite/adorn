@@ -707,6 +707,9 @@ const KEY_ORDER = [
     'description',
     'type',
     'enum',
+    // `const` (DEC-056 `@Const`) sits beside `enum` — its single-literal sibling — so a fragment
+    // canonicalises to `{type, const}`/`{const}` rather than sorting `const` to the alphabetical tail.
+    'const',
     'minimum',
     'exclusiveMinimum',
     'maximum',

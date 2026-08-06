@@ -141,7 +141,12 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // 87 → 88: Wave-2 object vocabulary, Slice 2 (DEC-055) adds the `@Shape` closed-DTO parameter
     // decorator. It rides the EXISTING `ObjectContracts` namespace (`ShapeParams` is type-only), so only
     // one export moves the count.
-    const PINNED_VALUE_EXPORT_COUNT = 88;
+    //
+    // 88 → 91: Wave-2 polish (DEC-056) adds THREE value exports — the `@Const` single-literal decorator
+    // (its `EnumContracts.Const` factory rides the existing enum namespace), the `@Nullable` combinator
+    // decorator, and the `NullableContracts` descriptor namespace it lives in. `ConstParams`/`NullableParams`
+    // are type-only and do not count.
+    const PINNED_VALUE_EXPORT_COUNT = 91;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -265,5 +270,24 @@ describe('Wave-2 object vocabulary Slice 2 adds exactly its intended public expo
     it('exposes the Shape descriptor factory on the EXISTING ObjectContracts namespace (no new namespace)', () => {
         const objectContracts = (adorn as Record<string, unknown>).ObjectContracts as Record<string, unknown>;
         expect(typeof objectContracts.Shape).toBe('function');
+    });
+});
+
+describe('Wave-2 polish adds exactly its intended public exports (DEC-056)', () => {
+    // The +3 (88→91) moved *because these landed* — @Const, @Nullable, and the NullableContracts namespace.
+    it('exports the @Const and @Nullable parameter decorators', () => {
+        expect(typeof (adorn as Record<string, unknown>).Const).toBe('function');
+        expect(typeof (adorn as Record<string, unknown>).Nullable).toBe('function');
+    });
+
+    it('exposes Const on the EXISTING EnumContracts namespace (no new namespace)', () => {
+        const enumContracts = (adorn as Record<string, unknown>).EnumContracts as Record<string, unknown>;
+        expect(typeof enumContracts.Const).toBe('function');
+    });
+
+    it('exports the NullableContracts descriptor namespace, carrying the nullable factory', () => {
+        const nullableContracts = (adorn as Record<string, unknown>).NullableContracts as Record<string, unknown>;
+        expect(typeof nullableContracts).toBe('object');
+        expect(typeof nullableContracts.Nullable).toBe('function');
     });
 });

@@ -52,6 +52,7 @@ import * as Strings from '../Contracts/string';
 import * as Enums from '../Contracts/enum';
 import * as Arrays from '../Contracts/array';
 import * as Objects from '../Contracts/object';
+import * as Nullables from '../Contracts/nullable';
 
 const constraintDecorator = ParameterDecoratorFactory.CreateConstraintDecorator;
 
@@ -159,6 +160,12 @@ const Format = (name: string) => constraintDecorator(Strings.Format(name));
  */
 const OneOf = (values: JsonValue[]) => constraintDecorator(Enums.OneOf(values));
 
+/**
+ * Rejects any value that is not exactly `value` (strict equality). The single-literal sibling of
+ * `@OneOf`; projects to `{const: value}`. `value` must be a JSON primitive — see `src/Contracts/enum.ts`.
+ */
+const Const = (value: JsonValue) => constraintDecorator(Enums.Const(value));
+
 // ---------------------------------------------------------------------------
 // Composition — @ArrayOf (DEC-050 / IDEA-22 / GAP-15)
 // ---------------------------------------------------------------------------
@@ -192,6 +199,17 @@ const Dictionary = (value: ConstraintDescriptor) => constraintDecorator(Objects.
  */
 const Shape = (fieldClass: Function) => constraintDecorator(Objects.Shape(fieldClass));
 
+// ---------------------------------------------------------------------------
+// Nullable combinator (DEC-056) — @Nullable
+// ---------------------------------------------------------------------------
+
+/**
+ * Widens `item` to also accept `null`. Compositional (DEC-050): projects to the item's fragment with
+ * `null` added to its `type` (or an `anyOf` union). This is "may be null", distinct from `@Optional`'s
+ * "may be absent". `item` is a `ConstraintDescriptor`; see `src/Contracts/nullable.ts`.
+ */
+const Nullable = (item: ConstraintDescriptor) => constraintDecorator(Nullables.Nullable(item));
+
 export {
     // number
     LessThanEqual,
@@ -219,6 +237,7 @@ export {
 
     // membership
     OneOf,
+    Const,
 
     // composition (DEC-050)
     ArrayOf,
@@ -226,4 +245,7 @@ export {
     // object composition (DEC-054 / DEC-055)
     Dictionary,
     Shape,
+
+    // nullable combinator (DEC-056)
+    Nullable,
 };

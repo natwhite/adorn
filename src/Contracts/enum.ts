@@ -145,3 +145,46 @@ export function OneOf(values: JsonValue[]) {
     });
     return oneOfConstraint({values: values.slice()});
 }
+
+// ---------------------------------------------------------------------------
+// @Const — a single allowed literal (IDEA-24 / DEC-056)
+// ---------------------------------------------------------------------------
+
+/** The single allowed literal. Always a JSON primitive — see {@link Const}. */
+export interface ConstParams extends JsonObject {
+    value: JsonValue;
+}
+
+/**
+ * `@Const(v)` is `@OneOf([v])` semantically — one member, predicate `=== v` — but shipped as a DISTINCT
+ * identity because it reads better in both artifacts: `describe` = "exactly v", `schema` = `{const: v}`
+ * (the natural single-literal keyword a validator and a model both understand), and a fuzzer maps it to
+ * `fc.constant(v)`. Exact, never an under-claim: the fragment accepts precisely the one value. Total
+ * (BUG-4): `===` against a JSON primitive never throws and rejects everything else.
+ */
+export const constConstraint = defineConstraint<ConstParams>({
+    kind: 'generic',
+    constraint: 'const',
+    derive:
+        (params: Readonly<ConstParams>): Predicate =>
+        (value: unknown) =>
+            value === params.value,
+    describe: params => `exactly ${JSON.stringify(params.value)}`,
+    schema: params => ({const: params.value}),
+});
+
+/**
+ * Rejects any value that is not exactly `value` (strict equality). `value` must be a JSON primitive
+ * (string, number, boolean, or null) — for the same reason an `OneOf` member must — so it projects to
+ * `{const: value}` and round-trips through JSON (DEC-010). A non-primitive throws at construction.
+ */
+export function Const(value: JsonValue) {
+    if (!isJsonPrimitive(value)) {
+        throw new TypeError(
+            `Const: \`value\` must be a string, number, boolean, or null — received ${describeMember(value)}. ` +
+                'A literal must be a JSON primitive so the constraint projects to {const} and round-trips ' +
+                'through JSON (DEC-010).',
+        );
+    }
+    return constConstraint({value});
+}
