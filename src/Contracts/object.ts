@@ -26,6 +26,7 @@
 
 import {
     ConstraintDescriptor,
+    ConstraintParams,
     constraintFromJSON,
     defineConstraint,
     JsonObject,
@@ -84,14 +85,19 @@ export const dictionaryConstraint = defineConstraint<DictionaryParams>({
  * the descriptor as data (DEC-050); a hand-written closure (no `toJSON`) is rejected loudly here rather
  * than admitted silently.
  */
-export function Dictionary(value: ConstraintDescriptor): ConstraintDescriptor<DictionaryParams> {
+export function Dictionary<V>(
+    value: ConstraintDescriptor<ConstraintParams, V>,
+): ConstraintDescriptor<DictionaryParams, Record<string, V>> {
     if (!value || typeof value.toJSON !== 'function' || typeof value.predicate !== 'function') {
         throw new TypeError(
             'Dictionary: `value` must be a ConstraintDescriptor (e.g. StringContracts.NotEmpty()). A ' +
                 'hand-written closure carries no identity or params and cannot be composed (DEC-050).',
         );
     }
-    return dictionaryConstraint({value: value.toJSON()});
+    return dictionaryConstraint({value: value.toJSON()}) as ConstraintDescriptor<
+        DictionaryParams,
+        Record<string, V>
+    >;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +169,9 @@ export const shapeConstraint = defineConstraint<ShapeParams>({
  * an authoring error and **throws** — an empty shape would project to an object schema that accepts
  * anything, the "looks complete, isn't" failure DEC-006/DEC-016 reject (the review's MAJOR-3).
  */
-export function Shape(fieldClass: Function): ConstraintDescriptor<ShapeParams> {
+export function Shape<T = unknown>(
+    fieldClass: (abstract new (...args: any[]) => T) | Function,
+): ConstraintDescriptor<ShapeParams, T> {
     if (typeof fieldClass !== 'function') {
         throw new TypeError('Shape: expected a class (constructor function) whose fields carry contracts');
     }
@@ -181,5 +189,5 @@ export function Shape(fieldClass: Function): ConstraintDescriptor<ShapeParams> {
                 'class is defined before @Shape reads it (DEC-007).',
         );
     }
-    return shapeConstraint({fields});
+    return shapeConstraint({fields}) as ConstraintDescriptor<ShapeParams, T>;
 }

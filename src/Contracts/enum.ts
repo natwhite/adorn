@@ -45,7 +45,7 @@
  * `addons/test/arbitraries.ts`, never in core.
  */
 
-import {defineConstraint, JsonObject, JsonValue, Predicate} from '../Core/Descriptor';
+import {ConstraintDescriptor, defineConstraint, JsonObject, JsonValue, Predicate} from '../Core/Descriptor';
 
 // ---------------------------------------------------------------------------
 // Params
@@ -128,7 +128,7 @@ function describeMember(value: unknown): string {
  * can satisfy (and reads as valid in a generated schema), and a non-primitive member could not be
  * projected. Both are author errors, so they throw at construction rather than at call time.
  */
-export function OneOf(values: JsonValue[]) {
+export function OneOf<T extends JsonValue>(values: T[]): ConstraintDescriptor<OneOfParams, T> {
     if (!Array.isArray(values) || values.length === 0) {
         throw new TypeError(
             'OneOf: `values` must be a non-empty array of JSON primitives (string, number, boolean, or null)',
@@ -143,7 +143,7 @@ export function OneOf(values: JsonValue[]) {
             );
         }
     });
-    return oneOfConstraint({values: values.slice()});
+    return oneOfConstraint({values: values.slice()}) as ConstraintDescriptor<OneOfParams, T>;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ export const constConstraint = defineConstraint<ConstParams>({
  * (string, number, boolean, or null) — for the same reason an `OneOf` member must — so it projects to
  * `{const: value}` and round-trips through JSON (DEC-010). A non-primitive throws at construction.
  */
-export function Const(value: JsonValue) {
+export function Const<T extends JsonValue>(value: T): ConstraintDescriptor<ConstParams, T> {
     if (!isJsonPrimitive(value)) {
         throw new TypeError(
             `Const: \`value\` must be a string, number, boolean, or null — received ${describeMember(value)}. ` +
@@ -186,5 +186,5 @@ export function Const(value: JsonValue) {
                 'through JSON (DEC-010).',
         );
     }
-    return constConstraint({value});
+    return constConstraint({value}) as ConstraintDescriptor<ConstParams, T>;
 }

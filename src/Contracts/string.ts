@@ -246,7 +246,7 @@ const isIpv4: Predicate = (value: unknown) => {
 // Definitions
 // ---------------------------------------------------------------------------
 
-export const minLengthConstraint = defineConstraint<MinLengthParams>({
+export const minLengthConstraint = defineConstraint<MinLengthParams, string>({
     kind: 'string',
     constraint: 'minLength',
     derive: atLeastLength,
@@ -258,7 +258,7 @@ export const minLengthConstraint = defineConstraint<MinLengthParams>({
     schema: params => ({type: 'string', minLength: params.minLength}),
 });
 
-export const maxLengthConstraint = defineConstraint<MaxLengthParams>({
+export const maxLengthConstraint = defineConstraint<MaxLengthParams, string>({
     kind: 'string',
     constraint: 'maxLength',
     derive: atMostLength,
@@ -278,7 +278,7 @@ export const maxLengthConstraint = defineConstraint<MaxLengthParams>({
  * removed because "positive" genuinely does not say whether `0` is in or out; nobody has ever had
  * to ask that about "non-empty".
  */
-export const notEmptyConstraint = defineConstraint<MinLengthParams>({
+export const notEmptyConstraint = defineConstraint<MinLengthParams, string>({
     kind: 'string',
     constraint: 'notEmpty',
     derive: atLeastLength,
@@ -286,7 +286,7 @@ export const notEmptyConstraint = defineConstraint<MinLengthParams>({
     schema: params => ({type: 'string', minLength: params.minLength}),
 });
 
-export const matchesConstraint = defineConstraint<PatternParams>({
+export const matchesConstraint = defineConstraint<PatternParams, string>({
     kind: 'string',
     constraint: 'matches',
     derive: matchesPattern,
@@ -308,7 +308,7 @@ export const matchesConstraint = defineConstraint<PatternParams>({
  * hiding it behind the word "email" — a reader of the generated artifact can see the approximation
  * instead of assuming RFC 5322.
  */
-export const emailConstraint = defineConstraint<PatternParams>({
+export const emailConstraint = defineConstraint<PatternParams, string>({
     kind: 'string',
     constraint: 'email',
     derive: matchesPattern,
@@ -321,7 +321,7 @@ export const emailConstraint = defineConstraint<PatternParams>({
     schema: params => ({type: 'string', pattern: params.pattern.source}),
 });
 
-export const urlConstraint = defineConstraint<UrlParams>({
+export const urlConstraint = defineConstraint<UrlParams, string>({
     kind: 'string',
     constraint: 'url',
     derive: isUrl,
@@ -340,7 +340,7 @@ export const urlConstraint = defineConstraint<UrlParams>({
  * A UUID. Validates the canonical 8-4-4-4-12 hex form; emits `{type:'string', format:'uuid'}`. No
  * `pattern` is emitted — `format:'uuid'` is the faithful hint, and the strict predicate is the backstop.
  */
-export const uuidConstraint = defineConstraint<JsonObject>({
+export const uuidConstraint = defineConstraint<JsonObject, string>({
     kind: 'string',
     constraint: 'uuid',
     derive: () => isUuid,
@@ -352,7 +352,7 @@ export const uuidConstraint = defineConstraint<JsonObject>({
  * An RFC 3339 `date-time`. The predicate is a **strict** RFC 3339 parse (not `Date.parse`, which accepts
  * a superset — the DEC-029 over-claim S3 forbids); emits `{type:'string', format:'date-time'}`.
  */
-export const dateTimeConstraint = defineConstraint<JsonObject>({
+export const dateTimeConstraint = defineConstraint<JsonObject, string>({
     kind: 'string',
     constraint: 'dateTime',
     derive: () => isRfc3339DateTime,
@@ -361,7 +361,7 @@ export const dateTimeConstraint = defineConstraint<JsonObject>({
 });
 
 /** An IPv4 address. Validates a dotted quad with each octet `0..255`; emits `{type:'string', format:'ipv4'}`. */
-export const ipv4Constraint = defineConstraint<JsonObject>({
+export const ipv4Constraint = defineConstraint<JsonObject, string>({
     kind: 'string',
     constraint: 'ipv4',
     derive: () => isIpv4,

@@ -49,6 +49,7 @@
 
 import {
     ConstraintDescriptor,
+    ConstraintParams,
     constraintFromJSON,
     defineConstraint,
     JsonObject,
@@ -166,10 +167,10 @@ function requireCount(constraint: string, name: string, value: number | undefine
  * a generated schema). With no `minItems`, `[]` passes; `minItems: 1` rejects it; `minItems: 0` is
  * allowed and equivalent to omitting it.
  */
-export function ArrayOf(
-    item: ConstraintDescriptor,
+export function ArrayOf<V>(
+    item: ConstraintDescriptor<ConstraintParams, V>,
     options?: {minItems?: number; maxItems?: number},
-): ConstraintDescriptor<ArrayOfParams> {
+): ConstraintDescriptor<ArrayOfParams, V[]> {
     if (!item || typeof item.toJSON !== 'function' || typeof item.predicate !== 'function') {
         throw new TypeError(
             'ArrayOf: `item` must be a ConstraintDescriptor (e.g. StringContracts.NotEmpty()). A ' +
@@ -186,5 +187,5 @@ export function ArrayOf(
     const params: ArrayOfParams = {item: item.toJSON()};
     if (min !== undefined) params.minItems = min;
     if (max !== undefined) params.maxItems = max;
-    return arrayOfConstraint(params);
+    return arrayOfConstraint(params) as ConstraintDescriptor<ArrayOfParams, V[]>;
 }

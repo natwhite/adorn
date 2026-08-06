@@ -239,7 +239,7 @@ const numeric = (fragment: JsonObject): JsonObject => {
 // Definitions
 // ---------------------------------------------------------------------------
 
-export const minConstraint = defineConstraint<MinParams>({
+export const minConstraint = defineConstraint<MinParams, number>({
     kind: 'number',
     constraint: 'min',
     derive: atLeast,
@@ -247,7 +247,7 @@ export const minConstraint = defineConstraint<MinParams>({
     schema: params => numeric({minimum: params.min}),
 });
 
-export const maxConstraint = defineConstraint<MaxParams>({
+export const maxConstraint = defineConstraint<MaxParams, number>({
     kind: 'number',
     constraint: 'max',
     derive: atMost,
@@ -255,7 +255,7 @@ export const maxConstraint = defineConstraint<MaxParams>({
     schema: params => numeric({maximum: params.max}),
 });
 
-export const greaterThanConstraint = defineConstraint<ExclusiveMinParams>({
+export const greaterThanConstraint = defineConstraint<ExclusiveMinParams, number>({
     kind: 'number',
     constraint: 'greaterThan',
     derive: above,
@@ -263,7 +263,7 @@ export const greaterThanConstraint = defineConstraint<ExclusiveMinParams>({
     schema: params => numeric({exclusiveMinimum: params.exclusiveMin}),
 });
 
-export const lessThanConstraint = defineConstraint<ExclusiveMaxParams>({
+export const lessThanConstraint = defineConstraint<ExclusiveMaxParams, number>({
     kind: 'number',
     constraint: 'lessThan',
     derive: below,
@@ -271,7 +271,7 @@ export const lessThanConstraint = defineConstraint<ExclusiveMaxParams>({
     schema: params => numeric({exclusiveMaximum: params.exclusiveMax}),
 });
 
-export const betweenConstraint = defineConstraint<RangeParams>({
+export const betweenConstraint = defineConstraint<RangeParams, number>({
     kind: 'number',
     constraint: 'between',
     derive: within,
@@ -289,7 +289,7 @@ export const betweenConstraint = defineConstraint<RangeParams>({
  * boundary at all.
  */
 
-export const integerConstraint = defineConstraint<JsonObject>({
+export const integerConstraint = defineConstraint<JsonObject, number>({
     kind: 'number',
     constraint: 'integer',
     derive: whole,
@@ -298,7 +298,7 @@ export const integerConstraint = defineConstraint<JsonObject>({
     schema: () => ({type: 'integer'}),
 });
 
-export const multipleOfConstraint = defineConstraint<MultipleOfParams>({
+export const multipleOfConstraint = defineConstraint<MultipleOfParams, number>({
     kind: 'number',
     constraint: 'multipleOf',
     derive: multipleOf,

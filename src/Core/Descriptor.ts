@@ -122,7 +122,7 @@ export type Arbitrary = unknown;
  *
  * Instances are frozen. Build them through a factory returned by {@link defineConstraint}.
  */
-export interface ConstraintDescriptor<P extends ConstraintParams = ConstraintParams> {
+export interface ConstraintDescriptor<P extends ConstraintParams = ConstraintParams, Out = unknown> {
     /** Domain: `'number' | 'string' | 'generic'`. */
     readonly kind: ConstraintKind;
     /** Identity: `'min'`, `'max'`, `'minLength'`, … — what a documentation projection names. */
@@ -142,6 +142,18 @@ export interface ConstraintDescriptor<P extends ConstraintParams = ConstraintPar
 
     /** Makes `JSON.stringify(descriptor)` produce a rehydratable form. */
     toJSON(): SerializedConstraint<P>;
+
+    /**
+     * Phantom OUTPUT tag (DEC-059/IDEA-28) — the type a *satisfying* value has, so `Verify.check`/`that`
+     * can narrow `unknown` to it. **Type-level ONLY**: never assigned at runtime, so `'__out' in descriptor`
+     * is `false` and `Object.keys`/`JSON.stringify`/spread/freeze are all unaffected. A bare `Out` param
+     * would be *bivariant* (unused → no narrowing); referencing it in the covariant return position of
+     * `(value: never) => Out` (under `strictFunctionTypes`) makes a `ConstraintDescriptor<P, string>`
+     * assignable to `<P, unknown>` (widening — so a typed descriptor still flows into the adapters that
+     * take a bare descriptor) but **not** the reverse (so narrowing survives). Defaults to `unknown`, so
+     * every existing `ConstraintDescriptor<P>` is unchanged.
+     */
+    readonly __out?: (value: never) => Out;
 }
 
 /**
@@ -187,8 +199,8 @@ export interface ConstraintDefinition<P extends ConstraintParams = ConstraintPar
  * What {@link defineConstraint} hands back: call it with params to get a descriptor.
  * The originating definition is exposed for introspection and testing.
  */
-export interface ConstraintFactory<P extends ConstraintParams = ConstraintParams> {
-    (params: P): ConstraintDescriptor<P>;
+export interface ConstraintFactory<P extends ConstraintParams = ConstraintParams, Out = unknown> {
+    (params: P): ConstraintDescriptor<P, Out>;
 
     readonly definition: ConstraintDefinition<P>;
 }
@@ -213,9 +225,9 @@ const definitions = new Map<string, ConstraintDefinition<any>>();
  * Throws on a duplicate identity. Two definitions sharing one `constraint` string would make
  * rehydration ambiguous and is nearly always a copy-paste error, so it fails loudly.
  */
-export function defineConstraint<P extends ConstraintParams = ConstraintParams>(
+export function defineConstraint<P extends ConstraintParams = ConstraintParams, Out = unknown>(
     definition: ConstraintDefinition<P>,
-): ConstraintFactory<P> {
+): ConstraintFactory<P, Out> {
     if (!definition || typeof definition.constraint !== 'string' || definition.constraint.length === 0) {
         throw new TypeError('defineConstraint: a non-empty `constraint` identity is required');
     }
@@ -238,7 +250,7 @@ export function defineConstraint<P extends ConstraintParams = ConstraintParams>(
     const frozen: ConstraintDefinition<P> = Object.freeze({...definition});
     definitions.set(frozen.constraint, frozen);
 
-    const factory = ((params: P) => createDescriptor(frozen, params)) as ConstraintFactory<P>;
+    const factory = ((params: P) => createDescriptor(frozen, params)) as ConstraintFactory<P, Out>;
     Object.defineProperty(factory, 'definition', {value: frozen, enumerable: true});
     return factory;
 }

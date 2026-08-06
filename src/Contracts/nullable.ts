@@ -13,6 +13,7 @@
 
 import {
     ConstraintDescriptor,
+    ConstraintParams,
     constraintFromJSON,
     defineConstraint,
     JsonObject,
@@ -62,12 +63,14 @@ export const nullableConstraint = defineConstraint<NullableParams>({
  * This is "may be `null`", NOT "may be absent" — for an omittable parameter use `@Optional`, and combine
  * them (`@Optional @Nullable(...)`) for a parameter that may be omitted OR explicitly null.
  */
-export function Nullable(item: ConstraintDescriptor): ConstraintDescriptor<NullableParams> {
+export function Nullable<V>(
+    item: ConstraintDescriptor<ConstraintParams, V>,
+): ConstraintDescriptor<NullableParams, V | null> {
     if (!item || typeof item.toJSON !== 'function' || typeof item.predicate !== 'function') {
         throw new TypeError(
             'Nullable: `item` must be a ConstraintDescriptor (e.g. StringContracts.Email()). A ' +
                 'hand-written closure carries no identity or params and cannot be composed (DEC-050).',
         );
     }
-    return nullableConstraint({item: item.toJSON()});
+    return nullableConstraint({item: item.toJSON()}) as ConstraintDescriptor<NullableParams, V | null>;
 }

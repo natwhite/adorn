@@ -42,6 +42,10 @@ import {Tool} from './src/Markers/Tool';
 // non-throwing path an untrusted I/O boundary needs (a bad body → a `400` as a value, not an exception).
 import {Verify} from './src/Validation/Verify';
 export type {CheckResult} from './src/Validation/Verify';
+// The reified constraint type (GAP-22) — the declared parameter type of `@Dictionary`/`@ArrayOf`/`@Nullable`
+// and the shape `Verify.that`/`check` narrow from. Type-only; carries the phantom output param (DEC-059),
+// so `ConstraintDescriptor<ConstraintParams, string>` names a string-producing constraint.
+export type {ConstraintDescriptor, ConstraintParams} from './src/Core/Descriptor';
 
 // --- Method decorators ----------------------------------------------------
 import {Log} from './src/MethodDecorators/Log';

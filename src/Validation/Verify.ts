@@ -67,7 +67,7 @@
  *    where the vocabulary still encoded a boundary in a name.
  */
 
-import {ConstraintDescriptor, ConstraintKind} from '../Core/Descriptor';
+import {ConstraintDescriptor, ConstraintKind, ConstraintParams} from '../Core/Descriptor';
 import {GreaterThanEqual, LessThanEqual} from '../Contracts/number';
 import {shouldDiscloseValue} from '../Core/redaction';
 
@@ -96,8 +96,14 @@ export class Verify {
      * @param keyName    - name of the thing being checked, used in the message
      * @param value      - the value to check
      */
-    static that<T>(constraint: ConstraintDescriptor, keyName: string | symbol, value: T): T {
-        if (constraint.predicate(value)) return value;
+    static that<T>(
+        constraint: ConstraintDescriptor<ConstraintParams, T>,
+        keyName: string | symbol,
+        value: unknown,
+    ): T {
+        // `T` binds to the constraint's OUTPUT type (DEC-059), so a caller narrows `unknown` to what the
+        // constraint proves. The cast is sound: it runs only after `predicate(value)` returned true.
+        if (constraint.predicate(value)) return value as T;
 
         // Redacted by default (BUG-19), like every violation message. An imperative call has no
         // `@Sensitive` site to consult, so disclosure follows the global switch alone.
@@ -133,8 +139,14 @@ export class Verify {
      * // r.value is the validated value here
      * ```
      */
-    static check<T>(constraint: ConstraintDescriptor, keyName: string | symbol, value: T): CheckResult<T> {
-        if (constraint.predicate(value)) return {ok: true, value};
+    static check<T>(
+        constraint: ConstraintDescriptor<ConstraintParams, T>,
+        keyName: string | symbol,
+        value: unknown,
+    ): CheckResult<T> {
+        // `T` binds to the constraint's OUTPUT type (DEC-059) — `Verify.check(Dictionary(NotEmpty()), …)`
+        // returns `CheckResult<Record<string, string>>`. The cast runs only after `predicate` returned true.
+        if (constraint.predicate(value)) return {ok: true, value: value as T};
 
         // The same redacted rendering Verify.that throws — an imperative call has no `@Sensitive` site,
         // so disclosure follows the global switch alone (BUG-19/DEC-030). The value is never in the result.
@@ -160,7 +172,7 @@ export class Verify {
      *
      * **Argument order changed** from `(key, target, constraint)` — see the module note.
      */
-    static lessThanEqual<T>(keyName: string | symbol, value: T, max: number): T {
+    static lessThanEqual(keyName: string | symbol, value: unknown, max: number): number {
         return Verify.that(LessThanEqual(max), keyName, value);
     }
 
@@ -169,7 +181,7 @@ export class Verify {
      *
      * **Argument order changed** from `(key, target, constraint)` — see the module note.
      */
-    static greaterThanEqual<T>(keyName: string | symbol, value: T, min: number): T {
+    static greaterThanEqual(keyName: string | symbol, value: unknown, min: number): number {
         return Verify.that(GreaterThanEqual(min), keyName, value);
     }
 }
