@@ -2,7 +2,7 @@
 
 > TypeScript decorators that treat a contract as **data** — one declaration, projected into the JSON Schema an LLM reads, the runtime validation its arguments face, documentation, generated tests, and observability. They descend from one source, so they cannot drift.
 
-**Status: experimental, but substantial.** adorn is not a released package and still has named rough edges (see [Project state](#project-state)), but it is well past a prototype. `index.ts` exports **94 values** (plus the projection and observation model types) across **63 test suites / 1130 tests**, all passing. The shipped set includes a working decorator core with method and field inheritance semantics, closure and reified pre- and postconditions, six projections (docs, JSON Schema, prescriptive tool schema, property-test generation, observability, privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow detector, a CLI, and two add-ons (`@adorn/test`, `@adorn/otel`). Treat it as a proof of concept you can read and run, not something to depend on in production.
+**Status: experimental, but substantial.** adorn is not a released package and still has named rough edges (see [Project state](#project-state)), but it is well past a prototype. `index.ts` exports **94 values** (plus the projection and observation model types) across **64 test suites / 1139 tests**, all passing. The shipped set includes a working decorator core with method and field inheritance semantics, closure and reified pre- and postconditions, six projections (docs, JSON Schema, prescriptive tool schema, property-test generation, observability, privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow detector, a CLI, and two add-ons (`@adorn/test`, `@adorn/otel`). Treat it as a proof of concept you can read and run, not something to depend on in production.
 
 ---
 
@@ -341,7 +341,7 @@ The only runtime dependency is `tslib`. The package exposes a single CJS entry t
 ```bash
 npm install
 npm run build      # tsc -> ./dist, then the CLI build (tsconfig.cli.json)
-npm test           # jest — 63 suites, 1130 tests
+npm test           # jest — 64 suites, 1139 tests
 npm run typecheck  # tsc --noEmit over src, tests, addons, and tools (tsconfig.test.json)
 npm run demo       # ts-node examples/demo.ts
 ```
@@ -379,7 +379,7 @@ npm run demo       # ts-node examples/demo.ts
 
 **Remaining / next:**
 
-- The `dependentRequired`/`if-then` *projectable* cross-parameter subset (the one slice of IDEA-6 that emits a schema; low real demand); wiring the `@adorn/test` generator to filter on `@Requires` (the `evaluatePreconditions` oracle is exported and ready); and string-format fast-check arbitraries (the fuzzer currently *declines* on formats).
+- The `dependentRequired`/`if-then` *projectable* cross-parameter subset (the one slice of IDEA-6 that emits a schema; low real demand); and string-format fast-check arbitraries (the fuzzer currently *declines* on formats). *(The `@adorn/test` generator now filters generated tuples through `@Requires` — DEC-058 — so a `@Requires` method fuzzes with no false positive.)*
 - A documentation pass putting consumer-facing JSDoc on the source *declarations*, so guidance survives into the shipped `dist/index.d.ts` (GAP-17).
 
 **Bigger directions:**
@@ -401,7 +401,7 @@ npm run demo       # ts-node examples/demo.ts
 - **The `@Sensitive` primitive-parameter gap is permanent.** `transfer(ssn: string)` must be marked on the parameter; the connection to a `@Sensitive` field is destroyed by JavaScript's value semantics (DEC-PII-5). A method *return* likewise cannot be directly `@Sensitive` (a TS signature limit — Q-23); `@Telemetry.result()` gives it the opt-in half but the veto half needs class-level `@Sensitive`.
 - The reactive `@Memoize` decorator and `rxjs` were removed from core (they will return as `@adorn/rx` — IDEA-8), so `@Time` degrades to `settled: false` when no Observable library is present.
 
-For the full picture, [`docs/DECISIONS.md`](docs/DECISIONS.md) is the decision log (DEC-001…DEC-057) and [`docs/ISSUES.md`](docs/ISSUES.md) the running issue tracker.
+For the full picture, [`docs/DECISIONS.md`](docs/DECISIONS.md) is the decision log (DEC-001…DEC-058) and [`docs/ISSUES.md`](docs/ISSUES.md) the running issue tracker.
 
 ---
 

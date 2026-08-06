@@ -61,13 +61,20 @@ import {
     getEffectiveParameterOptional,
     getFieldContractsForClass,
     Postcondition,
+    Precondition,
 } from '../../src/Core/ContractRegistry';
 // The postcondition oracle — consumed from adorn's PUBLIC surface (the package root), so the add-on
 // checks postconditions through the SAME functions the runtime wrapper runs (DEC-032/DEC-034 no drift):
 // the `@Ensures` closure band via getEffectivePostconditions + evaluatePostconditions, and the reified
 // `@Returns` descriptor band via getEffectiveContract().post. Reaching into `src/` for these would make
 // the add-on a privileged consumer; it is not — it depends on exactly what a downstream package sees.
-import {evaluatePostconditions, getEffectiveContract, getEffectivePostconditions} from '../../index';
+import {
+    evaluatePostconditions,
+    evaluatePreconditions,
+    getEffectiveContract,
+    getEffectivePostconditions,
+    getEffectivePreconditions,
+} from '../../index';
 // The same disclosure discipline core uses for its own emissions (DEC-030) — imported, not
 // re-implemented, so a fuzz report redacts by exactly the rule enforcement redacts by. Not on the root
 // surface (Q-6 keeps it internal), so read from its module, as the add-on already does for descriptors.
@@ -75,7 +82,13 @@ import {REDACTED, shouldDiscloseValue} from '../../src/Core/redaction';
 // The assert-trust gate — read/restored around a postcondition-mode run so the driver can obtain the
 // settled return value to check it independently. See the header note ("How the settled value ...").
 import {getAssertEnforcement, setAssertEnforcement} from '../../src/Core/Configuration';
-import {arbitraryForParameter, Arbitrary, ParameterArbitrary} from './arbitraries';
+import {
+    arbitraryForParameter,
+    Arbitrary,
+    measureAcceptance,
+    ParameterArbitrary,
+    STARVATION_THRESHOLD,
+} from './arbitraries';
 
 /**
  * The oracle in force for a run.
@@ -198,8 +211,11 @@ export function fuzzMethod(options: FuzzOptions): FuzzResult {
             ),
         );
     } catch (error) {
-        // A per-position filter that cannot produce a value makes fast-check throw. Report it as
-        // starvation rather than letting the tool crash (foundation §7.2), and decline honestly.
+        // fast-check can throw during generation (an internal generator error, or an `fc.pre()` retry cap).
+        // NOTE: a `.filter()` does NOT throw on starvation — it loops unboundedly — so filter starvation is
+        // caught up-front by the 0%-acceptance decline (per-position in `arbitraries.ts`, whole-tuple in
+        // `preconditionGate`), not here. This catch is the honest fallback for any *other* generation failure
+        // (the DEC-057 review, finding C). Report it as a decline rather than letting the tool crash (§7.2).
         return declinedResult(
             p.className,
             p.methodName,
@@ -323,6 +339,8 @@ interface PreparedRun {
     invariantsChecked?: string[];
     seed?: number;
     numRuns?: number;
+    /** `@Requires` generate-and-filter starvation warnings, merged into the run's warnings (DEC-057 fuzzing). */
+    preconditionWarnings?: string[];
 }
 
 function prepareRun(options: FuzzOptions): PreparedRun {
@@ -332,16 +350,17 @@ function prepareRun(options: FuzzOptions): PreparedRun {
 
     const entry = findMethodEntry(target, method);
     if (!entry) {
+        // A method carrying ONLY a cross-parameter `@Requires` (no per-position constraint) records nothing
+        // in the contract band `getContractsForClass` reads, so it lands here. It IS contracted — but its
+        // argument arity is unrecoverable without a per-position decorator (Q-10), so it cannot be fuzzed.
+        // Say so accurately rather than the misleading "no contract recorded" (the DEC-057 review, finding F).
+        const reason = methodHasPreconditions(target, method)
+            ? `${className}.${methodName} declares a cross-parameter @Requires but no per-position ` +
+              'constraint, so its argument arity cannot be recovered to generate inputs (Q-10). Add a ' +
+              'per-position decorator to make it fuzzable; the precondition is still enforced at runtime.'
+            : `no contract recorded for ${className}.${methodName}`;
         return {
-            declined: declinedResult(
-                className,
-                methodName,
-                false,
-                [],
-                `no contract recorded for ${className}.${methodName}`,
-                [],
-                'weak-invariant',
-            ),
+            declined: declinedResult(className, methodName, false, [], reason, [], 'weak-invariant'),
         };
     }
 
@@ -391,7 +410,22 @@ function prepareRun(options: FuzzOptions): PreparedRun {
         oracle ?? (posts.length > 0 || returns.length > 0 ? 'postcondition' : 'weak-invariant');
     const oraclesChecked = describeOracles(posts, returns);
 
-    const argsArbitrary = buildArgsArbitrary(coverage, gapFill);
+    const baseArgs = buildArgsArbitrary(coverage, gapFill);
+
+    // Cross-parameter `@Requires` (DEC-057): filter the composed tuple to the precondition-valid set, so the
+    // fuzzer tests the method ONLY on tuples the installed guard accepts — never mistaking a precondition it
+    // itself violated for a method crash (the deferred false positive DEC-057 named). `entry.target` +
+    // `evaluatePreconditions`/`getEffectivePreconditions` are the EXACT read+oracle enforcement runs
+    // (ContractInstaller.checkPreconditions), consumed from the public root like the postcondition reads above.
+    const pres = getEffectivePreconditions(entry.target, method);
+    const gate = preconditionGate(baseArgs, pres);
+    if (gate.declined) {
+        return {
+            declined: declinedResult(className, methodName, isStatic, coverage, gate.reason!, oraclesChecked, mode),
+        };
+    }
+    const argsArbitrary = gate.arbitrary!;
+
     const fieldContracts = isStatic ? [] : instanceFieldContracts(target);
     const invariantsChecked = fieldContracts.map(f => String(f.key));
 
@@ -419,6 +453,7 @@ function prepareRun(options: FuzzOptions): PreparedRun {
         invariantsChecked,
         seed,
         numRuns,
+        preconditionWarnings: gate.warnings,
     };
 }
 
@@ -435,7 +470,7 @@ function assemblePassed(p: PreparedRun, details: fc.RunDetails<[unknown[]]>): Fu
         invariantsChecked: p.invariantsChecked,
         oraclesChecked: p.oraclesChecked,
         passed: true,
-        warnings: collectWarnings(p.coverage),
+        warnings: collectWarnings(p.coverage, p.preconditionWarnings),
     };
 }
 
@@ -458,7 +493,7 @@ function assembleFinding(
         oraclesChecked: p.oraclesChecked,
         passed: false,
         finding: describeFinding(outcome, counterexampleArgs, details),
-        warnings: collectWarnings(p.coverage),
+        warnings: collectWarnings(p.coverage, p.preconditionWarnings),
     };
 }
 
@@ -784,6 +819,70 @@ function buildArgsArbitrary(
     return fc.tuple(...positions);
 }
 
+/** The verdict of {@link preconditionGate}: a usable (possibly filtered) tuple arbitrary, or a decline. */
+interface PreconditionGate {
+    declined?: boolean;
+    reason?: string;
+    arbitrary?: Arbitrary<unknown[]>;
+    warnings?: string[];
+}
+
+/**
+ * Filter the composed argument tuple to the `@Requires`-satisfying set (DEC-057 fuzzer integration).
+ *
+ * A precondition relates MULTIPLE parameters, so this is a whole-tuple gate — it cannot live in a
+ * per-parameter arbitrary. Generate-and-filter is the only sound option: a `@Requires` closure is a black
+ * box (Q-3), so it cannot be inverted to generate satisfying tuples directly — the same wall the
+ * per-position filters hit (`arbitraries.ts`). It reuses that discipline, not a new one:
+ *
+ * - **No `@Requires` → zero overhead.** `pres.length === 0` returns `baseArgs` untouched — no measurement,
+ *   no wrapping, byte-for-byte the pre-DEC-057 run.
+ * - **0% acceptance → decline honestly** (DEC-024/DEC-031, "never cover nothing"). `.filter()` is an
+ *   *unbounded* loop with no starvation throw, so this measured decline — not any fast-check backstop — is
+ *   the sole guard against an infinite draw (the DEC-057 review, finding C).
+ * - **Otherwise filter, and warn if starving.** `.filter()` is the hard soundness guarantee: fast-check
+ *   re-applies it during generation AND shrinking, so every tuple that reaches the method — and every
+ *   shrunk counterexample — is precondition-valid. A cross-parameter precondition starves *combinatorially*
+ *   faster than a per-position filter, so a low-but-nonzero rate is surfaced as a warning (it terminates,
+ *   just covers less); warn-only matches the shipped per-position discipline.
+ *
+ * The predicate is `evaluatePreconditions(pres, args)` — the EXACT function enforcement runs — so
+ * filter-admits(x) ⟺ enforcement-accepts(x): a passing tuple can never trip the installed guard.
+ */
+function preconditionGate(
+    baseArgs: Arbitrary<unknown[]>,
+    pres: ReadonlyArray<Precondition>,
+): PreconditionGate {
+    if (pres.length === 0) return {arbitrary: baseArgs, warnings: []};
+
+    const predicate = (value: unknown) => evaluatePreconditions(pres, value as unknown[]).ok;
+    const acceptanceRate = measureAcceptance(baseArgs, predicate);
+
+    if (acceptanceRate === 0) {
+        const named = pres[0].description ? ` ("${pres[0].description}")` : '';
+        return {
+            declined: true,
+            reason:
+                `no generated argument tuple satisfies the effective @Requires precondition${named} — the ` +
+                'accepted set is too narrow over the generated domain to fuzz (foundation §7.2).',
+        };
+    }
+
+    return {
+        arbitrary: baseArgs.filter(predicate),
+        warnings: acceptanceRate < STARVATION_THRESHOLD ? [preconditionStarvationWarning(acceptanceRate, pres)] : [],
+    };
+}
+
+function preconditionStarvationWarning(rate: number, pres: ReadonlyArray<Precondition>): string {
+    const named = pres[0].description ? ` ("${pres[0].description}")` : '';
+    return (
+        `@Requires generate-and-filter${named} accepts only ${Math.round(rate * 100)}% of candidate tuples — ` +
+        'the run may cover far fewer distinct valid tuples than its case count suggests, and a ' +
+        'cross-parameter precondition starves faster than a per-position filter (foundation §7.2).'
+    );
+}
+
 /** Name each postcondition guarantee this run will exercise — the honest `oraclesChecked` (§5.2 pt 3). */
 function describeOracles(
     posts: ReadonlyArray<Postcondition>,
@@ -802,6 +901,19 @@ function describeOracles(
 
 function findMethodEntry(target: Function, method: string | symbol): ClassMethodContract | undefined {
     return getContractsForClass(target).filter(e => e.key === method)[0];
+}
+
+/**
+ * Whether `target[method]` carries a cross-parameter `@Requires` on either key band (instance on the
+ * prototype, static on the constructor) — used only to give an accurate decline reason for a method that
+ * is contracted by a precondition but has no per-position constraint to recover arity from (finding F).
+ */
+function methodHasPreconditions(target: Function, method: string | symbol): boolean {
+    const proto = target.prototype;
+    return (
+        (proto ? getEffectivePreconditions(proto, method).length > 0 : false) ||
+        getEffectivePreconditions(target, method).length > 0
+    );
 }
 
 function instanceFieldContracts(target: Function): ClassFieldContract[] {
@@ -851,7 +963,10 @@ function isAdornViolation(error: unknown): boolean {
     );
 }
 
-function collectWarnings(coverage: ReadonlyArray<ParameterArbitrary>): string[] {
+function collectWarnings(
+    coverage: ReadonlyArray<ParameterArbitrary>,
+    extra: ReadonlyArray<string> = [],
+): string[] {
     const warnings: string[] = [...STANDING_WARNINGS];
     for (const plan of coverage) {
         if (plan.starved) {
@@ -862,6 +977,7 @@ function collectWarnings(coverage: ReadonlyArray<ParameterArbitrary>): string[] 
             );
         }
     }
+    warnings.push(...extra);
     return warnings;
 }
 

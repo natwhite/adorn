@@ -605,7 +605,7 @@ function conjunction(constraints: ReadonlyArray<ConstraintDescriptor>): (value: 
  * Measure the fraction of a broad base's samples that satisfy `predicate`. Sampling the *unfiltered*
  * base is always safe (it never starves); the number is the Hypothesis `filter_too_much` signal.
  */
-function measureAcceptance(base: Arbitrary<unknown>, predicate: (v: unknown) => boolean): number {
+export function measureAcceptance(base: Arbitrary<unknown>, predicate: (v: unknown) => boolean): number {
     // Seeded so the measurement — and therefore the starvation flag and coverage report — is
     // deterministic. The base is always the *unfiltered* arbitrary, so sampling it never starves.
     const samples = fc.sample(base, {numRuns: ACCEPTANCE_SAMPLE_SIZE, seed: 0});

@@ -370,8 +370,9 @@ then `@Requires` (#7).
 **Update (2026-08, Wave-2 #6–#7 shipped):** `@Const` + `@Nullable` (DEC-056) and `@Requires` (DEC-057) are
 BUILT. Surface 88 → 94. The whole projectable + enforcement vocabulary now stands; the only remaining roadmap
 item is **#8 — the `dependentRequired`/`if-then` projectable cross-parameter subset** (deferred, low real
-demand, provider-variable support), plus the deferred `@Requires` **fuzzer integration** (the oracle is
-exported; the add-on generator does not yet filter on it) and the scheduled §1 JSDoc-on-declarations pass.
+demand, provider-variable support), plus the scheduled §1 JSDoc-on-declarations pass. The `@Requires`
+**fuzzer integration** is now BUILT (DEC-058): the generator filters tuples through the enforcement oracle,
+closing the false positive.
 
 Every item, before merge, owes the same four things the existing built-ins do: the descriptor
 (kind/params/derived-predicate/describe/schema), the schema fragment with its stated posture, a **sound**
