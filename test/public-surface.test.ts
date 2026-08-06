@@ -156,7 +156,11 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // `evaluatePreconditions` oracle (the fuzzer's arg filter). Its writer (`recordPrecondition`) and the
     // `*PreconditionKeys` helpers stay internal, like the postcondition band. `PreconditionResult` is
     // type-only.
-    const PINNED_VALUE_EXPORT_COUNT = 94;
+    //
+    // 94 → 95: round-3 IDEA-30/DEC-061 adds the descriptor-first `toolSchemaFrom` entry point.
+    // `ToolSchemaFromInput`/`ToolParamSpec` are type-only and do not count; the phantom-output-type work
+    // (DEC-059) and the `locate`/`path` work (DEC-060) are type-only / an added optional field and move nothing.
+    const PINNED_VALUE_EXPORT_COUNT = 95;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -299,6 +303,12 @@ describe('Wave-2 polish adds exactly its intended public exports (DEC-056)', () 
         const nullableContracts = (adorn as Record<string, unknown>).NullableContracts as Record<string, unknown>;
         expect(typeof nullableContracts).toBe('object');
         expect(typeof nullableContracts.Nullable).toBe('function');
+    });
+});
+
+describe('round-3 adds exactly its intended public exports (DEC-059/060/061)', () => {
+    it('exports the descriptor-first toolSchemaFrom projection (IDEA-30/DEC-061) — the +1 to 95', () => {
+        expect(typeof (adorn as Record<string, unknown>).toolSchemaFrom).toBe('function');
     });
 });
 

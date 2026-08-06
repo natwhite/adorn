@@ -1016,3 +1016,14 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Wiring correction (the review's MINOR-4).** `locate` is wired EAGERLY in `createDescriptor` (`value: locateOf(params)`) because its definition hook is higher-order `(params) => (value) => path` — this rebuilds inner descriptors once per descriptor, unlike `schema`'s deferred `(params) => fragment`. Additive: `path` is present only when a meaningful sub-path exists, so the existing primitive-constraint `Verify.check` exact-keys test is unaffected; `locate` joins the already-enumerable `schema`/`arbitrary`, disturbing no descriptor-key assertion. +11 tests across `test/locate-path.test.ts` and `test/typed-descriptors.test.ts`; suite 66 suites / 1150 tests.
 
+## DEC-061 — A descriptor-first tool schema: `toolSchemaFrom` (per-session enums)
+**Status:** ACCEPTED · **BUILT** (round-3 §5 / IDEA-30) · surface 94 → 95
+
+**Context.** Round-3 §5 (the consumer's highest-value LLM request). `toolSchemaForMethod` reads the decorator registry, fixed at module load — so a **per-session** enum (the roster of valid patient ids, known only at session start) is unexpressible via the projection. But `ArrayContracts.ArrayOf(EnumContracts.OneOf([...roster]))` is just a function call that already yields both a `.schema()` fragment and a `Verify.check` validator; only the class-free envelope was missing.
+
+**Decision.** `toolSchemaFrom({name?, description?, params: {<name>: descriptor | ToolParamSpec}})` builds the same prescriptive `{type:'object', properties, required, additionalProperties:false}` envelope from named *descriptors*, no class required. A `ToolParamSpec` carries the inline `@Optional`/`@Describe`/`@Default` equivalents (`optional`/`description`/`default`). `required` mirrors the DEC-048 rule (carries a constraint and not `optional`). One declaration, per session, feeds both the tool definition and the model's-reply validator — the thesis under genuinely dynamic data (IDEA-27 realised).
+
+**Reuse, not fork (DEC-010).** It reaches `schemaFragmentsOf`/`mergeFragments`/`tightenObjects`/`canonicalize` **unchanged** (same module), so the DEC-029 merge is not forked and a `@Shape`/`@ArrayOf` param is recursively tightened identically to the method version — pinned by a **byte-equality test** (`toolSchemaFrom` output `toEqual`s `toolSchemaForMethod`'s for an equivalent decorated method). The only genuinely new code is the envelope loop (argument-sourced vs registry-sourced). `toolSchemaForMethod` is untouched.
+
+**Surface.** +`toolSchemaFrom` value = 94 → 95; `ToolSchemaFromInput`/`ToolParamSpec` are type-only. +7 tests (`test/toolSchemaFrom.test.ts` + the surface pin); suite 67 suites / 1157 tests.
+

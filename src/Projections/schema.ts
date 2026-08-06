@@ -398,6 +398,77 @@ export function toolSchemaForMethod(
     return canonicalize(document) as ToolSchema;
 }
 
+/**
+ * One parameter of a descriptor-first tool schema (DEC-061) — the inline equivalents of the `@Optional`
+ * `/@Describe`/`@Default` markers the method version reads from the registry.
+ */
+export interface ToolParamSpec {
+    /** One descriptor, or a stack conjoined exactly as stacked param decorators are (`mergeFragments`). */
+    readonly descriptor: ConstraintDescriptor | ReadonlyArray<ConstraintDescriptor>;
+    /** `@Optional` equivalent — drops the param from `required`; it stays in `properties`. */
+    readonly optional?: boolean;
+    /** `@Describe` equivalent — the property's `description`. */
+    readonly description?: string;
+    /** `@Default` equivalent — a non-asserting `{default}` annotation. */
+    readonly default?: JsonValue;
+}
+
+/** Input to {@link toolSchemaFrom}: named descriptors (or {@link ToolParamSpec}s), no class required. */
+export interface ToolSchemaFromInput {
+    /** Emitted as the schema's `title` when present. */
+    readonly name?: string;
+    /** Emitted as the top-level `description` when present. */
+    readonly description?: string;
+    readonly params: {readonly [paramName: string]: ConstraintDescriptor | ToolParamSpec};
+}
+
+/**
+ * The **descriptor-first** sibling of {@link toolSchemaForMethod} (DEC-061 / IDEA-30) — builds the same
+ * prescriptive `{type:'object', properties, required, additionalProperties:false}` envelope from named
+ * *descriptors* rather than from a decorated method. This is what makes a **per-session** enum expressible
+ * in the projection: `toolSchemaForMethod` reads the decorator registry (fixed at module load), whereas
+ * `ArrayContracts.ArrayOf(EnumContracts.OneOf([...roster]))` is just a function call, so a schema whose
+ * members are known only at session start projects here without a class — one declaration, per session,
+ * feeding both the tool definition (`.schema()`) and the model's-reply validator (`Verify.check`).
+ *
+ * It **reuses** `schemaFragmentsOf`/`mergeFragments`/`tightenObjects`/`canonicalize` unchanged (living in
+ * this module to reach them), so the DEC-029 merge is not forked (the only thing DEC-010 forbids) and a
+ * `@Shape`/`@ArrayOf` param is recursively tightened identically to the method version. `required` mirrors
+ * the DEC-048 rule ("carries a constraint and is not `optional`"); every listed param has ≥1 descriptor by
+ * construction, so `optional` is the only way to drop one.
+ */
+export function toolSchemaFrom(input: ToolSchemaFromInput): ToolSchema {
+    if (!input || typeof input !== 'object' || !input.params || typeof input.params !== 'object') {
+        throw new TypeError('toolSchemaFrom: expected `{ params: { <name>: descriptor | spec } }`');
+    }
+
+    const properties: JsonObject = {};
+    const required: string[] = [];
+
+    for (const paramName of Object.keys(input.params)) {
+        const raw = input.params[paramName];
+        const spec: ToolParamSpec = isToolParamSpec(raw) ? raw : {descriptor: raw};
+        const descriptors = Array.isArray(spec.descriptor) ? spec.descriptor : [spec.descriptor];
+
+        const fragment = mergeFragments(schemaFragmentsOf(descriptors));
+        if (typeof spec.description === 'string') fragment.description = spec.description;
+        if (spec.default !== undefined) fragment.default = spec.default;
+
+        properties[paramName] = tightenObjects(fragment);
+        if (!spec.optional) required.push(paramName);
+    }
+
+    const document: JsonObject = {type: 'object', properties, required, additionalProperties: false};
+    if (typeof input.name === 'string') document.title = input.name;
+    if (typeof input.description === 'string') document.description = input.description;
+    return canonicalize(document) as ToolSchema;
+}
+
+/** A bare `ConstraintDescriptor` never carries a `descriptor` key; a {@link ToolParamSpec} always does. */
+function isToolParamSpec(raw: ConstraintDescriptor | ToolParamSpec): raw is ToolParamSpec {
+    return 'descriptor' in raw;
+}
+
 /** Where a method's markers are read from — the contract target, or the marker-band target when the
  * method has no contract but carries a `@Tool`/`@Describe`. `params` is present only for a contracted
  * method (the marker-only case has no parameter contracts to carry). */

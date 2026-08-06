@@ -128,7 +128,7 @@ export type {PreconditionResult} from './src/Core/Preconditions';
 import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
 // prettier-ignore
 import {
-    schemaForClass, schemaForContracts, serializeSchema, generateSchema, toolSchemaForMethod,
+    schemaForClass, schemaForContracts, serializeSchema, generateSchema, toolSchemaForMethod, toolSchemaFrom,
 } from './src/Projections/schema';
 // O1d: the "what leaves the process" privacy-review projection — the sixth projection. A pure registry
 // read (DEC-012), it reports the disclosure each parameter/return carries and renders its own scanned
@@ -150,7 +150,14 @@ export type {
     FieldDoc,
     MarkdownOptions,
 } from './src/Projections/docs';
-export type {ClassSchema, SchemaOptions, ToolSchema, ToolSchemaOptions} from './src/Projections/schema';
+export type {
+    ClassSchema,
+    SchemaOptions,
+    ToolSchema,
+    ToolSchemaOptions,
+    ToolSchemaFromInput,
+    ToolParamSpec,
+} from './src/Projections/schema';
 
 // The observation model + the event/payload surface an ObservationSink binds to (O1a). This union is
 // semver-frozen the moment an adapter binds to it (Q-6): every event payload field is optional and
@@ -360,6 +367,10 @@ export {
     // where schemaForClass is a descriptive instance schema that under-claims. Reuses schema.ts's merge
     // internals (no fork, DEC-010); Core+Contracts only (DEC-012). `@OneOf` flows in as `{enum:[…]}`.
     toolSchemaForMethod,
+    // Projection: the DESCRIPTOR-FIRST tool schema (IDEA-30/DEC-061) — `toolSchemaFrom({params:{x:descriptor}})`
+    // builds the same tight envelope from named descriptors, no class required, so a PER-SESSION enum
+    // (`ArrayOf(OneOf([...roster]))`) projects at runtime. Reuses `tightenObjects` unchanged.
+    toolSchemaFrom,
 
     // Projections: telemetry disclosure (O1d) — the "what leaves the process" privacy-review table.
     // A pure registry read (DEC-012) that reports the disclosure each position carries and renders its
