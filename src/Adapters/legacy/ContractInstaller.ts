@@ -59,6 +59,7 @@
 import {
     getContract,
     getContracts,
+    getEffectiveContract,
     getEffectiveContractKeys,
     getEffectivePostconditionKeys,
     getEffectivePostconditions,
@@ -98,7 +99,7 @@ import {
     installMethodWrapper,
     MethodBehavior,
 } from './MethodDecoratorFactory';
-import {noteContractInstalled} from './ContractDiagnostics';
+import {noteContractInstalled, reportDiagnostic} from './ContractDiagnostics';
 import {
     ErrorFacts,
     getObservationSink,
@@ -324,6 +325,10 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
     const returns = getEffectiveReturnConstraints(host, key);
     if (!enforce && pres.length === 0 && posts.length === 0 && returns.length === 0) return;
 
+    // GAP-20 (round-3 §3): warn at install if a parameter stacks a container constraint with an
+    // `@OneOf`/`@Const` — an always-false, unsatisfiable conjunction that projects a plausible schema.
+    warnUnsatisfiableStacks(host, key);
+
     // An inner `@Observe` (applied before the class decorator ran) already owns the completed emit;
     // enforcement then defers its own so the sink sees `completed` once (plan §5). Zero per-call cost.
     const observed = ownsCompletion(original);
@@ -333,6 +338,60 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
         enforcementBehavior(enforce, pres, posts, returns, host, key, trust, observed),
     );
     noteInstalled(host, key);
+}
+
+/**
+ * GAP-20 (round-3 §3) — warn, at install time, when a parameter stacks a **container** constraint
+ * (`@ArrayOf`/`@Dictionary`/`@Shape`, projecting `type:'array'|'object'`) with an `@OneOf`/`@Const`
+ * (projecting `enum`/`const` of JSON **primitives**). The conjunction is *always* unsatisfiable — no
+ * value is both an array/object AND `===` a primitive member — so the parameter rejects 100% of inputs
+ * (including `[]`), yet it compiles and projects a plausible `{type:'array', enum:[…], items:…}`. The
+ * wrong spelling (two flat decorators) is the more natural one; the fix pushes the enum *inside* the
+ * container: `@ArrayOf(EnumContracts.OneOf([...]))`.
+ *
+ * Report-only and dev-gated (via `reportDiagnostic`), and it reads only descriptor `schema()` fragments —
+ * no decorator knowledge (DEC-012). Fires at install because the full per-parameter stack does not exist
+ * until `@Contract()` runs (the same reason the missing-`@Contract` diagnostic is deferred).
+ */
+function warnUnsatisfiableStacks(host: object, key: MethodKey): void {
+    const contract = getEffectiveContract(host, key);
+    if (!contract) return;
+    for (const parameter of contract.params) {
+        const pair = detectUnsatisfiableStack(parameter.constraints);
+        if (!pair) continue;
+        const owner = ownerNameOf(host);
+        const member = typeof key === 'symbol' ? key.toString() : String(key);
+        const name = parameter.name ? `'${parameter.name}'` : `#${parameter.index}`;
+        reportDiagnostic(
+            `[adorn] Unsatisfiable constraint stack on ${owner}.${member} parameter ${name}: ` +
+                `\`${pair[0]}\` (a container) stacked with \`${pair[1]}\` (a primitive enum/const) can never ` +
+                'be satisfied — the two are conjoined, so no value is both a container AND a member, and the ' +
+                'parameter rejects every input (including []).\n' +
+                `  Fix — put the enum INSIDE the container, e.g. @ArrayOf(EnumContracts.OneOf([...])).\n` +
+                '  (adorn development-mode diagnostic; silenced in production / setContractDiagnosticsEnabled(false).)',
+        );
+    }
+}
+
+/**
+ * The pure, decorator-free analyzer: returns the `[containerIdentity, memberIdentity]` pair when a
+ * parameter's constraint stack contains BOTH a container-`type` fragment (`array`/`object`) and an
+ * `enum`/`const` fragment, else `undefined`. Decidable with no false positives because `@OneOf`/`@Const`
+ * members are validated to be JSON primitives at construction, so they are never an array/object.
+ * `@Nullable` emits `type:['object','null']` (a `type` array, not `=== 'object'`), so it is not flagged.
+ */
+function detectUnsatisfiableStack(
+    constraints: ReadonlyArray<ConstraintDescriptor>,
+): [string, string] | undefined {
+    let container: ConstraintDescriptor | undefined;
+    let member: ConstraintDescriptor | undefined;
+    for (const constraint of constraints) {
+        const fragment = constraint.schema ? constraint.schema() : undefined;
+        if (!fragment) continue;
+        if ((fragment.type === 'array' || fragment.type === 'object') && !container) container = constraint;
+        if (('enum' in fragment || 'const' in fragment) && !member) member = constraint;
+    }
+    return container && member ? [container.constraint, member.constraint] : undefined;
 }
 
 /**

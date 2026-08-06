@@ -1034,3 +1034,12 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **IDEA-31 — README: the validation half needs no decorators.** The `Verify.check` + `*Contracts` path is plain function calls — it compiles with `experimentalDecorators`/`emitDecoratorMetadata` **off** (the reviewer compiled it against the consumer's tsconfig verbatim), so the most-cited adoption objection (the decorator tax, DEC-004) is false for that half of the library. One README paragraph now says so, and notes the DEC-059 narrowing + DEC-060 `path`. Doc-only.
 
+## DEC-063 — An install-time diagnostic for an unsatisfiable stacked constraint (GAP-20)
+**Status:** ACCEPTED · **BUILT** (round-3 §3) · report-only, dev-gated · no export
+
+**Context.** Round-3 §3, the sharpest LLM-usability trap on the surface: `@ArrayOf(X) @OneOf(ROSTER)` (two flat param decorators) reads naturally but conjoins to an **always-false** predicate — no value is both an array AND `=== ` a primitive member, so it rejects 100% of inputs including `[]` — and projects a plausible-but-unsatisfiable `{type:'array', enum:[…strings], items:…}`. It compiles and fails in production, not at decoration. Disqualifying for a tool layer.
+
+**Decision.** A **report-only, dev-mode** diagnostic (via the existing `reportDiagnostic` sink) fired from `installMethod`: for each parameter, if its constraint stack contains BOTH a container-`type` fragment (`array`/`object`) AND an `enum`/`const` fragment, warn — naming `Class.method` + the parameter + the two identities + the fix (`@ArrayOf(EnumContracts.OneOf([...]))`). It fires at **install** (not decoration) because the full per-parameter stack does not exist until `@Contract()` runs — the same reason the missing-`@Contract` diagnostic is deferred. It reads only descriptor `schema()` fragments (decorator-free, DEC-012).
+
+**False-positive-free, scoped tightly.** The general "is this conjunction unsatisfiable?" is undecidable, so this is scoped to the one crisp, always-decidable case: `@OneOf`/`@Const` members are validated to be JSON **primitives** at construction, so a container × primitive-enum stack can never be satisfied. `@Nullable` emits `type:['object','null']` (a `type` *array*, not `=== 'object'`), so it is not flagged; the correct `@ArrayOf(OneOf([...]))` (enum inside) has one param constraint and no separate `enum`, so it is not flagged. No new export; surface unchanged. Pinned by `test/composition-lint.test.ts` (warn on the two bad stacks, silent on the correct form / primitive stack / container-alone / disabled).
+
