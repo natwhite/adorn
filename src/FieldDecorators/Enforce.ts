@@ -56,6 +56,14 @@ import * as Objects from '../Contracts/object';
 import * as Nullables from '../Contracts/nullable';
 import type {ConstraintDescriptor, JsonValue} from '../Core/Descriptor';
 
+/**
+ * The field-decorator surface: `@Enforce.<name>(...)` installs a validating accessor on a class field,
+ * mirroring the parameter decorators one-for-one — `@Enforce.greaterThan(0)` is the field twin of
+ * `@GreaterThan(0)`, `@Enforce.arrayOf(...)` of `@ArrayOf(...)`. Each static wraps the *same*
+ * `ConstraintDescriptor` its parameter twin uses, so the two bands cannot drift (DEC-006). Unlike a
+ * parameter constraint, a field contract installs itself at decoration time — no `@Contract()` needed.
+ * Anything not listed here can be applied directly with `@CreateFieldDecorator(<descriptor>)`.
+ */
 export class Enforce {
     // --- numbers ------------------------------------------------------------
 

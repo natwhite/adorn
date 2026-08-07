@@ -305,6 +305,13 @@ export function getObservationVerbosity(): ObservationVerbosity {
 // Violation routing
 // ---------------------------------------------------------------------------
 
+/**
+ * Route what happens when a contract violation fires. `'throw'` (the default) raises it; `'warn'` logs it
+ * and lets the call proceed — which is what makes staging a new contract over live traffic possible; a
+ * `ViolationHandler` function takes full control (return to suppress, throw to raise). An installed
+ * observation sink still sees every violation regardless of the policy — the policy governs control flow,
+ * not visibility (DEC-036).
+ */
 export function setViolationPolicy(policy: ViolationPolicy): void {
     state.onViolation = policy;
 }

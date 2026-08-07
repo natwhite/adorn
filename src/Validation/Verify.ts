@@ -96,6 +96,14 @@ export type CheckResult<T> =
           readonly path?: ReadonlyArray<string | number>;
       };
 
+/**
+ * Imperative validation for call sites with no decoration point — a function body, a factory, a parsing
+ * loop, an untrusted I/O boundary. {@link Verify.that} throws on a violation; {@link Verify.check} returns
+ * a discriminated {@link CheckResult} instead — the non-throwing path for a boundary that needs the failure
+ * as a *value*, with the failing key on `path` for a compositional constraint (DEC-060). Both take a
+ * `ConstraintDescriptor` from the `*Contracts` namespaces (e.g. `NumberContracts.Between(1, 10)`) and
+ * narrow `unknown` to the constraint's output type (DEC-059).
+ */
 export class Verify {
     /**
      * Check `value` against any constraint descriptor. Returns `value` on success, throws otherwise.
