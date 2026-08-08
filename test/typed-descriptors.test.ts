@@ -43,6 +43,22 @@ describe('typed descriptors — Verify.check narrows `unknown` to the constraint
         expect(true).toBe(true); // the real assertions above are compile-time
     });
 
+    it('narrows a Fields literal to the exact object type, optional keys OPTIONAL (round-4 §2.1)', () => {
+        const spec = ObjectContracts.Fields({
+            seq: NumberContracts.Integer(),
+            note: {descriptor: StringContracts.NotEmpty(), optional: true},
+        });
+        const r = Verify.check(spec, 'body', body);
+        if (r.ok) {
+            expectType<{seq: number; note?: string}>(r.value);
+            expectType<number>(r.value.seq);
+            // Compiles ONLY if `note` is optional — a missing `note` must be a valid value of the output type.
+            const minimal: typeof r.value = {seq: 1};
+            void minimal;
+        }
+        expect(true).toBe(true);
+    });
+
     it('a typed descriptor still flows where a BARE ConstraintDescriptor is wanted (widening holds)', () => {
         // <MinParams, number> is assignable to <ConstraintParams, unknown> — the phantom is covariant.
         const bare: ConstraintDescriptor = NumberContracts.Between(1, 7);
@@ -69,6 +85,16 @@ function _negativeTypeAssertions(): void {
     if (num.ok) {
         // @ts-expect-error — value is number, not string
         const wrong: string = num.value;
+        void wrong;
+    }
+    const fields = Verify.check(
+        ObjectContracts.Fields({seq: NumberContracts.Integer()}),
+        'x',
+        null as unknown,
+    );
+    if (fields.ok) {
+        // @ts-expect-error — the required field `seq` is a number, not a string
+        const wrong: string = fields.value.seq;
         void wrong;
     }
 }

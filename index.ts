@@ -45,7 +45,23 @@ export type {CheckResult} from './src/Validation/Verify';
 // The reified constraint type (GAP-22) — the declared parameter type of `@Dictionary`/`@ArrayOf`/`@Nullable`
 // and the shape `Verify.that`/`check` narrow from. Type-only; carries the phantom output param (DEC-059),
 // so `ConstraintDescriptor<ConstraintParams, string>` names a string-producing constraint.
-export type {ConstraintDescriptor, ConstraintParams} from './src/Core/Descriptor';
+export type {ConstraintDescriptor, ConstraintParams, Localization} from './src/Core/Descriptor';
+
+// The custom-constraint authoring surface (round-4 §2.3). `ConstraintDescriptor` shipped as a TYPE (GAP-22),
+// but not the factory that builds one — so a consumer could name a custom constraint but not make it. Export
+// `defineConstraint` and the types its definition uses, so a consumer can define a constraint from data
+// (DEC-050) and use it in `Verify.check`/`toolSchemaFrom` exactly like a built-in. `getConstraintDefinition`
+// stays internal (it returns `ConstraintDefinition<any>` — no `any` reaches the surface).
+export {defineConstraint} from './src/Core/Descriptor';
+export type {
+    ConstraintDefinition,
+    ConstraintFactory,
+    ConstraintKind,
+    Predicate,
+    ViolationContext,
+    JsonObject,
+    JsonValue,
+} from './src/Core/Descriptor';
 
 // --- Method decorators ----------------------------------------------------
 import {Log} from './src/MethodDecorators/Log';

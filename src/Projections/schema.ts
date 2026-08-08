@@ -103,6 +103,8 @@
  */
 
 import {ConstraintDescriptor, JsonObject, JsonValue} from '../Core/Descriptor';
+import {detectUnsatisfiableStack} from '../Core/unsatisfiable';
+import {reportDiagnostic} from '../Core/diagnostics';
 import {
     ClassMethodContract,
     ContractTarget,
@@ -437,10 +439,14 @@ export interface ToolSchemaFromInput {
  * the DEC-048 rule ("carries a constraint and is not `optional`"); every listed param has ≥1 descriptor by
  * construction, so `optional` is the only way to drop one.
  */
-export function toolSchemaFrom(input: ToolSchemaFromInput): ToolSchema {
+export function toolSchemaFrom(
+    input: ToolSchemaFromInput,
+    options?: {readonly providerStrict?: boolean},
+): ToolSchema {
     if (!input || typeof input !== 'object' || !input.params || typeof input.params !== 'object') {
         throw new TypeError('toolSchemaFrom: expected `{ params: { <name>: descriptor | spec } }`');
     }
+    const providerStrict = !!(options && options.providerStrict);
 
     const properties: JsonObject = {};
     const required: string[] = [];
@@ -450,12 +456,46 @@ export function toolSchemaFrom(input: ToolSchemaFromInput): ToolSchema {
         const spec: ToolParamSpec = isToolParamSpec(raw) ? raw : {descriptor: raw};
         const descriptors = Array.isArray(spec.descriptor) ? spec.descriptor : [spec.descriptor];
 
+        // GAP-20 (round-4 §2.3): the same unsatisfiable-stack diagnostic the installer runs at `@Contract()`
+        // time, now on the descriptor-first path the README recommends. A `[ArrayOf(...), OneOf([...])]` stack
+        // projects a plausible-but-always-false schema; report it rather than emit it silently. Report-only,
+        // dev-gated, reads only `schema()` — no decorator knowledge (DEC-012), shared with the installer (DEC-010).
+        const unsat = detectUnsatisfiableStack(descriptors);
+        if (unsat) {
+            reportDiagnostic(
+                `[adorn] toolSchemaFrom: parameter '${paramName}' stacks \`${unsat[0]}\` (a container) with ` +
+                    `\`${unsat[1]}\` (a primitive enum/const) — an always-false conjunction, so the emitted schema ` +
+                    'is unsatisfiable (the parameter would reject every value, including []).\n' +
+                    '  Fix — put the enum INSIDE the container, e.g. ArrayContracts.ArrayOf(EnumContracts.OneOf([...])).\n' +
+                    '  (adorn development-mode diagnostic; silenced in production / setContractDiagnosticsEnabled(false).)',
+            );
+        }
+
         const fragment = mergeFragments(schemaFragmentsOf(descriptors));
         if (typeof spec.description === 'string') fragment.description = spec.description;
         if (spec.default !== undefined) fragment.default = spec.default;
 
-        properties[paramName] = tightenObjects(fragment);
-        if (!spec.optional) required.push(paramName);
+        const tightened = tightenObjects(fragment);
+        properties[paramName] = tightened;
+
+        if (!spec.optional) {
+            required.push(paramName);
+        } else if (providerStrict) {
+            // OpenAI strict mode requires EVERY property in `required` (Q-32b, DEC-068). An optional param
+            // survives only if it admits null — declared `Nullable(...)`, so schema and validator BOTH accept
+            // the `null` the model sends for "absent" (no drift). It stays in `required` carrying its null-union
+            // schema. A bare non-nullable optional cannot be expressed; refuse loudly rather than emit a schema
+            // whose validator would then reject the model's `null`.
+            if (!fragmentAdmitsNull(tightened)) {
+                throw new TypeError(
+                    `toolSchemaFrom: parameter '${paramName}' is optional but not nullable, which OpenAI strict ` +
+                        'mode cannot express (strict requires every property in `required`). Wrap it in ' +
+                        'NullableContracts.Nullable(...) so schema and validator both admit null, or call without ' +
+                        '{ providerStrict: true }.',
+                );
+            }
+            required.push(paramName);
+        }
     }
 
     const document: JsonObject = {type: 'object', properties, required, additionalProperties: false};
@@ -676,17 +716,19 @@ function mergeFragments(fragments: JsonObject[]): JsonObject {
 function tightenObjects(fragment: JsonValue): JsonValue {
     if (!isObjectFragment(fragment)) return fragment;
 
-    if (fragment.type === 'object') {
+    if (typeIncludes(fragment, 'object')) {
         const properties = fragment.properties;
         const additional = fragment.additionalProperties;
-        // `@Shape` (closed DTO): carries `properties`, no `additionalProperties` yet → close + require all.
+        // A closed DTO (`@Shape`/`@Fields`, incl. a `Nullable(...)` one whose `type` is `['object','null']` —
+        // D-3): carries `properties`, no `additionalProperties` yet → close + require (the null branch stays).
         if (isObjectFragment(properties) && !('additionalProperties' in fragment)) {
             const tightened: JsonObject = {};
-            const required: string[] = [];
             Object.keys(properties).forEach(name => {
                 tightened[name] = tightenObjects(properties[name]);
-                required.push(name);
             });
+            // Respect a pre-existing `required` — a `@Fields` fragment carries its own optional-aware subset
+            // (round-4 §2.1), so an optional field is NOT force-required. `@Shape` emits none → require all.
+            const required = Array.isArray(fragment.required) ? fragment.required : Object.keys(properties);
             return {...fragment, properties: tightened, required, additionalProperties: false};
         }
         // `@Dictionary` (open map): stays open, but tighten its value schema (e.g. a dict of `@Shape`).
@@ -696,13 +738,27 @@ function tightenObjects(fragment: JsonValue): JsonValue {
         return fragment;
     }
 
-    // `@ArrayOf` (list): tighten the element schema (e.g. an array of `@Shape`).
-    if (fragment.type === 'array') {
+    // `@ArrayOf` (list, incl. a nullable `['array','null']`): tighten the element schema (e.g. an array of `@Shape`).
+    if (typeIncludes(fragment, 'array')) {
         const items = fragment.items;
         if (isObjectFragment(items)) return {...fragment, items: tightenObjects(items)};
     }
 
     return fragment;
+}
+
+/** Whether `fragment.type` is `t`, or an array of types INCLUDING `t` — a `@Nullable` null-union (`['object','null']`). */
+function typeIncludes(fragment: JsonObject, t: string): boolean {
+    const type = fragment.type;
+    return type === t || (Array.isArray(type) && type.indexOf(t) !== -1);
+}
+
+/** Whether a fragment permits `null` — a `null` in its `type` array, or an `anyOf` branch that is `{type:'null'}`. */
+function fragmentAdmitsNull(fragment: JsonValue): boolean {
+    if (!isObjectFragment(fragment)) return false;
+    if (typeIncludes(fragment, 'null')) return true;
+    const anyOf = fragment.anyOf;
+    return Array.isArray(anyOf) && anyOf.some(member => isObjectFragment(member) && typeIncludes(member, 'null'));
 }
 
 /** A `JsonValue` that is a plain object (not null, not an array) — the fragments the tightener descends. */

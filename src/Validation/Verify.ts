@@ -94,6 +94,14 @@ export type CheckResult<T> =
            * failure, where `message` already names everything. Lets a handler build a per-field 400.
            */
           readonly path?: ReadonlyArray<string | number>;
+          /**
+           * The `describe()` of the INNERMOST descriptor that actually rejected at `path` (DEC-060, round-4
+           * §2.2) — e.g. `one of "alice", "bob"` for a bad `ArrayOf(OneOf([...]))` element, so a caller composes
+           * `subjects[1]: expected one of "alice", "bob"` rather than the container-level `message` (which would
+           * wrongly say "expected an array"). Present iff `path` is. A pure function of the constraint's params,
+           * so it never leaks the received value (DEC-030).
+           */
+          readonly expected?: string;
       };
 
 /**
@@ -164,10 +172,10 @@ export class Verify {
         // returns `CheckResult<Record<string, string>>`. The cast runs only after `predicate` returned true.
         if (constraint.predicate(value)) return {ok: true, value: value as T};
 
-        // Localize the failure for a compositional descriptor (DEC-060) — the first failing key/index chain.
-        // Runs once, only on the failure path; absent (`undefined`) for a primitive or a container-gate
-        // failure, in which case `path` is omitted and the message stands alone.
-        const path = constraint.locate ? constraint.locate(value) : undefined;
+        // Localize the failure for a compositional descriptor (DEC-060) — the first failing key/index chain
+        // AND the innermost failing `expected` phrase (round-4 §2.2). Runs once, only on the failure path;
+        // `undefined` for a primitive or a container-gate failure, where `message` stands alone.
+        const loc = constraint.locate ? constraint.locate(value) : undefined;
 
         // The same redacted rendering Verify.that throws — an imperative call has no `@Sensitive` site,
         // so disclosure follows the global switch alone (BUG-19/DEC-030). The value is never in the result.
@@ -180,7 +188,8 @@ export class Verify {
             }),
             constraint: constraint.constraint,
             kind: constraint.kind,
-            ...(path && path.length > 0 ? {path} : {}),
+            ...(loc && loc.path && loc.path.length > 0 ? {path: loc.path} : {}),
+            ...(loc && loc.expected ? {expected: loc.expected} : {}),
         };
     }
 

@@ -130,7 +130,9 @@ export const arrayOfConstraint = defineConstraint<ArrayOfParams>({
             for (let index = 0; index < value.length; index++) {
                 if (!pred(value[index])) {
                     const sub = deeper ? deeper(value[index]) : undefined;
-                    return sub ? [index, ...sub] : [index];
+                    return sub
+                        ? {path: [index, ...(sub.path ?? [])], expected: sub.expected ?? inner.describe()}
+                        : {path: [index], expected: inner.describe()};
                 }
             }
             return undefined;

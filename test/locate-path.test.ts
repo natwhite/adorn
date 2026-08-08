@@ -11,6 +11,7 @@ import {
     Verify,
     ObjectContracts,
     ArrayContracts,
+    EnumContracts,
     NullableContracts,
     StringContracts,
     NumberContracts,
@@ -23,6 +24,7 @@ type Fail = {
     constraint: string;
     kind: string;
     path?: ReadonlyArray<string | number>;
+    expected?: string;
 };
 function asFail<T>(r: {ok: true; value: T} | Fail): Fail {
     if (r.ok) throw new Error('expected a violation');
@@ -79,5 +81,49 @@ describe('Verify.check localization — the failing key/index path (DEC-060)', (
         const fail = asFail(Verify.check(NumberContracts.Between(1, 7), 'n', 99));
         expect(fail.path).toBeUndefined();
         expect('locate' in NumberContracts.Between(1, 7)).toBe(false);
+    });
+});
+
+describe('Verify.check `expected` — the INNERMOST failing describe (round-4 §2.2)', () => {
+    it('an @ArrayOf(@OneOf) carries the inner enum describe, NOT the container ("array") phrasing', () => {
+        const list = ArrayContracts.ArrayOf(EnumContracts.OneOf(['alice', 'bob']));
+        const fail = asFail(Verify.check(list, 'subjects', ['alice', 'zzz', 'bob']));
+        expect(fail.path).toEqual([1]);
+        // The whole point: `expected` describes what index 1 should be (a member), not "an array of …".
+        expect(fail.expected).toBe(EnumContracts.OneOf(['alice', 'bob']).describe());
+        expect(fail.expected).not.toContain('array');
+    });
+
+    it('a @Shape carries the failing field constraint describe at its path', () => {
+        const shape = ObjectContracts.Shape(Point);
+        const fail = asFail(Verify.check(shape, 'p', {x: -1, y: 2}));
+        expect(fail.path).toEqual(['x']);
+        expect(fail.expected).toBe(NumberContracts.GreaterThanEqual(0).describe());
+    });
+
+    it('a @Dictionary of @Shape carries the DEEP innermost describe', () => {
+        const grid = ObjectContracts.Dictionary(ObjectContracts.Shape(Point));
+        const fail = asFail(Verify.check(grid, 'grid', {a: {x: 1, y: 2}, b: {x: 1, y: -5}}));
+        expect(fail.path).toEqual(['b', 'y']);
+        expect(fail.expected).toBe(NumberContracts.GreaterThanEqual(0).describe());
+    });
+
+    it('a @Nullable forwards the inner `expected` transparently', () => {
+        const nul = NullableContracts.Nullable(ObjectContracts.Dictionary(StringContracts.NotEmpty()));
+        const fail = asFail(Verify.check(nul, 'opt', {a: ''}));
+        expect(fail.path).toEqual(['a']);
+        expect(fail.expected).toBe(StringContracts.NotEmpty().describe());
+    });
+
+    it('omits `expected` for a primitive / container-gate failure (no path to align to)', () => {
+        expect(asFail(Verify.check(NumberContracts.Between(1, 7), 'n', 99)).expected).toBeUndefined();
+        const dict = ObjectContracts.Dictionary(StringContracts.NotEmpty());
+        expect(asFail(Verify.check(dict, 'slots', 'nope')).expected).toBeUndefined();
+    });
+
+    it('never leaks the received value — `expected` is a pure function of params (DEC-030)', () => {
+        const list = ArrayContracts.ArrayOf(EnumContracts.OneOf(['alice', 'bob']));
+        const fail = asFail(Verify.check(list, 'subjects', ['alice', 'secret-value-xyz']));
+        expect(fail.expected).not.toContain('secret-value-xyz');
     });
 });

@@ -160,7 +160,15 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // 94 → 95: round-3 IDEA-30/DEC-061 adds the descriptor-first `toolSchemaFrom` entry point.
     // `ToolSchemaFromInput`/`ToolParamSpec` are type-only and do not count; the phantom-output-type work
     // (DEC-059) and the `locate`/`path` work (DEC-060) are type-only / an added optional field and move nothing.
-    const PINNED_VALUE_EXPORT_COUNT = 95;
+    //
+    // 95 → 96: the P1+P2+P3 buildout (round-4) adds ONE value export — `defineConstraint` (Slice C), the
+    // factory that builds a custom constraint from data (DEC-050); `ConstraintDescriptor` shipped as a type
+    // only (GAP-22). Everything else in the buildout is count-neutral: `Fields` (Slice A) rides the existing
+    // `ObjectContracts` namespace; `CheckResult.expected` + the `Localization` type (Slice B) are an added
+    // optional field / type-only; the `providerStrict` option (Slice D) is type-only; and the authoring types
+    // (`ConstraintDefinition`/`ConstraintKind`/`Predicate`/`ViolationContext`/`JsonObject`/`JsonValue`/
+    // `ConstraintFactory`) are type-only. `getConstraintDefinition` stays internal (returns `<any>`).
+    const PINNED_VALUE_EXPORT_COUNT = 96;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -328,5 +336,19 @@ describe('@Requires cross-parameter preconditions add exactly their intended pub
         expect(adorn).not.toHaveProperty('getPreconditionKeys');
         expect(adorn).not.toHaveProperty('getEffectivePreconditionKeys');
         expect(adorn).not.toHaveProperty('getPreconditions');
+    });
+});
+
+describe('the P1+P2+P3 buildout adds exactly its intended public exports (round-4 §2.3)', () => {
+    // The +1 (95→96) moved *because `defineConstraint` landed* — the custom-constraint factory (GAP-22 tail) —
+    // not because something unrelated leaked.
+    it('exports the defineConstraint factory', () => {
+        expect(typeof (adorn as Record<string, unknown>).defineConstraint).toBe('function');
+    });
+
+    it('keeps getConstraintDefinition OFF the surface — it returns ConstraintDefinition<any>', () => {
+        // The internal lookup that hands back an `<any>`-typed definition stays internal, so no `any` reaches
+        // a consumer (round-4 §"Six for six" verified this).
+        expect(adorn).not.toHaveProperty('getConstraintDefinition');
     });
 });

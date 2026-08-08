@@ -30,6 +30,7 @@ import {
     constraintFromJSON,
     defineConstraint,
     JsonObject,
+    JsonValue,
     Predicate,
     SerializedConstraint,
 } from '../Core/Descriptor';
@@ -76,7 +77,9 @@ export const dictionaryConstraint = defineConstraint<DictionaryParams>({
             for (const key of Object.keys(value)) {
                 if (!pred(value[key])) {
                     const sub = deeper ? deeper(value[key]) : undefined;
-                    return sub ? [key, ...sub] : [key];
+                    return sub
+                        ? {path: [key, ...(sub.path ?? [])], expected: sub.expected ?? inner.describe()}
+                        : {path: [key], expected: inner.describe()};
                 }
             }
             return undefined;
@@ -177,7 +180,9 @@ export const shapeConstraint = defineConstraint<ShapeParams>({
                 for (const descriptor of descriptors) {
                     if (!descriptor.predicate(value[name])) {
                         const sub = descriptor.locate ? descriptor.locate(value[name]) : undefined;
-                        return sub ? [name, ...sub] : [name];
+                        return sub
+                            ? {path: [name, ...(sub.path ?? [])], expected: sub.expected ?? descriptor.describe()}
+                            : {path: [name], expected: descriptor.describe()};
                     }
                 }
             }
@@ -226,4 +231,212 @@ export function Shape<T = unknown>(
         );
     }
     return shapeConstraint({fields}) as ConstraintDescriptor<ShapeParams, T>;
+}
+
+// ---------------------------------------------------------------------------
+// @Fields — a fixed-key object LITERAL with optional-aware fields (round-4 §2.1, DEC-065)
+// ---------------------------------------------------------------------------
+
+/** One field's serialised form: its constraint stack plus the inline-marker data a `ToolParamSpec` carries. */
+type SerializedField = {
+    readonly stack: SerializedConstraint[];
+    readonly optional?: boolean;
+    readonly description?: string;
+    readonly default?: JsonValue;
+};
+
+/**
+ * The modelled fields, flattened to data. Unlike {@link ShapeParams} (all-required, class-sourced), a
+ * `Fields` carries per-field `optional`/`description`/`default`, so an object LITERAL — the commonest shape,
+ * including every HTTP body and every optional-arg tool call — is ONE declaration for both the validator and
+ * the tool schema (round-4 §2.1).
+ */
+export interface FieldsParams extends JsonObject {
+    fields: {[name: string]: SerializedField};
+}
+
+/** A field spec — a descriptor, a stack of them (conjunction), or the {@link ToolParamSpec}-shaped inline form. */
+export type FieldSpec =
+    | ConstraintDescriptor
+    | ReadonlyArray<ConstraintDescriptor>
+    | {
+          readonly descriptor: ConstraintDescriptor | ReadonlyArray<ConstraintDescriptor>;
+          readonly optional?: boolean;
+          readonly description?: string;
+          readonly default?: JsonValue;
+      };
+
+// Type-level output derivation (DEC-059 phantom `__out`): one `Fields({...})` literal narrows to the exact
+// object type, optional keys included. A multi-descriptor stack's output is the UNION of the members' outputs
+// (not their intersection) — an accepted type-level imprecision; runtime validation is exact.
+type OutOf<D> = D extends ConstraintDescriptor<ConstraintParams, infer O> ? O : unknown;
+type SpecOut<S> = S extends ConstraintDescriptor<ConstraintParams, infer O>
+    ? O
+    : S extends ReadonlyArray<ConstraintDescriptor>
+      ? OutOf<S[number]>
+      : S extends {descriptor: infer D}
+        ? D extends ConstraintDescriptor<ConstraintParams, infer O>
+            ? O
+            : D extends ReadonlyArray<ConstraintDescriptor>
+              ? OutOf<D[number]>
+              : unknown
+        : unknown;
+type IsOptionalSpec<S> = S extends {optional: true} ? true : false;
+type RequiredFieldKeys<T> = {[K in keyof T]-?: IsOptionalSpec<T[K]> extends true ? never : K}[keyof T];
+type OptionalFieldKeys<T> = {[K in keyof T]-?: IsOptionalSpec<T[K]> extends true ? K : never}[keyof T];
+type FieldsOut<T> = {[K in RequiredFieldKeys<T>]: SpecOut<T[K]>} & {
+    [K in OptionalFieldKeys<T>]?: SpecOut<T[K]>;
+};
+
+const isFields = (params: Readonly<FieldsParams>): Predicate => {
+    // Rebuild each field's predicate stack ONCE (DEC-050), not per call.
+    const compiled = Object.keys(params.fields).map(name => {
+        const field = params.fields[name];
+        return {
+            name,
+            optional: field.optional === true,
+            predicates: field.stack.map(serialized => constraintFromJSON(serialized).predicate),
+        };
+    });
+    return (value: unknown) => {
+        if (!isPlainObjectValue(value)) return false;
+        for (const {name, optional, predicates} of compiled) {
+            const present = Object.prototype.hasOwnProperty.call(value, name) && value[name] !== undefined;
+            if (!present) {
+                if (optional) continue; // a missing OPTIONAL field is fine
+                return false; // a missing REQUIRED field is a violation — unlike a bare field constraint (BUG-4)
+            }
+            if (!predicates.every(predicate => predicate(value[name]))) return false;
+        }
+        return true; // extra keys pass — no enumeration, the same under-claim posture as `isShape`
+    };
+};
+
+export const fieldsConstraint = defineConstraint<FieldsParams>({
+    kind: 'generic',
+    constraint: 'fields',
+    derive: isFields,
+    // First failing FIELD (DEC-060), optional-aware, carrying the innermost `expected` (round-4 §2.2).
+    locate: params => {
+        const compiled = Object.keys(params.fields).map(name => {
+            const field = params.fields[name];
+            const descriptors = field.stack.map(serialized => constraintFromJSON(serialized));
+            return {
+                name,
+                optional: field.optional === true,
+                descriptors,
+                fieldExpected: descriptors.map(descriptor => descriptor.describe()).join(' and '),
+            };
+        });
+        return (value: unknown) => {
+            if (!isPlainObjectValue(value)) return undefined;
+            for (const {name, optional, descriptors, fieldExpected} of compiled) {
+                const present = Object.prototype.hasOwnProperty.call(value, name) && value[name] !== undefined;
+                if (!present) {
+                    if (optional) continue;
+                    return {path: [name], expected: fieldExpected};
+                }
+                for (const descriptor of descriptors) {
+                    if (!descriptor.predicate(value[name])) {
+                        const sub = descriptor.locate ? descriptor.locate(value[name]) : undefined;
+                        return sub
+                            ? {path: [name, ...(sub.path ?? [])], expected: sub.expected ?? descriptor.describe()}
+                            : {path: [name], expected: descriptor.describe()};
+                    }
+                }
+            }
+            return undefined;
+        };
+    },
+    describe: params =>
+        `an object with fields ${Object.keys(params.fields)
+            .map(name => (params.fields[name].optional ? `${name}?` : name))
+            .join(', ')}`,
+    schema: params => {
+        // Emits its OWN `required` = the non-optional subset. The tool projection's `tightenObjects` respects
+        // it (adds `additionalProperties:false`, closes recursively); descriptively it is an HONEST necessary
+        // condition — `isFields` rejects a value missing a required field, so nested `required` never rejects a
+        // value enforcement accepts (the narrow DEC-029 refinement, DEC-067). `@Shape` differs — see Q-33.
+        const properties: JsonObject = {};
+        const required: string[] = [];
+        Object.keys(params.fields).forEach(name => {
+            const field = params.fields[name];
+            const fragment = fieldFragment(field.stack);
+            if (typeof field.description === 'string') fragment.description = field.description;
+            if (field.default !== undefined) fragment.default = field.default;
+            properties[name] = fragment;
+            if (!field.optional) required.push(name);
+        });
+        return {type: 'object', properties, required};
+    },
+});
+
+/**
+ * A fixed-key object with OPTIONAL-aware fields — the descriptor-first sibling of {@link Shape} for an
+ * object LITERAL rather than a class (round-4 §2.1). The SAME literal drives both the validator
+ * (`Verify.check(Fields({...}), …)`, narrowing `unknown` to the exact object type, optional keys included)
+ * AND the tool schema (`toolSchemaFrom({params:{…}})`), so the two cannot drift.
+ *
+ * Each field is a {@link ConstraintDescriptor}, a stack of them (conjunction), or a `{descriptor, optional?,
+ * description?, default?}` spec — the same inline shape `toolSchemaFrom`'s `ToolParamSpec` takes. A missing
+ * REQUIRED field is a violation (unlike a bare field constraint, silent when absent); a missing `optional`
+ * field passes. Extra keys pass at runtime (the tool schema's `additionalProperties:false` is
+ * prescriptive-only, DEC-055). A hand-written closure (no `toJSON`) is rejected loudly (DEC-050).
+ */
+export function Fields<const T extends Record<string, FieldSpec>>(
+    fields: T,
+): ConstraintDescriptor<FieldsParams, FieldsOut<T>> {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+        throw new TypeError('Fields: expected an object mapping field names to a descriptor, a stack, or a spec');
+    }
+    const serialized: {[name: string]: SerializedField} = {};
+    Object.keys(fields).forEach(name => {
+        serialized[name] = normalizeFieldSpec(name, fields[name]);
+    });
+    if (Object.keys(serialized).length === 0) {
+        throw new TypeError(
+            'Fields: at least one field is required — an empty object contracts nothing and would project to ' +
+                'an accept-anything schema (DEC-006/DEC-016).',
+        );
+    }
+    return fieldsConstraint({fields: serialized}) as ConstraintDescriptor<FieldsParams, FieldsOut<T>>;
+}
+
+/** Normalise one field spec to its serialised form, validating every descriptor (DEC-050). */
+function normalizeFieldSpec(name: string, spec: FieldSpec): SerializedField {
+    let descriptors: ReadonlyArray<ConstraintDescriptor>;
+    let optional = false;
+    let description: string | undefined;
+    let defaultValue: JsonValue | undefined;
+
+    if (Array.isArray(spec)) {
+        descriptors = spec;
+    } else if (spec && typeof spec === 'object' && 'descriptor' in spec) {
+        const inner = spec.descriptor;
+        descriptors = Array.isArray(inner) ? inner : [inner];
+        optional = spec.optional === true;
+        description = typeof spec.description === 'string' ? spec.description : undefined;
+        defaultValue = spec.default;
+    } else {
+        descriptors = [spec as ConstraintDescriptor];
+    }
+
+    if (descriptors.length === 0) {
+        throw new TypeError(`Fields: field '${name}' has an empty descriptor stack`);
+    }
+    for (const descriptor of descriptors) {
+        if (!descriptor || typeof descriptor.toJSON !== 'function' || typeof descriptor.predicate !== 'function') {
+            throw new TypeError(
+                `Fields: field '${name}' must be a ConstraintDescriptor (e.g. StringContracts.NotEmpty()). A ` +
+                    'hand-written closure carries no identity or params and cannot be composed (DEC-050).',
+            );
+        }
+    }
+
+    return {
+        stack: descriptors.map(descriptor => descriptor.toJSON()),
+        ...(optional ? {optional: true} : {}),
+        ...(description !== undefined ? {description} : {}),
+        ...(defaultValue !== undefined ? {default: defaultValue} : {}),
+    };
 }

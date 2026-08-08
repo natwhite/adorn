@@ -47,12 +47,25 @@
  * cover contracts the registry cannot hold — `CreateSimpleDecorator`'s hand-written closures carry
  * no `ConstraintDescriptor` and so are never recorded there, yet forgetting `@Contract()` breaks
  * them in exactly the same way.
+ *
+ * ## The sink primitive lives in Core (round-4 §2.3 / plan C-1)
+ *
+ * The sink/enabled state, `emitDiagnostic`, `reportDiagnostic`, and the public setters were hoisted to
+ * `Core/diagnostics` so the tool-schema projection (`toolSchemaFrom`) can emit an unsatisfiable-stack
+ * diagnostic through the SAME sink these warnings use — a projection may not import from an adapter.
+ * They are re-exported below so this module's public surface (what `index.ts` imports) is unchanged.
  */
 
 import {MethodKey} from '../../Core/ContractRegistry';
+import {diagnosticsActive, emitDiagnostic, resetDiagnosticsState} from '../../Core/diagnostics';
 
-/** Where warnings go. Swappable so tests can assert on them and hosts can route them. */
-export type DiagnosticSink = (message: string) => void;
+export type {DiagnosticSink} from '../../Core/diagnostics';
+export {
+    reportDiagnostic,
+    setContractDiagnosticsSink,
+    setContractDiagnosticsEnabled,
+    isContractDiagnosticsEnabled,
+} from '../../Core/diagnostics';
 
 interface PendingTarget {
     /** Kept for the message; resolved lazily because a class may be renamed by another decorator. */
@@ -70,8 +83,6 @@ const pending = new Map<object, PendingTarget>();
 /** One warning per target, ever. A hot import loop must not produce a wall of duplicates. */
 const alreadyWarned = new WeakSet<object>();
 
-let sink: DiagnosticSink | null = null;
-let enabled = true;
 let sweepScheduled = false;
 
 // ---------------------------------------------------------------------------
@@ -129,7 +140,7 @@ export function flushContractDiagnostics(): void {
     for (const entry of uninstalled) {
         if (alreadyWarned.has(entry.target)) continue;
         alreadyWarned.add(entry.target);
-        emit(buildWarning(entry));
+        emitDiagnostic(buildWarning(entry));
     }
 }
 
@@ -159,56 +170,12 @@ function buildWarning(entry: PendingTarget): string {
     );
 }
 
-function emit(message: string): void {
-    try {
-        if (sink) {
-            sink(message);
-        } else if (typeof console !== 'undefined' && typeof console.warn === 'function') {
-            console.warn(message);
-        }
-    } catch {
-        // A diagnostic must never become the failure it is reporting on.
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Configuration & test support
+// Test support
 // ---------------------------------------------------------------------------
 
-/** Route warnings somewhere other than `console.warn`. Pass `null` to restore the default. */
-export function setContractDiagnosticsSink(next: DiagnosticSink | null): void {
-    sink = next;
-}
-
 /**
- * Emit a one-off development-mode diagnostic through the same sink the missing-`@Contract()` warning
- * uses (O1c, DEC-036 / Q-24 R8). Used to *surface, not silently nullify*, an `@Sensitive` veto of an
- * explicit `@Telemetry.value()` opt-in: the value stays redacted (safe-by-default is non-negotiable for
- * PII, DEC-025), but the collision is announced rather than swallowed — the paternalism corner the
- * adversarial review flagged (Fr2). Silenced in production and when diagnostics are disabled, exactly as
- * the missing-`@Contract()` warning is; guarded so a diagnostic never becomes the failure it reports.
- */
-export function reportDiagnostic(message: string): void {
-    if (!diagnosticsActive()) return;
-    emit(message);
-}
-
-/**
- * Turn the diagnostic off entirely.
- *
- * Note this is an escape hatch for noise, not a correctness switch: silencing the warning does not
- * install anything. A class without `@Contract()` is still unenforced, just quietly again.
- */
-export function setContractDiagnosticsEnabled(next: boolean): void {
-    enabled = next;
-}
-
-export function isContractDiagnosticsEnabled(): boolean {
-    return enabled;
-}
-
-/**
- * Reset the pending set, sink, and enabled flag. Test support.
+ * Reset the pending set and the shared sink/enabled state. Test support.
  *
  * Deliberately does **not** clear the already-warned set: "one warning per class, ever" is a
  * property of the class, not of a test run, and a `WeakSet` cannot be cleared anyway. A test that
@@ -217,24 +184,12 @@ export function isContractDiagnosticsEnabled(): boolean {
 export function resetContractDiagnostics(): void {
     pending.clear();
     sweepScheduled = false;
-    sink = null;
-    enabled = true;
+    resetDiagnosticsState();
 }
 
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
-
-/**
- * Development mode is the default; only an explicit `NODE_ENV=production` opts out. Read per call
- * rather than cached at module load, so a host that sets it late still gets the behaviour it asked
- * for.
- */
-function diagnosticsActive(): boolean {
-    if (!enabled) return false;
-    const env = typeof process !== 'undefined' && process && process.env ? process.env.NODE_ENV : undefined;
-    return env !== 'production';
-}
 
 function scheduleSweep(): void {
     if (sweepScheduled) return;

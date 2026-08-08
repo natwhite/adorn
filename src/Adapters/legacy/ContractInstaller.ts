@@ -75,6 +75,7 @@ import {
     registerContractedClass,
 } from '../../Core/ContractRegistry';
 import {ConstraintDescriptor} from '../../Core/Descriptor';
+import {detectUnsatisfiableStack} from '../../Core/unsatisfiable';
 import {shouldDiscloseValue} from '../../Core/redaction';
 import {evaluatePostconditions, postconditionMessage} from '../../Core/Postconditions';
 import {evaluatePreconditions, preconditionMessage} from '../../Core/Preconditions';
@@ -371,27 +372,6 @@ function warnUnsatisfiableStacks(host: object, key: MethodKey): void {
                 '  (adorn development-mode diagnostic; silenced in production / setContractDiagnosticsEnabled(false).)',
         );
     }
-}
-
-/**
- * The pure, decorator-free analyzer: returns the `[containerIdentity, memberIdentity]` pair when a
- * parameter's constraint stack contains BOTH a container-`type` fragment (`array`/`object`) and an
- * `enum`/`const` fragment, else `undefined`. Decidable with no false positives because `@OneOf`/`@Const`
- * members are validated to be JSON primitives at construction, so they are never an array/object.
- * `@Nullable` emits `type:['object','null']` (a `type` array, not `=== 'object'`), so it is not flagged.
- */
-function detectUnsatisfiableStack(
-    constraints: ReadonlyArray<ConstraintDescriptor>,
-): [string, string] | undefined {
-    let container: ConstraintDescriptor | undefined;
-    let member: ConstraintDescriptor | undefined;
-    for (const constraint of constraints) {
-        const fragment = constraint.schema ? constraint.schema() : undefined;
-        if (!fragment) continue;
-        if ((fragment.type === 'array' || fragment.type === 'object') && !container) container = constraint;
-        if (('enum' in fragment || 'const' in fragment) && !member) member = constraint;
-    }
-    return container && member ? [container.constraint, member.constraint] : undefined;
 }
 
 /**

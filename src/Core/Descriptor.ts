@@ -111,6 +111,17 @@ export interface ViolationContext {
 export type Arbitrary = unknown;
 
 /**
+ * What a `locate` hook returns (DEC-060, widened round-4 §2.2): the `path` to the first failing
+ * sub-location and the `expected` phrase of the innermost descriptor that rejected there. Both optional —
+ * a transparent wrapper (`@Nullable`) forwards an inner one unchanged, and a top-level failure yields
+ * neither (the `message` already covers it).
+ */
+export interface Localization {
+    readonly path?: ReadonlyArray<string | number>;
+    readonly expected?: string;
+}
+
+/**
  * A constraint as data.
  *
  * | Consumer      | Reads                    |
@@ -140,13 +151,14 @@ export interface ConstraintDescriptor<P extends ConstraintParams = ConstraintPar
     /** Optional JSON Schema fragment. Absent unless the definition supplies one. */
     readonly schema?: () => JsonObject;
     /**
-     * Optional failure localizer (DEC-060). Given a value the predicate REJECTED, returns the path to the
-     * first failing sub-location — `["slotInput", "when"]` for a bad nested field — or `undefined` when the
-     * failure is at this value's own level (a container-type gate or a length bound, where the top-level
-     * `message` already says everything and there is no key to point at). Absent for primitives, so
-     * `'locate' in descriptor` is an honest "can this failure be localized?".
+     * Optional failure localizer (DEC-060). Given a value the predicate REJECTED, returns a {@link Localization}
+     * — the `path` to the first failing sub-location (`["slotInput", "when"]`) AND the `expected` phrase of the
+     * INNERMOST descriptor that actually rejected (round-4 §2.2), so a caller can compose a per-field message
+     * that agrees with the path. Returns `undefined` when the failure is at this value's own level (a
+     * container-type gate or a length bound, where the top-level `message` already says everything and there is
+     * no key to point at). Absent for primitives, so `'locate' in descriptor` is an honest "can this be localized?".
      */
-    readonly locate?: (value: unknown) => ReadonlyArray<string | number> | undefined;
+    readonly locate?: (value: unknown) => Localization | undefined;
 
     /** Makes `JSON.stringify(descriptor)` produce a rehydratable form. */
     toJSON(): SerializedConstraint<P>;
@@ -203,9 +215,10 @@ export interface ConstraintDefinition<P extends ConstraintParams = ConstraintPar
     readonly schema?: (params: Readonly<P>) => JsonObject;
     /**
      * Optional failure localizer (DEC-060). Higher-order like `derive`: applied to `params` ONCE (rebuilding
-     * any inner descriptors once), returning a per-value walker that reports the first failing sub-path.
+     * any inner descriptors once), returning a per-value walker that reports the first failing sub-path AND the
+     * innermost failing `describe()` as a {@link Localization}.
      */
-    readonly locate?: (params: Readonly<P>) => (value: unknown) => ReadonlyArray<string | number> | undefined;
+    readonly locate?: (params: Readonly<P>) => (value: unknown) => Localization | undefined;
 }
 
 /**
