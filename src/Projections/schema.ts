@@ -475,32 +475,19 @@ export function toolSchemaFrom(
         if (typeof spec.description === 'string') fragment.description = spec.description;
         if (spec.default !== undefined) fragment.default = spec.default;
 
-        const tightened = tightenObjects(fragment);
-        properties[paramName] = tightened;
-
-        if (!spec.optional) {
-            required.push(paramName);
-        } else if (providerStrict) {
-            // OpenAI strict mode requires EVERY property in `required` (Q-32b, DEC-068). An optional param
-            // survives only if it admits null — declared `Nullable(...)`, so schema and validator BOTH accept
-            // the `null` the model sends for "absent" (no drift). It stays in `required` carrying its null-union
-            // schema. A bare non-nullable optional cannot be expressed; refuse loudly rather than emit a schema
-            // whose validator would then reject the model's `null`.
-            if (!fragmentAdmitsNull(tightened)) {
-                throw new TypeError(
-                    `toolSchemaFrom: parameter '${paramName}' is optional but not nullable, which OpenAI strict ` +
-                        'mode cannot express (strict requires every property in `required`). Wrap it in ' +
-                        'NullableContracts.Nullable(...) so schema and validator both admit null, or call without ' +
-                        '{ providerStrict: true }.',
-                );
-            }
-            required.push(paramName);
-        }
+        properties[paramName] = tightenObjects(fragment);
+        if (!spec.optional) required.push(paramName);
     }
 
-    const document: JsonObject = {type: 'object', properties, required, additionalProperties: false};
+    let document: JsonObject = {type: 'object', properties, required, additionalProperties: false};
     if (typeof input.name === 'string') document.title = input.name;
     if (typeof input.description === 'string') document.description = input.description;
+    // OpenAI strict mode requires every property in `required` AND `additionalProperties:false` at EVERY object
+    // level, not just the root (Q-32b, DEC-069). One recursive pass promotes each null-admitting optional into
+    // `required` — a `Nullable(...)`-declared field, so schema and validator both accept the model's `null` (no
+    // drift) — and refuses a bare non-nullable optional or an open map. Runs before `canonicalize` so promotions
+    // get ordered; subsumes the top-level per-param handling (a top-level optional param is just the root object's).
+    if (providerStrict) document = strictifyForProvider(document, '') as JsonObject;
     return canonicalize(document) as ToolSchema;
 }
 
@@ -753,12 +740,74 @@ function typeIncludes(fragment: JsonObject, t: string): boolean {
     return type === t || (Array.isArray(type) && type.indexOf(t) !== -1);
 }
 
-/** Whether a fragment permits `null` — a `null` in its `type` array, or an `anyOf` branch that is `{type:'null'}`. */
+/** Whether a fragment permits `null` — a hookless `{}`, a `null` in its `type` array, or an `anyOf` null branch. */
 function fragmentAdmitsNull(fragment: JsonValue): boolean {
     if (!isObjectFragment(fragment)) return false;
+    if (Object.keys(fragment).length === 0) return true; // a hookless `{}` accepts anything, `null` included
     if (typeIncludes(fragment, 'null')) return true;
     const anyOf = fragment.anyOf;
     return Array.isArray(anyOf) && anyOf.some(member => isObjectFragment(member) && typeIncludes(member, 'null'));
+}
+
+/**
+ * Make a schema OpenAI-`strict`-compatible, recursively (Q-32b, DEC-069): at EVERY object level, `required`
+ * becomes ALL keys and `additionalProperties` becomes `false`. A property not already required must ADMIT NULL
+ * (a `Nullable(...)`-declared field) to be promoted — else strict cannot express it and we refuse loudly: a
+ * bare non-nullable optional, or an open `@Dictionary` map. Gated by `{providerStrict}`; runs before
+ * `canonicalize`. Purely structural — clones each node, never mutates its input, so descriptor fragments are safe.
+ */
+function strictifyForProvider(node: JsonValue, path: string): JsonValue {
+    if (!isObjectFragment(node)) return node;
+    const out: JsonObject = {...node};
+    const where = path || '(root)';
+
+    // Recurse into structural positions first.
+    for (const keyword of ['anyOf', 'allOf', 'oneOf']) {
+        const branches = out[keyword];
+        if (Array.isArray(branches)) {
+            out[keyword] = branches.map((member, index) =>
+                strictifyForProvider(member, `${path}.${keyword}[${index}]`),
+            );
+        }
+    }
+    if (typeIncludes(out, 'array') && isObjectFragment(out.items)) {
+        out.items = strictifyForProvider(out.items, `${path}.items`);
+    }
+
+    if (typeIncludes(out, 'object')) {
+        // An OPEN map (`@Dictionary`) — strict requires closed objects, so it cannot be expressed.
+        if ('additionalProperties' in out && out.additionalProperties !== false) {
+            throw new TypeError(
+                `toolSchemaFrom({ providerStrict }): ${where} is an open map — OpenAI strict requires closed ` +
+                    'objects (additionalProperties:false), so a Dictionary(...) cannot be expressed under strict. ' +
+                    'Model the object with Fields({...}), or call without { providerStrict: true }.',
+            );
+        }
+        if (isObjectFragment(out.properties)) {
+            const propKeys = Object.keys(out.properties);
+            // A fixed-property object with NO `required` array means all-required (raw `@Shape` semantics; an
+            // `allOf` member never passes through `tightenObjects`, review Finding 1). Treat every field as
+            // already-required, so we never demand nullability of a genuinely-required field.
+            const already = new Set<string>(Array.isArray(out.required) ? (out.required as string[]) : propKeys);
+            const props: JsonObject = {};
+            for (const key of propKeys) {
+                const child = strictifyForProvider(out.properties[key], `${path}.properties.${key}`);
+                props[key] = child;
+                if (!already.has(key) && !fragmentAdmitsNull(child)) {
+                    throw new TypeError(
+                        `toolSchemaFrom({ providerStrict }): '${key}' at ${where} is optional but not nullable — ` +
+                            'OpenAI strict requires every property in `required`. Declare it ' +
+                            'NullableContracts.Nullable(...) (so schema and validator both admit null), or call ' +
+                            'without { providerStrict: true }.',
+                    );
+                }
+            }
+            out.properties = props;
+            out.required = propKeys; // every key is now required (promoted-if-nullable, else we threw above)
+            if (!('additionalProperties' in out)) out.additionalProperties = false;
+        }
+    }
+    return out;
 }
 
 /** A `JsonValue` that is a plain object (not null, not an array) — the fragments the tightener descends. */

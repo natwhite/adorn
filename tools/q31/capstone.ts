@@ -66,7 +66,11 @@ const PATIENT_UUID = '3f7c1e94-2a8b-4d6f-9c11-5b0e2a7d8f34';
 
 const SLOT_LAX = Fields({when: DateTime(), label: {descriptor: NotEmpty(), optional: true}});
 const SLOT_STRICT_ALL = Fields({when: DateTime(), duration: Integer()});
-const SLOT_STRICT_OPT = Fields({when: DateTime(), label: {descriptor: NotEmpty(), optional: true}});
+// DEC-069: a NULLABLE optional field — strict-compatible once providerStrict promotes it into the nested required.
+const SLOT_STRICT_OPT = Fields({
+    when: DateTime(),
+    label: {descriptor: Nullable(NotEmpty()), optional: true, default: 'untitled'},
+});
 
 interface Validator {
     readonly param: string;
@@ -121,17 +125,18 @@ const CASES: ReadonlyArray<Case> = [
         validators: [{param: 'slot', descriptor: SLOT_STRICT_ALL}],
     },
     {
-        name: 'bookStrictOpt — a Fields param with an OPTIONAL field (providerStrict) — the KNOWN BOUNDARY',
+        name: 'bookStrictOpt — a Fields param with a NULLABLE optional field (providerStrict) — the DEC-069 FIX',
         expectation:
-            'EXPECTED REJECTED: providerStrict keeps top-level params in `required`, but a nested Fields still ' +
-            'drops its optional field from the nested `required`, which strict forbids (deferred in DEC-068). ' +
-            'Evidence for whether the deferred nested-nullable work is needed.',
+            'ROUND-TRIP OK (was the case-4 400 in the prior capstone): strictifyForProvider promotes the nullable ' +
+            'optional `label` into the NESTED `required` with its null-union + default, so OpenAI strict accepts ' +
+            'it; the model sends `label` as null or a string, and the Fields validator (whose label is Nullable) ' +
+            'accepts either — closing the nested boundary DEC-068 had left open.',
         schema: toolSchemaFrom(
-            {name: 'bookStrictOpt', description: 'Book a slot, optional label.', params: {slot: SLOT_STRICT_OPT}},
+            {name: 'bookStrictOpt', description: 'Book a slot, with an optional label.', params: {slot: SLOT_STRICT_OPT}},
             {providerStrict: true},
         ),
         strict: true,
-        prompt: 'Book a slot starting 2026-08-15T09:00:00Z.',
+        prompt: 'Book a slot starting 2026-08-15T09:00:00Z (no particular label).',
         validators: [{param: 'slot', descriptor: SLOT_STRICT_OPT}],
     },
 ];
@@ -251,6 +256,16 @@ function localNegatives(): string[] {
     lines.push(`- Nullable(NotEmpty()) on \`null\` → ${nullNote.ok ? 'ACCEPTS (as designed — no drift)' : 'REJECTS (unexpected!)'}`);
     const emptyNote = failOf(Verify.check(NOTE, 'note', ''));
     lines.push(`- Nullable(NotEmpty()) on \`""\` → ${emptyNote ? 'REJECTS (still enforces non-empty)' : 'UNEXPECTED: accepted'}`);
+    // DEC-069 refusal: a BARE (non-nullable) optional field under providerStrict throws at BUILD, not at the API.
+    try {
+        toolSchemaFrom(
+            {params: {slot: Fields({when: DateTime(), label: {descriptor: NotEmpty(), optional: true}})}},
+            {providerStrict: true},
+        );
+        lines.push('- UNEXPECTED: a bare non-nullable optional under providerStrict did NOT refuse');
+    } catch (e) {
+        lines.push(`- bare optional field under providerStrict → REFUSED at build (${String((e as Error).message).split(' — ')[0]})`);
+    }
     return lines;
 }
 

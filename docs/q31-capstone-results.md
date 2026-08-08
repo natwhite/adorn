@@ -8,7 +8,7 @@
 | reminder — providerStrict + Nullable optional (the Slice-D headline) | 200 | yes | yes | true | ROUND-TRIP OK |
 | book — a Fields param with an optional field (non-strict) | 200 | yes | yes | true | ROUND-TRIP OK |
 | bookStrict — a Fields param, ALL fields required (providerStrict) | 200 | yes | yes | true | ROUND-TRIP OK |
-| bookStrictOpt — a Fields param with an OPTIONAL field (providerStrict) — the KNOWN BOUNDARY | 400 | NO | no | n/a | SCHEMA REJECTED |
+| bookStrictOpt — a Fields param with a NULLABLE optional field (providerStrict) — the DEC-069 FIX | 200 | yes | yes | true | ROUND-TRIP OK |
 
 ### Detail
 - **reminder — providerStrict + Nullable optional (the Slice-D headline)**
@@ -20,9 +20,9 @@
 - **bookStrict — a Fields param, ALL fields required (providerStrict)**
   - expectation: accepted under strict (the nested object is fully closed); validator accepts
   - result: ROUND-TRIP OK (HTTP 200) — args={"slot":{"duration":30,"when":"2026-08-15T09:00:00Z"}}
-- **bookStrictOpt — a Fields param with an OPTIONAL field (providerStrict) — the KNOWN BOUNDARY**
-  - expectation: EXPECTED REJECTED: providerStrict keeps top-level params in `required`, but a nested Fields still drops its optional field from the nested `required`, which strict forbids (deferred in DEC-068). Evidence for whether the deferred nested-nullable work is needed.
-  - result: SCHEMA REJECTED (HTTP 400) — Invalid schema for function 'bookStrictOpt': In context=('properties', 'slot'), 'required' is required to be supplied and to be an array including every key in properties. Missing 'label'.
+- **bookStrictOpt — a Fields param with a NULLABLE optional field (providerStrict) — the DEC-069 FIX**
+  - expectation: ROUND-TRIP OK (was the case-4 400 in the prior capstone): strictifyForProvider promotes the nullable optional `label` into the NESTED `required` with its null-union + default, so OpenAI strict accepts it; the model sends `label` as null or a string, and the Fields validator (whose label is Nullable) accepts either — closing the nested boundary DEC-068 had left open.
+  - result: ROUND-TRIP OK (HTTP 200) — args={"slot":{"label":"untitled","when":"2026-08-15T09:00:00Z"}}
 
 ## Local negative — the validator is the real guard (no network)
 
@@ -30,6 +30,7 @@
 - missing required `when` → REJECTED @["when"], expected: an RFC 3339 date-time
 - Nullable(NotEmpty()) on `null` → ACCEPTS (as designed — no drift)
 - Nullable(NotEmpty()) on `""` → REJECTS (still enforces non-empty)
+- bare optional field under providerStrict → REFUSED at build (toolSchemaFrom({ providerStrict }): 'label' at .properties.slot is optional but not nullable)
 
 ## The generated schemas (verbatim, from the real code)
 
@@ -124,19 +125,23 @@
 }
 ```
 
-### bookStrictOpt — a Fields param with an OPTIONAL field (providerStrict) — the KNOWN BOUNDARY
+### bookStrictOpt — a Fields param with a NULLABLE optional field (providerStrict) — the DEC-069 FIX
 ```json
 {
   "title": "bookStrictOpt",
-  "description": "Book a slot, optional label.",
+  "description": "Book a slot, with an optional label.",
   "type": "object",
   "properties": {
     "slot": {
       "type": "object",
       "properties": {
         "label": {
-          "type": "string",
-          "minLength": 1
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "default": "untitled"
         },
         "when": {
           "type": "string",
@@ -144,7 +149,8 @@
         }
       },
       "required": [
-        "when"
+        "when",
+        "label"
       ],
       "additionalProperties": false
     }

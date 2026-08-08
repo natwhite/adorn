@@ -175,3 +175,120 @@ describe('toolSchemaFrom providerStrict — OpenAI-strict-compatible optional en
         expect(schema.required).toContain('at'); // kept in required (admits null)
     });
 });
+
+describe('toolSchemaFrom providerStrict RECURSES into nested objects (DEC-069)', () => {
+    const {Fields, Shape, Dictionary} = ObjectContracts;
+    const {Nullable} = NullableContracts;
+
+    it('promotes a NULLABLE optional field inside a nested Fields into the nested required', () => {
+        const schema = toolSchemaFrom(
+            {
+                params: {
+                    slot: Fields({
+                        when: StringContracts.DateTime(),
+                        label: {descriptor: Nullable(StringContracts.NotEmpty()), optional: true},
+                    }),
+                },
+            },
+            {providerStrict: true},
+        );
+        const slot = (schema.properties as Record<string, Record<string, unknown>>).slot;
+        expect((slot.required as string[]).slice().sort()).toEqual(['label', 'when']); // `label` promoted
+        expect(slot.additionalProperties).toBe(false);
+        // `label` keeps its null-union, so the model may send null and Verify.check(Nullable(...)) accepts it
+        expect((slot.properties as Record<string, Record<string, unknown>>).label.type).toEqual(['string', 'null']);
+    });
+
+    it('REFUSES a BARE optional field inside a nested Fields, naming the field', () => {
+        expect(() =>
+            toolSchemaFrom(
+                {
+                    params: {
+                        slot: Fields({
+                            when: StringContracts.DateTime(),
+                            label: {descriptor: StringContracts.NotEmpty(), optional: true},
+                        }),
+                    },
+                },
+                {providerStrict: true},
+            ),
+        ).toThrow(/label[\s\S]*nullable/i);
+    });
+
+    it('recurses through DEEP nesting (Fields in Fields)', () => {
+        const schema = toolSchemaFrom(
+            {
+                params: {
+                    outer: Fields({
+                        inner: Fields({
+                            id: NumberContracts.Integer(),
+                            note: {descriptor: Nullable(StringContracts.NotEmpty()), optional: true},
+                        }),
+                    }),
+                },
+            },
+            {providerStrict: true},
+        );
+        const outer = (schema.properties as Record<string, Record<string, unknown>>).outer;
+        const inner = (outer.properties as Record<string, Record<string, unknown>>).inner;
+        expect((inner.required as string[]).slice().sort()).toEqual(['id', 'note']); // promoted DEEP
+    });
+
+    it('recurses into ArrayOf items (an array of Fields with a nullable optional)', () => {
+        const schema = toolSchemaFrom(
+            {
+                params: {
+                    slots: ArrayContracts.ArrayOf(
+                        Fields({
+                            when: StringContracts.DateTime(),
+                            label: {descriptor: Nullable(StringContracts.NotEmpty()), optional: true},
+                        }),
+                    ),
+                },
+            },
+            {providerStrict: true},
+        );
+        const items = (schema.properties as Record<string, Record<string, Record<string, unknown>>>).slots
+            .items as Record<string, unknown>;
+        expect((items.required as string[]).slice().sort()).toEqual(['label', 'when']);
+    });
+
+    it('forwards a nested optional field `default` into the strict schema (review Finding 2 shape)', () => {
+        const schema = toolSchemaFrom(
+            {
+                params: {
+                    slot: Fields({
+                        when: StringContracts.DateTime(),
+                        label: {descriptor: Nullable(StringContracts.NotEmpty()), optional: true, default: 'untitled'},
+                    }),
+                },
+            },
+            {providerStrict: true},
+        );
+        const slot = (schema.properties as Record<string, Record<string, unknown>>).slot;
+        expect((slot.properties as Record<string, Record<string, unknown>>).label.default).toBe('untitled');
+        expect((slot.required as string[]).slice().sort()).toEqual(['label', 'when']);
+    });
+
+    it('REFUSES an open map (@Dictionary) under strict', () => {
+        expect(() =>
+            toolSchemaFrom({params: {tags: Dictionary(StringContracts.NotEmpty())}}, {providerStrict: true}),
+        ).toThrow(/open map/i);
+    });
+
+    it('does NOT bogus-throw on a stacked Shape whose raw fragment has no `required` (review Finding 1)', () => {
+        class Point {
+            @Enforce.greaterThanEqual(0) x!: number;
+            @Enforce.greaterThanEqual(0) y!: number;
+        }
+        // A stacked [Shape, Fields] param conflicts on `properties` → an allOf that tightenObjects never descends,
+        // so the Shape member reaches strictify with no `required`. Its fields are REQUIRED (not optional), so
+        // strictify must not demand they be nullable.
+        expect(() =>
+            toolSchemaFrom(
+                {params: {at: {descriptor: [Shape(Point), Fields({tag: StringContracts.NotEmpty()})]}}},
+                {providerStrict: true},
+            ),
+        ).not.toThrow();
+    });
+});
