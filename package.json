@@ -1,7 +1,28 @@
 {
   "name": "adorn",
-  "version": "1.0.0",
-  "description": "A collection of convinient TypeScript decorators and simplified decorator creation wrapper",
+  "version": "0.1.0",
+  "description": "One TypeScript declaration → an LLM tool schema, a runtime validator, JSON Schema, and docs, derived from a single source.",
+  "keywords": [
+    "typescript",
+    "decorators",
+    "validation",
+    "runtime-validation",
+    "contracts",
+    "design-by-contract",
+    "json-schema",
+    "llm",
+    "tool-calling",
+    "function-calling",
+    "openai"
+  ],
+  "homepage": "https://github.com/natwhite/adorn#readme",
+  "bugs": "https://github.com/natwhite/adorn/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/natwhite/adorn.git"
+  },
+  "license": "MIT",
+  "author": "natwhite",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -16,6 +37,12 @@
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc && tsc -p tsconfig.cli.json",
@@ -30,18 +57,6 @@
     "format:check": "prettier --check .",
     "prepublishOnly": "npm run clean && npm run build"
   },
-  "keywords": [
-    "typescript",
-    "decorators",
-    "parameter-decorators",
-    "method-decorators",
-    "field-decorators",
-    "validation",
-    "contracts",
-    "design-by-contract"
-  ],
-  "author": "natwhite",
-  "license": "ISC",
   "dependencies": {
     "tslib": "^2.8.1"
   },

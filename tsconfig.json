@@ -31,8 +31,12 @@
     "alwaysStrict": true,
     "lib": ["es2019", "dom"],
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    // Source/declaration maps OFF (npm-release prep): the published package ships `dist` only
+    // (files:["dist"]), not `src`, so a `.js.map`/`.d.ts.map` pointing at `../src/*.ts` is dead weight
+    // (~half the tarball) and "go to source" cannot resolve anyway. The `.d.ts` themselves still ship and
+    // carry the JSDoc (DEC-064). ts-jest forces its own in-memory maps, so tests are unaffected.
+    "declarationMap": false,
+    "sourceMap": false,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "importHelpers": true,
