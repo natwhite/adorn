@@ -50,7 +50,14 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 
 export interface JsonObject {
-    [key: string]: JsonValue;
+    // `| undefined` so an OPTIONAL property on a type extending JsonObject (e.g. `minItems?: number` on
+    // `ArrayOfParams`) is assignable to this index under a consumer's `strictNullChecks` — otherwise the
+    // shipped `.d.ts` fails to compile for a strict consumer that has not set `skipLibCheck`. adorn builds
+    // with `strictNullChecks` OFF (SMELL-12), so it never sees the conflict itself, but declaration emit
+    // preserves it into the published types. JSON has no `undefined`; `JSON.stringify` drops such a key,
+    // which is exactly "the (optional) property is absent". Under `strict:false` the `| undefined` collapses,
+    // so adorn's own build and emitted `.js` are unchanged.
+    [key: string]: JsonValue | undefined;
 }
 
 // ---------------------------------------------------------------------------
