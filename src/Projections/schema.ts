@@ -154,6 +154,16 @@ export interface ToolSchemaOptions {
      * (adorn is runtime-introspection only, so JSDoc is not a source — DEC-007).
      */
     readonly description?: string;
+    /**
+     * Emit an OpenAI-`strict`-compatible schema (DEC-069/071). Strict mode requires that EVERY property
+     * appear in `required` and `additionalProperties:false` be set at EVERY object level — not only the
+     * root. When set, one recursive pass promotes each field into `required` at its own level; a field that
+     * is not already required must ADMIT NULL — declared `@Nullable(...)`, so the model sends `null` and the
+     * validator accepts it with no drift (nullability-in-the-declaration). A bare non-nullable `@Optional`
+     * parameter, or an open `@Dictionary` map (which strict cannot express), is refused at build time with an
+     * actionable message rather than deferred to a 400 from the API. The same option `toolSchemaFrom` takes.
+     */
+    readonly providerStrict?: boolean;
 }
 
 /** The dialect every document declares. draft 2020-12 is what `prefixItems`/`exclusiveMinimum:number` assume. */
@@ -378,7 +388,7 @@ export function toolSchemaForMethod(
             });
     }
 
-    const document: JsonObject = {
+    let document: JsonObject = {
         title: `${className}.${String(method)}`,
         type: 'object',
         properties,
@@ -396,6 +406,14 @@ export function toolSchemaForMethod(
               ? getEffectiveMethodDescription(site.target, method)
               : undefined;
     if (typeof toolDesc === 'string') document.description = toolDesc;
+
+    // OpenAI strict mode (DEC-071): the SAME recursive pass `toolSchemaFrom` runs, applied to the method's
+    // document — promote every property into `required` at each object level (nullable-if-not-already), or
+    // refuse a bare non-nullable optional / open map. Runs before `canonicalize` so promotions get ordered;
+    // decorator-flavored diagnostics via STRICT_CTX_METHOD.
+    if (options && options.providerStrict) {
+        document = strictifyForProvider(document, '', STRICT_CTX_METHOD) as JsonObject;
+    }
 
     return canonicalize(document) as ToolSchema;
 }
@@ -487,7 +505,7 @@ export function toolSchemaFrom(
     // `required` — a `Nullable(...)`-declared field, so schema and validator both accept the model's `null` (no
     // drift) — and refuses a bare non-nullable optional or an open map. Runs before `canonicalize` so promotions
     // get ordered; subsumes the top-level per-param handling (a top-level optional param is just the root object's).
-    if (providerStrict) document = strictifyForProvider(document, '') as JsonObject;
+    if (providerStrict) document = strictifyForProvider(document, '', STRICT_CTX_FROM) as JsonObject;
     return canonicalize(document) as ToolSchema;
 }
 
@@ -750,13 +768,46 @@ function fragmentAdmitsNull(fragment: JsonValue): boolean {
 }
 
 /**
+ * Caller-facing phrasing for {@link strictifyForProvider}'s refusals (DEC-071). The strictify pass is shared
+ * by BOTH tool-schema entries, but its two errors must speak the caller's own idiom: a `toolSchemaForMethod`
+ * user writes `@Nullable(...)` / `@Shape(...)` decorators, a `toolSchemaFrom` user writes descriptors. Naming
+ * the wrong function, or telling a decorator author to reach for `NullableContracts.Nullable`, is a diagnostic
+ * that sends them to fix code they never wrote — so each entry supplies its own advice.
+ */
+interface StrictifyContext {
+    /** Names the offending call in the error, e.g. `toolSchemaForMethod(..., { providerStrict })`. */
+    readonly fn: string;
+    /** How to make a field admit null on this surface (a decorator vs a descriptor). */
+    readonly nullableFix: string;
+    /** How to replace an open map on this surface. */
+    readonly mapFix: string;
+}
+
+/** The descriptor-first idiom — {@link toolSchemaFrom}. */
+const STRICT_CTX_FROM: StrictifyContext = {
+    fn: 'toolSchemaFrom({ providerStrict })',
+    nullableFix: 'Declare it NullableContracts.Nullable(...) (so schema and validator both admit null)',
+    mapFix: 'Model the object with Fields({...})',
+};
+
+/** The decorated-method idiom — {@link toolSchemaForMethod}. */
+const STRICT_CTX_METHOD: StrictifyContext = {
+    fn: 'toolSchemaForMethod(..., { providerStrict })',
+    nullableFix: 'Declare it @Nullable(...) (so schema and validator both admit null)',
+    mapFix: 'Model the object with @Shape(FieldClass) instead of an open @Dictionary(...)',
+};
+
+/**
  * Make a schema OpenAI-`strict`-compatible, recursively (Q-32b, DEC-069): at EVERY object level, `required`
  * becomes ALL keys and `additionalProperties` becomes `false`. A property not already required must ADMIT NULL
  * (a `Nullable(...)`-declared field) to be promoted — else strict cannot express it and we refuse loudly: a
  * bare non-nullable optional, or an open `@Dictionary` map. Gated by `{providerStrict}`; runs before
  * `canonicalize`. Purely structural — clones each node, never mutates its input, so descriptor fragments are safe.
+ *
+ * Shared by both tool-schema entries (DEC-071); `ctx` carries the caller's idiom for the two refusals so the
+ * diagnostic points at code the caller actually wrote (a decorator vs a descriptor).
  */
-function strictifyForProvider(node: JsonValue, path: string): JsonValue {
+function strictifyForProvider(node: JsonValue, path: string, ctx: StrictifyContext): JsonValue {
     if (!isObjectFragment(node)) return node;
     const out: JsonObject = {...node};
     const where = path || '(root)';
@@ -766,21 +817,21 @@ function strictifyForProvider(node: JsonValue, path: string): JsonValue {
         const branches = out[keyword];
         if (Array.isArray(branches)) {
             out[keyword] = branches.map((member, index) =>
-                strictifyForProvider(member, `${path}.${keyword}[${index}]`),
+                strictifyForProvider(member, `${path}.${keyword}[${index}]`, ctx),
             );
         }
     }
     if (typeIncludes(out, 'array') && isObjectFragment(out.items)) {
-        out.items = strictifyForProvider(out.items, `${path}.items`);
+        out.items = strictifyForProvider(out.items, `${path}.items`, ctx);
     }
 
     if (typeIncludes(out, 'object')) {
         // An OPEN map (`@Dictionary`) — strict requires closed objects, so it cannot be expressed.
         if ('additionalProperties' in out && out.additionalProperties !== false) {
             throw new TypeError(
-                `toolSchemaFrom({ providerStrict }): ${where} is an open map — OpenAI strict requires closed ` +
-                    'objects (additionalProperties:false), so a Dictionary(...) cannot be expressed under strict. ' +
-                    'Model the object with Fields({...}), or call without { providerStrict: true }.',
+                `${ctx.fn}: ${where} is an open map — OpenAI strict requires closed objects ` +
+                    '(additionalProperties:false), so a Dictionary(...) cannot be expressed under strict. ' +
+                    `${ctx.mapFix}, or call without { providerStrict: true }.`,
             );
         }
         if (isObjectFragment(out.properties)) {
@@ -791,14 +842,13 @@ function strictifyForProvider(node: JsonValue, path: string): JsonValue {
             const already = new Set<string>(Array.isArray(out.required) ? (out.required as string[]) : propKeys);
             const props: JsonObject = {};
             for (const key of propKeys) {
-                const child = strictifyForProvider(out.properties[key], `${path}.properties.${key}`);
+                const child = strictifyForProvider(out.properties[key], `${path}.properties.${key}`, ctx);
                 props[key] = child;
                 if (!already.has(key) && !fragmentAdmitsNull(child)) {
                     throw new TypeError(
-                        `toolSchemaFrom({ providerStrict }): '${key}' at ${where} is optional but not nullable — ` +
-                            'OpenAI strict requires every property in `required`. Declare it ' +
-                            'NullableContracts.Nullable(...) (so schema and validator both admit null), or call ' +
-                            'without { providerStrict: true }.',
+                        `${ctx.fn}: '${key}' at ${where} is optional but not nullable — OpenAI strict requires ` +
+                            `every property in \`required\`. ${ctx.nullableFix}, or call without ` +
+                            '{ providerStrict: true }.',
                     );
                 }
             }
