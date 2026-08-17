@@ -133,13 +133,26 @@ import {
 export type ClassSchema = JsonObject;
 
 /**
- * The prescriptive tool-call schema {@link toolSchemaForMethod} emits for one contracted method
- * (DEC-048). It *is* plain JSON data, like {@link ClassSchema} — the artifact is itself a schema.
- * Named separately because its posture is the opposite of `ClassSchema`'s: `ClassSchema` describes an
- * instance and under-claims (never `required`, never `additionalProperties`), while a `ToolSchema`
- * specifies the argument object a producer (an LLM) must send and is deliberately tight.
+ * The prescriptive tool-call schema {@link toolSchemaForMethod} / {@link toolSchemaFrom} emit for one
+ * contracted method (DEC-048). Its posture is the opposite of `ClassSchema`'s: `ClassSchema` describes an
+ * instance and under-claims (never `required`, never `additionalProperties`), while a `ToolSchema` specifies
+ * the argument object a producer (an LLM) must send and is deliberately tight.
+ *
+ * Unlike `ClassSchema` (an *arbitrary* JSON document, hence `JsonObject`), a tool schema's shape is the
+ * library's own guarantee — always exactly these keys — so it is typed structurally (DEC-072, voice-agent L3).
+ * A `JsonObject` alias forced consumers back to hand-building `properties`/`required` (a `JsonValue | undefined`
+ * property has no spread, a `readonly []` cannot satisfy a mutable index): the type defeated the single-source
+ * thesis it was meant to serve. `readonly` throughout, because the stated audience is `strict`, readonly-first
+ * codebases. Every value adorn emits here is a schema fragment (`properties`), a name (`required`), or a scalar.
  */
-export type ToolSchema = JsonObject;
+export interface ToolSchema {
+    readonly type: 'object';
+    readonly properties: Readonly<Record<string, JsonValue>>;
+    readonly required: readonly string[];
+    readonly additionalProperties: false;
+    readonly title?: string;
+    readonly description?: string;
+}
 
 export interface SchemaOptions {
     /** Spaces per indent level for {@link serializeSchema}. Defaults to 2 (JSON house style). */
@@ -415,7 +428,9 @@ export function toolSchemaForMethod(
         document = strictifyForProvider(document, '', STRICT_CTX_METHOD) as JsonObject;
     }
 
-    return canonicalize(document) as ToolSchema;
+    // `document` was assembled as exactly the ToolSchema shape; canonicalize only reorders keys. The
+    // structured ToolSchema (DEC-072) no longer overlaps JsonValue enough for a direct cast, so go via unknown.
+    return canonicalize(document) as unknown as ToolSchema;
 }
 
 /**
@@ -506,7 +521,9 @@ export function toolSchemaFrom(
     // drift) — and refuses a bare non-nullable optional or an open map. Runs before `canonicalize` so promotions
     // get ordered; subsumes the top-level per-param handling (a top-level optional param is just the root object's).
     if (providerStrict) document = strictifyForProvider(document, '', STRICT_CTX_FROM) as JsonObject;
-    return canonicalize(document) as ToolSchema;
+    // `document` was assembled as exactly the ToolSchema shape; canonicalize only reorders keys. The
+    // structured ToolSchema (DEC-072) no longer overlaps JsonValue enough for a direct cast, so go via unknown.
+    return canonicalize(document) as unknown as ToolSchema;
 }
 
 /** A bare `ConstraintDescriptor` never carries a `descriptor` key; a {@link ToolParamSpec} always does. */

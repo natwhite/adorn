@@ -43,7 +43,7 @@ describe('the tight tool-object shape (DEC-048)', () => {
             type: 'object',
             properties: {
                 location: {type: 'string', minLength: 1},
-                unit: {enum: ['celsius', 'fahrenheit']}, // the reified @OneOf, as {enum}
+                unit: {type: 'string', enum: ['celsius', 'fahrenheit']}, // reified @OneOf, homogeneous → {type, enum} (DEC-072)
                 days: {type: 'number', minimum: 1, maximum: 7}, // the DEC-029 conjunction, inherited unchanged
             },
             required: ['location', 'unit', 'days'], // every param carries ≥1 constraint
@@ -136,8 +136,8 @@ describe('schemaForClass is untouched — descriptive under-claim beside the pre
         // The root instance schema under-claims: no required, no additionalProperties.
         expect(classSchema.required).toBeUndefined();
         expect(classSchema.additionalProperties).toBeUndefined();
-        // @OneOf flows into the descriptive tuple as {enum} too — one descriptor, both projections.
-        expect((method.prefixItems as JsonObject[])[1]).toEqual({enum: ['celsius', 'fahrenheit']});
+        // @OneOf flows into the descriptive tuple as {type, enum} too — one descriptor, both projections.
+        expect((method.prefixItems as JsonObject[])[1]).toEqual({type: 'string', enum: ['celsius', 'fahrenheit']});
     });
 });
 

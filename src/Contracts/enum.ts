@@ -12,13 +12,15 @@
  * Decorator-agnostic (DEC-012) — see the note in `./number.ts`. The predicate is **derived from
  * params** (DEC-010); there is no `predicate` input in this file.
  *
- * ## Type-agnostic, on purpose
+ * ## Type-agnostic predicate; a sound `type` in the schema when it can carry one
  *
  * Unlike the numeric and string constraints, `oneOf` has `kind: 'generic'`: an enum is a set of
  * literals of *whatever* type — `'celsius' | 'fahrenheit'`, `1 | 2 | 3`, `true | false` — and the
- * membership test is the same regardless. The emitted `{enum: [...]}` fragment is likewise
- * type-agnostic; it carries no `type` keyword, so when it merges with, say, a `{type: 'string'}` the
- * two coexist (disjoint keywords) exactly as `schema.ts`'s conjunction merge expects.
+ * membership *test* is the same regardless. The emitted schema follows the members: a HOMOGENEOUS enum
+ * emits `{type, enum}` (voice-agent L2 / DEC-072), a HETEROGENEOUS one (`['a', 1]`) emits `{enum}` with no
+ * `type`, since none is true. Either way the conjunction merge (`schema.ts`) is happy: a homogeneous
+ * `{type:'string', enum}` stacked with a `{type:'string'}` collapses the equal `type` (`sameJson`), and a
+ * typeless `{enum}` coexists as a disjoint keyword — exactly as before.
  *
  * ## The predicate is total, and strict equality is the right membership test (BUG-4)
  *
@@ -81,10 +83,35 @@ export const oneOfConstraint = defineConstraint<OneOfParams>({
     // JSON-rendered members so the prose is unambiguous about type: `one of "celsius", "fahrenheit"`
     // for strings, `one of 1, 2, 3` for numbers — a quoted string is never confused with a number.
     describe: params => `one of ${params.values.map(value => JSON.stringify(value)).join(', ')}`,
-    // Exactly the members. A fresh array, so a consumer cannot reach the descriptor's frozen params
-    // through the fragment. This is the constrained-decoding target LLM tool schemas want.
-    schema: params => ({enum: params.values.slice()}),
+    // Exactly the members, as a fresh array (a consumer cannot reach the descriptor's frozen params
+    // through the fragment) — the constrained-decoding target LLM tool schemas want. When every member
+    // shares one JSON type, `type` is emitted alongside `enum` (voice-agent L2, DEC-072): the rest of the
+    // ecosystem emits it, OpenAI strict documents it as required per property, and it is SOUND — every
+    // member satisfies that `type`, so the fragment is no less exact. A heterogeneous enum (`['a', 1]`)
+    // has no single true `type`, so none is emitted — the prior behaviour, unchanged.
+    schema: params => {
+        const values = params.values.slice();
+        const type = commonJsonType(values);
+        return type ? {type, enum: values} : {enum: values};
+    },
 });
+
+/**
+ * The one JSON-Schema `type` shared by every member, or `undefined` when the members are heterogeneous.
+ * Members are always JSON primitives (validated in {@link OneOf}), so `typeof` — with `null` special-cased —
+ * yields exactly the JSON-Schema type name (`'string' | 'number' | 'boolean' | 'null'`). An all-number enum
+ * yields `'number'` (not `'integer'`), which is sound: `number` admits the integers, and `enum` pins the
+ * exact values regardless.
+ */
+function commonJsonType(values: JsonValue[]): string | undefined {
+    let common: string | undefined;
+    for (const value of values) {
+        const type = value === null ? 'null' : typeof value;
+        if (common === undefined) common = type;
+        else if (common !== type) return undefined;
+    }
+    return common;
+}
 
 // ---------------------------------------------------------------------------
 // Params validation

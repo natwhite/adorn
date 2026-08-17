@@ -74,9 +74,17 @@ describe('@Nullable — the null-widening combinator (DEC-056)', () => {
         expect(descriptor.schema!()).toEqual({type: ['number', 'null'], minimum: 0});
     });
 
-    it('expresses a no-single-type inner (enum/const) as an anyOf union', () => {
+    it('expresses an enum inner as an anyOf union that still admits null (voice-agent L2 / DEC-072)', () => {
         const nullableEnum = NullableContracts.Nullable(EnumContracts.OneOf(['a', 'b']));
-        expect(nullableEnum.schema!()).toEqual({anyOf: [{enum: ['a', 'b']}, {type: 'null'}]});
+        // The enum now carries `type` (DEC-072). Nullable must NOT widen to `type:['string','null']` here —
+        // `enum` bites both branches, so that would reject null. The anyOf branch keeps it exact.
+        expect(nullableEnum.schema!()).toEqual({
+            anyOf: [{type: 'string', enum: ['a', 'b']}, {type: 'null'}],
+        });
+        // Schema and predicate agree: null is accepted, a non-member is not.
+        expect(nullableEnum.predicate(null)).toBe(true);
+        expect(nullableEnum.predicate('a')).toBe(true);
+        expect(nullableEnum.predicate('z')).toBe(false);
     });
 
     it('describes itself as "<item> or null"', () => {

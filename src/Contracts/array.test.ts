@@ -212,7 +212,7 @@ describe('arrayOf round-trips through JSON (DEC-050)', () => {
         const descriptor = Arrays.ArrayOf(Enums.OneOf(['a', 'b']));
         const revived = constraintFromJSON(JSON.parse(JSON.stringify(descriptor)));
 
-        expect(revived.schema!()).toEqual({type: 'array', items: {enum: ['a', 'b']}});
+        expect(revived.schema!()).toEqual({type: 'array', items: {type: 'string', enum: ['a', 'b']}});
         expect(revived.predicate(['a', 'b', 'a'])).toBe(true);
         expect(revived.predicate(['a', 'z'])).toBe(false);
     });
@@ -225,7 +225,7 @@ describe('arrayOf round-trips through JSON (DEC-050)', () => {
         expect(descriptor.predicate(['a'])).toBe(false); // inner must be an array
         expect(descriptor.schema!()).toEqual({
             type: 'array',
-            items: {type: 'array', items: {enum: ['a', 'b']}},
+            items: {type: 'array', items: {type: 'string', enum: ['a', 'b']}},
         });
 
         const revived = constraintFromJSON(JSON.parse(JSON.stringify(descriptor)));

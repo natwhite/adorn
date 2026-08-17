@@ -68,11 +68,17 @@ describe('the oneOf descriptor', () => {
         expect(descriptor.predicate(undefined)).toBe(false);
     });
 
-    it('emits schema() = {enum: members}', () => {
+    it('emits schema() = {type, enum} for a homogeneous enum (voice-agent L2 / DEC-072)', () => {
         expect(Enums.OneOf(['celsius', 'fahrenheit']).schema!()).toEqual({
+            type: 'string',
             enum: ['celsius', 'fahrenheit'],
         });
-        expect(Enums.OneOf([1, 2, 3]).schema!()).toEqual({enum: [1, 2, 3]});
+        expect(Enums.OneOf([1, 2, 3]).schema!()).toEqual({type: 'number', enum: [1, 2, 3]});
+        expect(Enums.OneOf([true, false]).schema!()).toEqual({type: 'boolean', enum: [true, false]});
+    });
+
+    it('omits type for a heterogeneous enum — none is true (DEC-072)', () => {
+        expect(Enums.OneOf(['a', 1]).schema!()).toEqual({enum: ['a', 1]});
     });
 
     it('hands schema() a fresh array, never the frozen params array', () => {
@@ -162,7 +168,7 @@ describe('the projections surface the enum', () => {
         recordFieldConstraint(Reading.prototype, 'unit', Enums.OneOf(['celsius', 'fahrenheit']));
 
         const properties = schemaForClass(Reading).properties as Record<string, unknown>;
-        expect(properties.unit).toEqual({enum: ['celsius', 'fahrenheit']});
+        expect(properties.unit).toEqual({type: 'string', enum: ['celsius', 'fahrenheit']});
     });
 
     it('the schema projection emits {enum} in a method prefixItems tuple', () => {
@@ -174,7 +180,7 @@ describe('the projections surface the enum', () => {
         recordParameterConstraint(Api.prototype, 'call', 0, Enums.OneOf(['a', 'b']));
 
         const call = (schemaForClass(Api).methods as Record<string, {prefixItems: unknown[]}>).call;
-        expect(call.prefixItems).toEqual([{enum: ['a', 'b']}]);
+        expect(call.prefixItems).toEqual([{type: 'string', enum: ['a', 'b']}]);
     });
 
     it('the docs projection renders the membership prose', () => {

@@ -51,16 +51,20 @@ export const nullableConstraint = defineConstraint<NullableParams>({
     schema: params => {
         const inner = constraintFromJSON(params.item);
         const innerSchema = inner.schema ? inner.schema() : {};
-        // A single string `type` widens to include `'null'` — every other keyword only bites the
-        // non-null branch (`minLength`/`minimum`/`items`/`properties` all ignore a `null` instance), so
-        // `{type:['string','null'], minLength:5}` is exactly "(a string of length ≥ 5) OR null".
-        if (typeof innerSchema.type === 'string') {
+        // A single string `type` widens to include `'null'` — but ONLY when no keyword constrains the value
+        // set ACROSS type branches. `minLength`/`minimum`/`items`/`properties` bite the non-null branch alone
+        // (a `null` instance ignores them), so `{type:['string','null'], minLength:5}` is exactly "(a string
+        // of length ≥ 5) OR null". `enum`/`const` are different: they restrict the value regardless of type,
+        // so widening `{type:'string', enum:['a','b']}` to `type:['string','null']` would still demand the
+        // value be in `['a','b']` — REJECTING null (voice-agent L2 fallout: a homogeneous `OneOf` now carries
+        // `type`). Those go to the exact `anyOf` branch below instead.
+        if (typeof innerSchema.type === 'string' && !('enum' in innerSchema) && !('const' in innerSchema)) {
             return {...innerSchema, type: [innerSchema.type, 'null']};
         }
         // A hookless item (`{}`) already accepts anything, `null` included — nullable is still `{}`.
         if (Object.keys(innerSchema).length === 0) return {};
-        // No single `type` to widen (`enum`, `const`, `allOf`, a `type` already an array): express the
-        // union with `anyOf`, which is exact.
+        // No safe single `type` to widen (`enum`/`const` value sets, `allOf`, a `type` already an array):
+        // express the union with `anyOf`, which is exact.
         return {anyOf: [innerSchema, {type: 'null'}]};
     },
 });
