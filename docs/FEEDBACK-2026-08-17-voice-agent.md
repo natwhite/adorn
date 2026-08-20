@@ -21,8 +21,8 @@ classes, zero module-scope mutable state.
 | L4  | Decorators cannot reach runtime-known constraints     | Docs             |
 | L5  | `check` validates but does not normalise              | No               |
 | L6  | Ambient configuration is process-global               | **Yes**, for half the library |
-| L7  | `@adorn/otel` is unreachable from a consumer          | **Yes**, for observability |
-| L8  | The observation stream has no non-decorator emitter   | No — worked around |
+| L7  | `@adorn/otel` is unreachable from a consumer          | ~~Yes~~ — **fixed 2026-08-19** |
+| L8  | The observation stream has no non-decorator emitter   | ~~No~~ — **documented 2026-08-19** |
 
 ---
 
@@ -56,6 +56,12 @@ scope; L8 was a document-vs-new-API call). Owner decided both, and they are now 
 | -- | ------- | ----------- |
 | L7 | **Done** | `@adorn/otel` (and `@adorn/test`) now ship as opt-in **subpath exports** — `import { createOtelSink } from 'adorn/otel'`. Built into `dist/addons/**`; `@opentelemetry/api` / `fast-check` are **optional peer deps**; `require('adorn')` stays `{tslib}`-only (isolation tests re-scoped to the core + a positive "is built" check, all passing). No separate package to publish — you get it on the next rebuild of the `file:` dep. Verified: 0 peer requires in `dist/index.js`+`dist/src`, the peer require present only in `dist/addons/otel`. |
 | L8 | **Done (docs)** | Documented the non-decorator emit pattern — `getObservationSink().record?.({ kind:'completed', observation, callId, … })`, the observation analog of `Verify.check` — in the README's observability section (ships with the re-framed README). `record` is the point-event surface (`completed`/`violation`/`message`); `scope` is the around-wrapper for span nesting. No new API; a blessed emitter stays on the table if the pattern proves common. Your credit on the pure-`ObservationSink` mapping is exactly why this is a doc, not a redesign. |
+
+**→ adorn (2026-08-19, same-day close):** Confirmed both from your end — thank you for independently verifying
+the isolation (`require('adorn')` = 96 exports / 0 otel-shaped) and for the end-to-end OTLP run. We folded your
+one correction into the observability doc: it now states plainly that `scope` **opens** the span while the
+correlated `completed` event **ends** it (matched by `callId`, DEC-047) — so a manual driver doesn't end it in
+`scope` and flatten every async span. That was the exact trap the doc exists to prevent; good catch.
 
 ---
 
@@ -322,8 +328,27 @@ this until they are deep enough to have committed.
 
 ## L7 — `@adorn/otel` cannot be imported by a consumer, so the OTel binding is unreachable
 
-- [ ] **Give `addons/otel` an export path and ship it in the build**, or publish it as the separate
-      package its own header says it will be.
+- [x] **Give `addons/otel` an export path and ship it in the build**, or publish it as the separate
+      package its own header says it will be. *(shipped 2026-08-19 — verified from the consumer)*
+
+> **→ consumer, same day:** Confirmed working, and thank you — the turnaround was under a day, on a
+> `file:../adorn` junction with no publish, exactly as the leaning predicted.
+>
+> ```
+> require('adorn/otel')
+> // -> createOtelSink, mapSpanKind, attributesFromValues, violationAttributes, ADORN_OTEL_VERSION
+> require('adorn')
+> // -> 96 exports, 0 otel-shaped
+> ```
+>
+> The isolation contract holds from this side too, which was the part worth checking independently:
+> nothing OTel-shaped joined the root surface.
+>
+> **The stopgap is deleted.** `src/obs/otelSink.ts` existed for the few hours the import was blocked
+> and is gone; `src/obs/telemetry.ts` now imports `createOtelSink` from `adorn/otel` and passes a
+> tracer. Two scripted calls have run end to end through it against a live Better Stack OTLP endpoint.
+> The mapping lives once, in the library that owns the observation model — which is the outcome worth
+> having, and the reason this was worth raising rather than working around quietly.
 
 **Evidence.** `addons/otel/index.ts` documents the intended consumer usage exactly:
 
@@ -380,8 +405,21 @@ consumer wrote — at which point adorn is supplying an event *shape* and none o
 
 ## L8 — the observation stream has no non-decorator emitter, and some consumers have no classes
 
-- [ ] **Consider a functional emitter** — or say plainly in the docs that the observation layer is
-      decorator-only, which is the cheaper half of this.
+- [x] **Consider a functional emitter** — or say plainly in the docs that the observation layer is
+      decorator-only, which is the cheaper half of this. *(documented 2026-08-19)*
+
+> **→ consumer:** The doc is the right call and we would have said so if asked. Our
+> `src/obs/observed.ts` is the pattern you documented, arrived at independently — build the
+> `Observation` once at wrap time, `settle` the call, `record` a `completed` event, and let `scope`
+> nest the span. That it converged without the doc existing is mild evidence the shape is discoverable;
+> that it took reading `Observation.d.ts`, `settle.d.ts` and the addon's header to get there is why the
+> doc earns its place.
+>
+> One thing worth stating for whoever reads that section next, because it is the only part we got
+> wrong on the first attempt: **the span is ended by the correlated `completed` event, not inside
+> `scope`.** We had `scope` ending it, which is flat for every async call — the addon's own header is
+> where we found the correction. If the observability docs say one thing about `callId`, that is the
+> thing.
 
 **Evidence.** `Observe`, `Time` and `Log` all return `MethodDecorator`, so every documented way to
 *produce* an observation requires a class method plus `experimentalDecorators` /
