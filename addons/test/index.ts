@@ -9,9 +9,9 @@
  * **nowhere**, so `require('adorn')` never pulls it — the exact isolation DEC-019 established for
  * rxjs, verified here by `isolation.test.ts`.
  *
- * It lives in-repo under `addons/` (excluded from the library build, like `tools/sensitive-flow`),
- * is covered by `npm test`, and is **not re-exported from the root `index.ts`** — the runtime export
- * surface is unchanged. It is a future `@adorn/test` package (IDEA-8's `@adorn/rx` shape reused).
+ * It lives in-repo under `addons/` and, since DEC-073, is BUILT into `dist` as the opt-in `adorn/test`
+ * subpath export; it is covered by `npm test` and is **not re-exported from the root `index.ts`** — the
+ * root runtime export surface is unchanged. `fast-check` is an OPTIONAL peerDependency.
  *
  * ## The division of labour (foundation §6.1)
  *
@@ -31,7 +31,7 @@
  *   - A **boundary report** that always states what was and was not covered (`report.ts`, §3).
  *
  * @example
- *   import {fuzzClass, formatFuzzReport} from '../../addons/test';
+ *   import {fuzzClass, formatFuzzReport} from 'adorn/test';
  *   const results = fuzzClass(Account, {subject: () => new Account(100)});
  *   console.log(formatFuzzReport(results, {basis: 'Account'}));
  */

@@ -3,10 +3,11 @@
  * `@opentelemetry/*`, made executable (the OTel twin of `addons/test/isolation.test.ts`).
  *
  * `@opentelemetry/api` is the add-on's declared **peer** and a devDependency of this repo (for building
- * and testing only). It must be reachable from NO file under `src/` and NOT from `index.ts`; the built
- * runtime library (`dist/`) must contain no `@opentelemetry` require; and no OTel/span-shaped symbol may
- * leak onto `require('../../index')`. The core runtime dependency set stays `{tslib}`. This file is that
- * guarantee, asserted.
+ * and testing). It must be reachable from NO file under `src/` and NOT from `index.ts`; the CORE of the
+ * built library (`dist/index.js` + `dist/src/**`) must contain no `@opentelemetry` require — the add-on's
+ * OWN `dist/addons/otel/**` may, since DEC-073 ships it as the opt-in `adorn/otel` subpath export; and no
+ * OTel/span-shaped symbol may leak onto `require('../../index')`. The core runtime dependency set stays
+ * `{tslib}`. This file is that guarantee, asserted.
  */
 
 import * as fs from 'fs';
@@ -42,7 +43,7 @@ describe('@opentelemetry stays out of core (DEC-019/DEC-044, the rxjs lesson)', 
         expect(offenders).toEqual([]);
     });
 
-    it('the built runtime library (dist) contains no require("@opentelemetry/*")', () => {
+    it('the built CORE (dist/index.js + dist/src) contains no require("@opentelemetry/*") — dist/addons/otel may (DEC-073)', () => {
         const distIndex = path.join(ROOT, 'dist', 'index.js');
         if (!fs.existsSync(distIndex)) {
             // Not built in this run; the source scan above is the build-independent guarantee, and CI
@@ -50,10 +51,17 @@ describe('@opentelemetry stays out of core (DEC-019/DEC-044, the rxjs lesson)', 
             return;
         }
         const REQUIRE_RE = /require\(\s*['"]@opentelemetry\/[^'"]+['"]\s*\)/;
-        const offenders = walk(path.join(ROOT, 'dist'), '.js').filter(file =>
-            REQUIRE_RE.test(fs.readFileSync(file, 'utf8')),
-        );
+        // Scope to the CORE only. `dist/addons/otel/**` is the shipped opt-in subpath (DEC-073) and is
+        // ALLOWED to require the peer; the invariant is that the root graph (`require('adorn')`) never does.
+        const coreFiles = [distIndex, ...walk(path.join(ROOT, 'dist', 'src'), '.js')];
+        const offenders = coreFiles.filter(file => REQUIRE_RE.test(fs.readFileSync(file, 'utf8')));
         expect(offenders).toEqual([]);
+    });
+
+    it('the add-on IS built into dist as the adorn/otel subpath export (DEC-073)', () => {
+        if (!fs.existsSync(path.join(ROOT, 'dist', 'index.js'))) return; // not built in this run
+        expect(fs.existsSync(path.join(ROOT, 'dist', 'addons', 'otel', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(ROOT, 'dist', 'addons', 'otel', 'index.d.ts'))).toBe(true);
     });
 
     it('the core runtime dependency set is unchanged — {tslib} only', () => {
@@ -67,7 +75,7 @@ describe('@opentelemetry stays out of core (DEC-019/DEC-044, the rxjs lesson)', 
 });
 
 describe('the runtime export surface is unchanged by the add-on', () => {
-    it('the add-on is NOT re-exported from the root index (it is a separate @adorn/otel package)', () => {
+    it('the add-on is NOT re-exported from the root index (it is the adorn/otel subpath, not a root re-export)', () => {
         const addonNames = ['createOtelSink', 'mapSpanKind', 'attributesFromValues', 'violationAttributes'];
         for (const name of addonNames) {
             expect(adorn).not.toHaveProperty(name);

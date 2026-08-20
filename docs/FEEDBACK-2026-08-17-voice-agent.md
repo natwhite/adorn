@@ -21,6 +21,41 @@ classes, zero module-scope mutable state.
 | L4  | Decorators cannot reach runtime-known constraints     | Docs             |
 | L5  | `check` validates but does not normalise              | No               |
 | L6  | Ambient configuration is process-global               | **Yes**, for half the library |
+| L7  | `@adorn/otel` is unreachable from a consumer          | **Yes**, for observability |
+| L8  | The observation stream has no non-decorator emitter   | No — worked around |
+
+---
+
+## Round 2 — 2026-08-19, adopting the observation layer
+
+Same consumer, two days on and **materially different**: the campaign/goal architecture described
+above was deleted on 2026-08-19 (~20,000 lines). It is now a voice agent where a model holds the
+conversation and the code owns the writes. The adorn surface in use is unchanged and still
+functional-only — `toolSchemaFrom`, `Verify.check`, `ObjectContracts.Fields`, and the contract
+factories. Still **zero classes**, still zero module-scope mutable state.
+
+The owner asked for OpenTelemetry instrumentation across the codebase, routed through adorn's
+observation layer. Two things stopped a clean adoption; L7 is the blocker, and it is a packaging
+problem rather than a design one.
+
+**Credit where it is due first:** `createOtelSink` consuming *only* the public `ObservationSink`
+interface is what makes L8 a workaround rather than a dead end. Because the sink is a pure mapping
+over a frozen public API, a consumer that emits well-formed observations by any means gets the OTel
+projection for free. That isolation contract is doing real work here, exactly as `addons/otel/index.ts`
+claims — this feedback exists *because* the design is right, not in spite of it.
+
+---
+
+## adorn dispositions — Round 2 (2026-08-19, DEC-073)
+
+Both reviewed under the standing gate; both needed an owner decision (L7 revisited the "Core adorn only" 0.1.0
+scope; L8 was a document-vs-new-API call). Owner decided both, and they are now **done on `master`**
+(unreleased). Rebuild your `file:../adorn` copy to pick up L7.
+
+| #  | Verdict | What we did |
+| -- | ------- | ----------- |
+| L7 | **Done** | `@adorn/otel` (and `@adorn/test`) now ship as opt-in **subpath exports** — `import { createOtelSink } from 'adorn/otel'`. Built into `dist/addons/**`; `@opentelemetry/api` / `fast-check` are **optional peer deps**; `require('adorn')` stays `{tslib}`-only (isolation tests re-scoped to the core + a positive "is built" check, all passing). No separate package to publish — you get it on the next rebuild of the `file:` dep. Verified: 0 peer requires in `dist/index.js`+`dist/src`, the peer require present only in `dist/addons/otel`. |
+| L8 | **Done (docs)** | Documented the non-decorator emit pattern — `getObservationSink().record?.({ kind:'completed', observation, callId, … })`, the observation analog of `Verify.check` — in the README's observability section (ships with the re-framed README). `record` is the point-event surface (`completed`/`violation`/`message`); `scope` is the around-wrapper for span nesting. No new API; a blessed emitter stays on the table if the pattern proves common. Your credit on the pure-`ObservationSink` mapping is exactly why this is a doc, not a redesign. |
 
 ---
 
@@ -282,6 +317,121 @@ which are pure — and the consumer has a standing rule that nothing a reducer c
 surface is unavailable to *any* concurrent server application, which is a larger constraint than its
 absence from the documentation suggests. A reader evaluating adorn for a server will not discover
 this until they are deep enough to have committed.
+
+---
+
+## L7 — `@adorn/otel` cannot be imported by a consumer, so the OTel binding is unreachable
+
+- [ ] **Give `addons/otel` an export path and ship it in the build**, or publish it as the separate
+      package its own header says it will be.
+
+**Evidence.** `addons/otel/index.ts` documents the intended consumer usage exactly:
+
+```ts
+import {setObservationSink} from 'adorn';
+import {createOtelSink} from '@adorn/otel';
+```
+
+The first line works. The second cannot, for three independent reasons, and the consumer hit all
+three in order:
+
+1. **`@adorn/otel` does not exist on npm**, so the import specifier resolves to nothing.
+2. **`addons/` is excluded from the library build**, so there is no `dist/addons/otel` to reach for
+   instead — deliberate and stated, but it means the only copy is TypeScript source.
+3. **`package.json`'s `exports` map declares only `"."`**, so even with the source physically present
+   `import 'adorn/addons/otel'` is refused by Node's resolver. This consumer installs adorn as
+   `file:../adorn`, which is a **directory junction to the working tree** — every file, including
+   `addons/otel/sink.ts`, is literally inside `node_modules/adorn`, and the export map still
+   (correctly) refuses it. A consumer can *see* the file and cannot import it.
+
+**Reproduction**, from a consumer with `"adorn": "file:../adorn"`:
+
+```ts
+import {createOtelSink} from 'adorn/addons/otel';
+// TS2307 / ERR_PACKAGE_PATH_NOT_EXPORTED — "Package subpath './addons/otel' is not defined by
+// 'exports' in .../adorn/package.json"
+```
+
+**Suggestion, in preference order.** Any of these unblocks it; the first is smallest.
+
+- Add a subpath export and include the addon in the build output:
+  ```jsonc
+  "exports": {
+      ".":      {"types": "./dist/index.d.ts",            "default": "./dist/index.js"},
+      "./otel": {"types": "./dist/addons/otel/index.d.ts", "default": "./dist/addons/otel/index.js"}
+  }
+  ```
+  This keeps the DEC-019/DEC-044 isolation contract intact — nothing OTel-shaped joins the root
+  surface, `isolation.test.ts` is unaffected, and `@opentelemetry/api` stays a peer that only a
+  consumer who imports `adorn/otel` has to install.
+- Or publish `@adorn/otel` as its own package, which is what the header anticipates.
+
+**What we are doing meanwhile**, so the workaround is on record rather than discovered later: the
+consumer writes its own `ObservationSink → OTel` mapping against the public interface. That is a
+second implementation of a mapping adorn already has and will drift from it — it is a stopgap, and
+we would drop it for `adorn/otel` the day either option above lands.
+
+**Why this is the blocker rather than a nice-to-have.** The observation layer's whole value to this
+consumer is the OTel projection. Without a reachable sink, `setObservationSink` has nothing useful to
+install and the observation stream terminates in `consoleObservationSink` or in something the
+consumer wrote — at which point adorn is supplying an event *shape* and none of the integration.
+
+---
+
+## L8 — the observation stream has no non-decorator emitter, and some consumers have no classes
+
+- [ ] **Consider a functional emitter** — or say plainly in the docs that the observation layer is
+      decorator-only, which is the cheaper half of this.
+
+**Evidence.** `Observe`, `Time` and `Log` all return `MethodDecorator`, so every documented way to
+*produce* an observation requires a class method plus `experimentalDecorators` /
+`emitDecoratorMetadata`. This consumer has **zero classes** (stated in the header of this document,
+and still true after the rewrite) and a `tsconfig` that deliberately sets neither flag. Its entire
+adorn usage is the functional projection API.
+
+So the sink half of the observation layer is fully reachable from a functional codebase and the
+emitter half is not reachable at all. That asymmetry is not stated anywhere we could find; the
+`ObservationSink` docs read as though installing a sink is the adoption step, and for us it was the
+*only* step available.
+
+**What we did.** Wrapped the seams by hand:
+
+```ts
+// consumer-side, ~60 lines
+export function observed<A extends unknown[], R>(
+    spec: {owner: string; member: string; kind: SpanKind},
+    fn: (...args: A) => R,
+): (...args: A) => R;
+```
+
+It builds an `Observation`, calls the installed sink around the call, and classifies the outcome.
+This works, and `createOtelSink` maps it identically to a decorated method — which is the strongest
+possible evidence that the sink's public-API-only design was the right call.
+
+**What it cost us, stated so the gap is priced rather than implied.** Three things a decorated method
+gets for free and ours does not:
+
+1. **Contract violations do not join the stream.** `@Requires`/`@Ensures`/reified constraint failures
+   feed `ViolationFacts` into the same observation; our `Verify.check` failures are ordinary returned
+   values, so a violated contract and a slow call are not correlated in one span.
+2. **We own the disclosure decision.** `@Telemetry.value()` / `@Sensitive` resolve to `[REDACTED]`
+   by default; our wrapper has to decide what to emit. Low stakes *here* — this consumer holds only
+   fixture data (`alice`, `bob`, `carol`) and has an explicit scope decision that redaction machinery
+   is out of scope — but it is precisely the safety property the O1c resolver exists to provide, and
+   any consumer with real data would be reimplementing it.
+3. **`ObservedParameter` / `EmittedValue` are ours to assemble**, so the structural facts are as good
+   as our wrapper is, not as good as adorn's reflection is.
+
+**Suggestion.** A factory mirroring the decorator — roughly
+`observe(spec, fn)` exported from the root, sharing the `observeBehavior` path that
+`installMethodWrapper` already uses internally — would make the observation layer reachable from
+functional code without changing the decorator surface at all. `installMethodWrapper(target: object,
+…)` already takes a plain object rather than a constructor, which suggests the machinery underneath
+is not class-bound; it is only the public entry points that are.
+
+**Not urgent, and we are not blocked.** Filed because "adorn is decorator-only for observation" is a
+fact worth a line in the README either way, and because this consumer is probably not the only
+functional codebase that will reach for the OTel binding.
 
 ---
 

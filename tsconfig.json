@@ -54,12 +54,12 @@
     // NOT library code and must never reach `dist/` or the runtime export surface — same rule as
     // `spike/` and `examples/`. It is typechecked by tsconfig.test.json and tested by jest.
     "tools",
-    // `addons/` is the opt-in `@adorn/test` fuzzing add-on (docs/fuzzing-foundation.md). It takes
-    // `fast-check` as a real devDependency and MUST never reach `dist/` or the runtime export
-    // surface — this is the DEC-019 isolation for fast-check, exactly as `tools/` is for the
-    // sensitive-flow detector. Excluding it here is what keeps `require('adorn')` free of fast-check
-    // (asserted by addons/test/isolation.test.ts). Typechecked by tsconfig.test.json, tested by jest.
-    "addons",
+    // `addons/otel` and `addons/test` are now BUILT into `dist/` as opt-in SUBPATH exports (`adorn/otel`,
+    // `adorn/test`) — DEC-073 / voice-agent L7. They were formerly excluded. The isolation guarantee is
+    // UNCHANGED in substance: `@opentelemetry/*` and `fast-check` stay optional PEER deps and never enter the
+    // CORE graph (`dist/index.js` + `dist/src/**` — `require('adorn')` stays `{tslib}`-only), only the add-on's
+    // own `dist/addons/**` may require them — asserted by the re-scoped isolation tests. `**/*.test.ts` below
+    // still keeps the add-on test files out of `dist`.
     // `examples/` is demonstration code, not library code. Before P0.4 the demo lived at
     // `src/Tests.ts` and was compiled into `dist/src/Tests.js` — the published package shipped
     // a demo script. Excluded here so that cannot happen again; `npm run demo` runs it through

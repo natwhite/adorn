@@ -3,9 +3,10 @@
  *
  * DEC-019 recorded that an eager import of an optional dependency (`rxjs`, via `@Memoize`) made
  * `require('adorn')` fail with `MODULE_NOT_FOUND`, and GAP-4 added a CI step asserting rxjs is
- * absent from the runtime tree. fast-check gets the same treatment: it is a devDependency confined
- * entirely to this add-on, core imports it nowhere, and the runtime library (`dist/`) and the runtime
- * export surface must show no trace of it. This file is that guarantee, executable.
+ * absent from the runtime tree. fast-check gets the same treatment: it is confined to this add-on and
+ * core imports it nowhere. Since DEC-073 ships the add-on as the opt-in `adorn/test` subpath, the CORE
+ * of the built library (`dist/index.js` + `dist/src/**`) and the root export surface must show no trace
+ * of it — the add-on's own `dist/addons/test/**` is where fast-check legitimately appears. Executable here.
  */
 
 import * as fs from 'fs';
@@ -40,7 +41,7 @@ describe('fast-check stays out of core (DEC-019, the rxjs lesson)', () => {
         expect(offenders).toEqual([]);
     });
 
-    it('the built runtime library (dist) contains no require("fast-check")', () => {
+    it('the built CORE (dist/index.js + dist/src) contains no require("fast-check") — dist/addons/test may (DEC-073)', () => {
         const distIndex = path.join(ROOT, 'dist', 'index.js');
         if (!fs.existsSync(distIndex)) {
             // Not built in this run; the source scan above is the build-independent guarantee, and
@@ -48,15 +49,22 @@ describe('fast-check stays out of core (DEC-019, the rxjs lesson)', () => {
             return;
         }
         const REQUIRE_RE = /require\(\s*['"]fast-check['"]\s*\)/;
-        const offenders = walk(path.join(ROOT, 'dist'), '.js').filter(file =>
-            REQUIRE_RE.test(fs.readFileSync(file, 'utf8')),
-        );
+        // Scope to the CORE only. `dist/addons/test/**` is the shipped opt-in subpath (DEC-073) and is
+        // ALLOWED to require fast-check; the invariant is that the root graph (`require('adorn')`) never does.
+        const coreFiles = [distIndex, ...walk(path.join(ROOT, 'dist', 'src'), '.js')];
+        const offenders = coreFiles.filter(file => REQUIRE_RE.test(fs.readFileSync(file, 'utf8')));
         expect(offenders).toEqual([]);
+    });
+
+    it('the add-on IS built into dist as the adorn/test subpath export (DEC-073)', () => {
+        if (!fs.existsSync(path.join(ROOT, 'dist', 'index.js'))) return; // not built in this run
+        expect(fs.existsSync(path.join(ROOT, 'dist', 'addons', 'test', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(ROOT, 'dist', 'addons', 'test', 'index.d.ts'))).toBe(true);
     });
 });
 
 describe('the runtime export surface is unchanged by the add-on', () => {
-    it('the add-on is NOT re-exported from the root index (it is a separate @adorn/test package)', () => {
+    it('the add-on is NOT re-exported from the root index (it is the adorn/test subpath, not a root re-export)', () => {
         const addonNames = [
             'fuzzMethod',
             'fuzzClass',
