@@ -168,10 +168,33 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // optional field / type-only; the `providerStrict` option (Slice D) is type-only; and the authoring types
     // (`ConstraintDefinition`/`ConstraintKind`/`Predicate`/`ViolationContext`/`JsonObject`/`JsonValue`/
     // `ConstraintFactory`) are type-only. `getConstraintDefinition` stays internal (returns `<any>`).
-    const PINNED_VALUE_EXPORT_COUNT = 96;
+    //
+    // 96 → 99: voice-agent Round 3 (DEC-074) adds THREE value exports — `violationFromCheck` (L11, translate a
+    // functional check failure into ViolationFacts for the observation stream), the `createConsoleObservationSink`
+    // factory (L12, configurable console-sink stream), and `contract` (L9, the functional twin of the contract /
+    // observation decorators). `Verify.checkJson` (L10) is a new STATIC on the existing `Verify` export, and the
+    // `CheckResult.malformedJson` flag / `CheckFailure` / `ContractSpec` are an added optional field / type-only —
+    // none move the count.
+    const PINNED_VALUE_EXPORT_COUNT = 99;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
+    });
+});
+
+describe('voice-agent Round 3 adds exactly its intended functional-surface exports (DEC-074)', () => {
+    it('exports violationFromCheck (L11)', () => {
+        expect(typeof (adorn as Record<string, unknown>).violationFromCheck).toBe('function');
+    });
+    it('exports createConsoleObservationSink (L12)', () => {
+        expect(typeof (adorn as Record<string, unknown>).createConsoleObservationSink).toBe('function');
+    });
+    it('exports the contract() functional wrapper (L9)', () => {
+        expect(typeof (adorn as Record<string, unknown>).contract).toBe('function');
+    });
+    it('adds Verify.checkJson as a static on the existing Verify export (L10), not a new root export', () => {
+        expect(typeof adorn.Verify.checkJson).toBe('function');
+        expect(adorn).not.toHaveProperty('checkJson');
     });
 });
 

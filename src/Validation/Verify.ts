@@ -70,6 +70,7 @@
 import {ConstraintDescriptor, ConstraintKind, ConstraintParams} from '../Core/Descriptor';
 import {GreaterThanEqual, LessThanEqual} from '../Contracts/number';
 import {shouldDiscloseValue} from '../Core/redaction';
+import type {ViolationFacts} from '../Core/Observation';
 
 /**
  * The result of {@link Verify.check} — a discriminated union so a caller can branch on a violation
@@ -102,6 +103,14 @@ export type CheckResult<T> =
            * so it never leaks the received value (DEC-030).
            */
           readonly expected?: string;
+          /**
+           * Set by {@link Verify.checkJson} (voice-agent L10, DEC-074) when the *envelope* was not valid
+           * JSON at all — as opposed to valid JSON of the wrong shape (the ordinary failure, where this is
+           * absent). Lets an LLM boundary tell the model the truth — "your JSON was malformed", not "your
+           * fields are missing" — which a `JSON.parse`-to-`{}` fallback erases before `check` ever sees it.
+           * Never carries the raw text (it may hold sensitive data); the distinction alone is the payload.
+           */
+          readonly malformedJson?: true;
       };
 
 /**
@@ -193,6 +202,40 @@ export class Verify {
         };
     }
 
+    /**
+     * The JSON-envelope sibling of {@link Verify.check} (voice-agent L10, DEC-074). Every LLM tool call
+     * arrives as a JSON **string**, so the real boundary is `string → JSON.parse → unknown → check` — a hop
+     * that belongs to nobody and therefore drifts. `checkJson` owns it: it parses `raw`, then runs the SAME
+     * `check`, so a *malformed envelope* and a *wrong shape* become two distinguishable failures, not one.
+     *
+     * On a parse failure it returns `{ok:false, malformedJson:true}` — so an LLM boundary can tell the model
+     * "your JSON was malformed" instead of the misleading "your fields are missing" that a `parse`-to-`{}`
+     * fallback produces. On success it returns the validated, narrowed value exactly as {@link Verify.check}.
+     *
+     * This is the JSON *envelope* — the object the tool-call protocol delivers and `toolSchemaFrom` already
+     * describes — NOT a field's value encoding (that was L5, declined: a field's transport is the caller's).
+     * The raw text is never placed in the message (it may be sensitive); only the classification is returned.
+     */
+    static checkJson<T>(
+        constraint: ConstraintDescriptor<ConstraintParams, T>,
+        keyName: string | symbol,
+        raw: string,
+    ): CheckResult<T> {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            return {
+                ok: false,
+                malformedJson: true,
+                message: `Value Error: ${String(keyName)} was not valid JSON`,
+                constraint: 'malformedJson',
+                kind: 'generic',
+            };
+        }
+        return Verify.check(constraint, keyName, parsed);
+    }
+
     /*
      * `Verify.positive` was removed by DEC-020. Use `Verify.that(GreaterThan(0), key, value)` for
      * the strict boundary, or `Verify.greaterThanEqual(key, value, 0)` if `0` should pass.
@@ -215,4 +258,41 @@ export class Verify {
     static greaterThanEqual(keyName: string | symbol, value: unknown, min: number): number {
         return Verify.that(GreaterThanEqual(min), keyName, value);
     }
+}
+
+/** A failed {@link CheckResult} — the `ok: false` arm, the only input {@link violationFromCheck} accepts. */
+export type CheckFailure = Extract<CheckResult<unknown>, {ok: false}>;
+
+/**
+ * Translate a failed {@link Verify.check} into {@link ViolationFacts} (voice-agent L11, DEC-074), so a
+ * FUNCTIONAL validation failure can be emitted as a `violation` observation event — the same stream the
+ * decorator enforcement weave feeds. Without it, a zero-class consumer's refusals are invisible as
+ * violations (they surface only as ordinary returned values), so in a trace a slow call and a *refused*
+ * call look identical.
+ *
+ * A pure mapping: the `CheckResult` already carries `constraint`, `kind`, the localized `expected`, and
+ * `path`; the caller supplies the `trust`/`blame`/parameter identity the enforcement SITE would have added
+ * (defaults `guard`/`caller` — the posture of validating untrusted input at a boundary). `params` is empty:
+ * a `CheckResult` does not carry the descriptor's params, exactly as an `@Ensures` closure violation
+ * degrades — the value-free facts stay honest rather than invented. Feeds `adorn/otel`'s `violationAttributes`.
+ */
+export function violationFromCheck(
+    result: CheckFailure,
+    options?: {
+        readonly parameter?: string;
+        readonly index?: number;
+        readonly trust?: 'guard' | 'assert';
+        readonly blame?: 'caller' | 'callee';
+    },
+): ViolationFacts {
+    return {
+        constraint: result.constraint,
+        kind: result.kind,
+        params: {},
+        expectation: result.expected || result.message,
+        ...(options && typeof options.parameter === 'string' ? {parameterName: options.parameter} : {}),
+        parameterIndex: options && typeof options.index === 'number' ? options.index : 0,
+        trust: (options && options.trust) || 'guard',
+        blame: (options && options.blame) || 'caller',
+    };
 }

@@ -23,6 +23,10 @@ classes, zero module-scope mutable state.
 | L6  | Ambient configuration is process-global               | **Yes**, for half the library |
 | L7  | `@adorn/otel` is unreachable from a consumer          | ~~Yes~~ — **fixed 2026-08-19** |
 | L8  | The observation stream has no non-decorator emitter   | ~~No~~ — **documented 2026-08-19** |
+| L9  | No descriptor-first twin for the contract decorators  | No — but it caps adoption at 25% |
+| L10 | `check` cannot tell malformed JSON from a wrong shape | No — costs a misleading refusal |
+| L11 | A `CheckResult` cannot become a `violation` event     | No — two streams that should be one |
+| L12 | `consoleObservationSink` writes to `console.log`      | No — unusable on a stdout-is-product CLI |
 
 ---
 
@@ -62,6 +66,37 @@ the isolation (`require('adorn')` = 96 exports / 0 otel-shaped) and for the end-
 one correction into the observability doc: it now states plainly that `scope` **opens** the span while the
 correlated `completed` event **ends** it (matched by `callId`, DEC-047) — so a manual driver doesn't end it in
 `scope` and flatten every async span. That was the exact trap the doc exists to prevent; good catch.
+
+---
+
+## adorn dispositions — Round 3 (2026-08-20, DEC-074)
+
+Detail received; owner decided all four via the standing gate — **build `contract()`**, plus all three smaller
+items. All **done on `master`** (unreleased); rebuild your `file:../adorn` copy to pick them up. Surface 96 → 99.
+
+| #   | Verdict | What we did |
+| --- | ------- | ----------- |
+| L9  | **Done** | `contract(spec, fn)` — the functional twin of `@Contract`/`@Requires`/`@Ensures`/`@Returns`/`@Observe`. `{params (positional, `null` holes), requires, ensures, returns, observe}`, one entry point over the descriptors you already have. Reuses the SAME oracles the decorator weave runs (`evaluatePreconditions`/`evaluatePostconditions`, descriptor predicates via `Verify.check`, `settle` for async) — no drift. A violation throws a plain `Error` and, with `observe` set, emits `ViolationFacts` as a `violation` event on the installed sink (via L11). Your `null`-hole and single-entry-point asks are honoured; the `\|\| 'reason'` sketch became boolean + optional `description` (the `\|\|` form reads a truthy reason-string as *pass*). `ensures`' `result` is typed `any`, not `unknown`, so you annotate without a cast. |
+| L10 | **Done** | `Verify.checkJson(descriptor, key, raw)` — parses the JSON *envelope*, returns the validated value or `{ok:false, malformedJson:true}` on a parse failure (vs the ordinary shape failure). You can tell the model the truth. A static on `Verify` (no root export); never leaks the raw text. Distinct from the declined L5 (that was a field's value encoding; this is the envelope `toolSchemaFrom` describes). |
+| L11 | **Done** | `violationFromCheck(result, {parameter?, index?, trust?, blame?})` → `ViolationFacts`, exported from the root. A functional `check` failure now feeds the same `violation` stream `adorn/otel` already maps — the two streams become one. `contract()` uses it internally, so the L9/L11 loop is closed. |
+| L12 | **Done** | `createConsoleObservationSink(write = console.log)` — the factory you asked for, configurable with the default unchanged. `consoleObservationSink` is untouched; `createConsoleObservationSink(console.error)` keeps observations off a stdout-is-product CLI. |
+
+**→ consumer:** Fair, and the timing was ours — you read the table between our writing the rows and
+writing the sections. **The detail has now landed**: `## L9`–`## L12` below, each with evidence, a
+reproduction where one exists, and a specific suggestion. Three notes on your initial read, all of
+which it got right:
+
+- **L9 is the L4 theme re-raised, and you named it better than we did.** Worth adding: it is *already
+  solved three times* — `toolSchemaFrom` is `@Tool` without a class, `ToolParamSpec` is
+  `@Optional`/`@Describe`/`@Default` without a class, `Verify.check` is parameter contracts without a
+  class. Those three are the entire reason this adoption exists. We are asking for the fourth, not
+  for a new paradigm. Agreed it is an owner decision.
+- **L12's preferred shape: configurable, defaulting to `console.log`.** Default-stderr would be a
+  silent behaviour change for every existing user to serve one CLI. One optional parameter changes
+  nothing for anyone who does not pass it.
+- **L10 — the discriminator you asked for** is *"was this a parse failure or a shape failure"*. A
+  `kind: 'malformedJson'` on the existing `CheckResult` failure is enough; we do not need the parsed
+  value back, only the ability to tell the model the truth about which one it did.
 
 ---
 
@@ -470,6 +505,199 @@ is not class-bound; it is only the public entry points that are.
 **Not urgent, and we are not blocked.** Filed because "adorn is decorator-only for observation" is a
 fact worth a line in the README either way, and because this consumer is probably not the only
 functional codebase that will reach for the OTel binding.
+
+---
+
+# Round 3 — 2026-08-19, an adoption audit
+
+Prompted by the owner asking us to *"ensure we've made use of adorn wherever possible"*. We audited
+every declared contract against what the tool behind it enforces, and every adorn export against
+what we import. **One real defect found in our code** (a phone-number rule the model was judged by
+and never shown — BUG-54's shape, fixed), and four things about adorn worth writing down.
+
+Measured adoption: **19 of 96 root exports**, plus `createOtelSink` from `adorn/otel`. The other 77
+are not unwanted — L9 is why.
+
+---
+
+## L9 — the decorator surface has no descriptor-first twin, and that caps adoption
+
+- [ ] **Give the contract and observation decorators a functional form**, the way `toolSchemaFrom`
+      already gives `@Tool` one.
+
+**Evidence.** Sorting adorn's unused exports by *why* they are unused is the whole finding:
+
+| Unused because | Examples | Count |
+| --- | --- | --- |
+| **Is a decorator**, so needs a class | `@Requires`, `@Ensures`, `@Returns`, `@Observe`, `@Time`, `@Log`, `@Sensitive`, `@Telemetry`, `@Tool`, `@Contract`, `@Enforce`, `@Validate`, the field decorators | 17 |
+| **Reads decorator metadata**, so needs a class to have been decorated | `getContracts`, `getEffectiveContract`, `evaluatePreconditions`, `documentClass`, `schemaForClass`, `telemetryForClass`, … | 28 |
+| Genuinely not needed here | ambient `set*` config, `Ipv4`, `Uuid`, … | the rest |
+
+**45 of 96 — just under half the library — are unreachable for a single reason**, and it is not that
+they do the wrong thing. Counted, not estimated: `Object.keys(require('adorn'))` is 96; the two
+groups above are 17 and 28.
+
+So **almost nothing is unused on the merits.** It is unused because this consumer has zero classes,
+which the header of this document has said since Round 1 and which is still true after a rewrite that
+deleted 20,000 lines. A codebase can adopt adorn's *projections* completely and its *behaviour* not
+at all.
+
+**adorn has already solved this three times, which is why we think it is tractable rather than a
+redesign.** Each of these is a decorator's job available as a function:
+
+| Decorator | Functional twin | We use |
+| --- | --- | --- |
+| `@Tool` | `toolSchemaFrom({params})` | ✅ every verb |
+| `@Optional` / `@Describe` / `@Default` | `ToolParamSpec` (`{descriptor, optional, description, default}`) | ✅ every optional param |
+| parameter contracts | `Verify.check(descriptor, path, value)` | ✅ every tool call |
+
+That trio is the entire reason this adoption exists. The gap is that the pattern stops there.
+
+**What has no twin, in the order we would use them:**
+
+1. **`@Requires` / `@Ensures` / `@Returns`.** We have preconditions — `rescheduleMany` refuses a plan
+   whose end state does not fit, `commit` refuses a write the caller has not answered — and they are
+   hand-written `if` statements returning typed rejections. They *should* be contracts; they cannot be.
+2. **`@Observe` / `@Time`.** L8, already documented rather than built. Our `observed()` is ~60 lines
+   and every consumer that needs this will write a slightly different one.
+3. **`@Sensitive` / `@Telemetry`.** The disclosure resolver is the safety property we most wanted and
+   the one we had to reimplement as "emit nothing and let each seam opt in by hand".
+
+**Suggestion.** Not a decorator emulator — a `contract()` factory mirroring what `toolParams` already
+does for schemas, taking descriptors and returning a wrapped function:
+
+```ts
+const rescheduleMany = contract(
+    {
+        // Positional, so an unconstrained parameter is a hole rather than a made-up descriptor —
+        // `store` is an object we own and have nothing to say about.
+        params: [null, ObjectContracts.Fields({moves: ArrayContracts.ArrayOf(moveShape)})],
+        requires: [(_store, args) => args.moves.length > 0 || 'nothingToDo'],
+        ensures: [result => result.outcome !== 'committed' || result.moved.length > 0],
+        returns: ObjectContracts.Fields({outcome: EnumContracts.OneOf([...OUTCOMES])}),
+        observe: {kind: 'client'},
+    },
+    (store: Store, args: RescheduleManyArgs) => { /* … */ },
+);
+```
+
+(Shape sketched, not proposed — the point is one entry point taking the descriptors we already have,
+not this exact signature. Note the `null` hole: `params` needs a way to say *"not every argument is
+contract-shaped"*, which `toolSchemaFrom`'s named-record form does not currently need to express.)
+
+One entry point, the same descriptors, and violations landing on the **existing** `ObservationSink`
+as `violation` events — which is L11, and is what makes this worth more than syntax sugar.
+
+**Why we are not calling this a blocker.** We are not blocked; we wrote the 60 lines. It is filed
+because *"adorn is a decorator library with some functional projections"* and *"adorn is a
+descriptor library with a decorator front-end"* are different products with different audiences, and
+the second one is the one we could have adopted whole.
+
+---
+
+## L10 — `check` takes `unknown`, but every LLM tool call arrives as a JSON *string*
+
+- [ ] **A `Verify.checkJson(descriptor, path, raw)`** that distinguishes *"that was not JSON"* from
+      *"that was JSON of the wrong shape"*.
+
+**Evidence.** The OpenAI Realtime API — and Chat Completions, and every provider we know of —
+delivers a function call's `arguments` as a **JSON string**, not an object. So the real chain at an
+LLM boundary is:
+
+```
+string  →  JSON.parse  →  unknown  →  Verify.check  →  typed value
+          ^^^^^^^^^^^^^^^^^^^^^^^
+          nobody's, so it is ours
+```
+
+We hand-rolled that hop, and because it is nobody's it drifted: **the same function existed in both
+our transports with different behaviour on the same input**, untested, until this audit. That is our
+bug and we have fixed it (one `parseToolArguments`, five cases pinned). We raise it because the hop
+is *universal* to adorn's stated use case, and every consumer will write it.
+
+**The part adorn could fix that we cannot.** Our parser returns `{}` for malformed JSON, so:
+
+```
+model sends:  {"verb":"reschedule","moves":[{"patientId":  ← truncated, malformed
+we parse to:  {}
+check says:   "arguments expected an object with fields verb, moves"
+```
+
+The model is told **its fields are missing**. They were not; its JSON was truncated. It will
+plausibly resend the same fields and the same truncation. On 2026-08-18 a `rescheduleAppointment`
+arrived as `{}` and was refused for missing fields — and nothing in the log can say which failure it
+actually was, because the parse erased the distinction before `check` ever saw it.
+
+Only the thing that does the parsing can tell those apart, and `check` does not parse.
+
+**Why this is not L5 in different clothes.** L5 (`check` validates but does not normalise) was
+declined on the grounds that *"a delimited-string is a transport concern, not a contract"*, and we
+agreed — that was about a **field's value** (`"a,b,c"` → `['a','b','c']`), where the encoding is the
+consumer's business. This is the **envelope**: the JSON object that carries every field, whose
+encoding is fixed by the LLM tool-call protocol adorn's `toolSchemaFrom` exists to serve. adorn
+already knows this shape; it emits the schema the string is supposed to conform to.
+
+**Suggestion.** `CheckResult` grows one more failure mode rather than a new type:
+
+```ts
+Verify.checkJson(shape, 'arguments', rawString)
+// {ok: false, kind: 'malformedJson', message: 'arguments was not valid JSON'}
+// vs the existing field failure, unchanged
+```
+
+If that is too much surface, even exporting the classification — *"is this a parse failure or a
+shape failure"* — would let us produce the right refusal.
+
+---
+
+## L11 — a `CheckResult` failure cannot become a `violation` observation
+
+- [ ] **A way to turn a failed `CheckResult` into `ViolationFacts`**, so the functional path feeds the
+      same observation stream the decorator path does.
+
+**Evidence.** `ObservationEvent` has three variants and we can only ever produce one:
+
+| Variant | Produced by | Can we? |
+| --- | --- | --- |
+| `completed` | our `observed()` wrapper | ✅ |
+| `violation` | adorn's enforcement weave, from `@Requires`/`@Ensures` | ❌ — no weave without classes |
+| `message` | `@Log` | ❌ |
+
+So in our traces a slow call and a **refused** call are both just `completed`. The refusal — a model
+sending `notBefore: "2:00 PM"`, or a phone number that fails its pattern — is the single most useful
+thing to count, and it is invisible as a violation. We get it as an ordinary returned value (DEC-018,
+which we still want) and have nowhere to put it.
+
+We are not asking for the enforcement weave. We are asking for the *translation*: we already hold a
+`CheckResult` with `constraint`, `kind`, `message` and `path` — which reads like `ViolationFacts`
+minus the `trust`/`blame` the enforcement site adds.
+
+**Suggestion.** `violationFromCheck(result, {parameter})` → `ViolationFacts`, exported from the root.
+Ten lines in adorn, and it makes `adorn/otel`'s existing `violationAttributes` reachable from a
+functional consumer — you already wrote the span-event mapping; nothing can currently feed it.
+
+---
+
+## L12 — `consoleObservationSink` writes to `console.log`, with no way to redirect it
+
+- [ ] **Take a sink function** — `consoleObservationSink(write = console.log)` — or export the
+      formatter separately.
+
+**Evidence.** We wanted this. With no OTLP endpoint configured our observation seams are inert, and a
+zero-infrastructure local view is exactly right for `agent voice --verbose`. We could not use it.
+
+This CLI's **stdout is the product**: `agent voice` prints the conversation (`you> `, `agent> `) to
+stdout and everything diagnostic to stderr, and `main.ts` owns both handles and injects them
+everywhere — no module below it writes to a stream it was not given. `console.log` goes to stdout, so
+installing this sink interleaves one JSON line per observation into the middle of a transcript
+someone is reading, or piping.
+
+Not a design flaw so much as an assumption worth naming: *"local visibility"* and *"stdout is free"*
+are the same assumption, and they come apart on any CLI whose output is its purpose.
+
+**Suggestion.** One optional parameter. The default stays `console.log` and nothing changes for
+anyone; we would pass `text => process.stderr.write(text)` and get the out-of-the-box visibility the
+docstring promises.
 
 ---
 

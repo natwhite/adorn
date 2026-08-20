@@ -354,24 +354,40 @@ function recordSafely(sink: ObservationSink, event: ObservationEvent): void {
 // A ready-made zero-dependency console sink (opt-in; not installed by default)
 // ---------------------------------------------------------------------------
 
-/**
- * A plain, zero-dependency {@link ObservationSink} that writes one JSON line per event to `console.log`,
- * for out-of-the-box local visibility. Record-only (its `scope` would just be `proceed()`, so it is
- * omitted). It renders exactly the pre-disclosed `values` the resolver produced — a value shows only when a
- * `@Telemetry` opt-in (or `setValueDisclosure('all')`) permitted it, and `[REDACTED]` otherwise. Install it
- * with `setObservationSink(consoleObservationSink)`; it is never installed automatically (the automatic
- * signal stays quiet until a sink is chosen).
- */
-export const consoleObservationSink: ObservationSink = {
-    record(event: ObservationEvent): void {
-        if (typeof console === 'undefined' || typeof console.log !== 'function') return;
-        try {
-            console.log(`[adorn:observe] ${JSON.stringify(summarize(event))}`);
-        } catch {
-            // A logging sink must never fail the call it is observing.
-        }
-    },
+/** The default writer: one line to `console.log`, guarded for environments without a console. */
+const consoleWrite = (line: string): void => {
+    if (typeof console !== 'undefined' && typeof console.log === 'function') console.log(line);
 };
+
+/**
+ * Build a zero-dependency {@link ObservationSink} that writes one JSON line per event through `write`
+ * (voice-agent L12, DEC-074). `write` defaults to `console.log`; pass `console.error` — or any
+ * `(line) => void` — to keep observations off a stream that is the product. Record-only (its `scope` would
+ * just be `proceed()`, so it is omitted). It renders exactly the pre-disclosed `values` the resolver produced
+ * — a value shows only under a `@Telemetry` opt-in (or `setValueDisclosure('all')`), `[REDACTED]` otherwise.
+ * A writer that throws is swallowed: a logging sink must never fail the call it observes.
+ *
+ * `stdout` is not free: a CLI whose stdout IS its output (a transcript, a pipe) installs
+ * `createConsoleObservationSink(console.error)` so diagnostics land on stderr instead.
+ */
+export function createConsoleObservationSink(write: (line: string) => void = consoleWrite): ObservationSink {
+    return {
+        record(event: ObservationEvent): void {
+            try {
+                write(`[adorn:observe] ${JSON.stringify(summarize(event))}`);
+            } catch {
+                // A logging sink must never fail the call it is observing.
+            }
+        },
+    };
+}
+
+/**
+ * The ready-made console sink — `createConsoleObservationSink()` with the default `console.log` writer, kept
+ * as a value export for the common case. Install with `setObservationSink(consoleObservationSink)`; never
+ * installed automatically. For a stdout-is-product CLI, prefer `createConsoleObservationSink(console.error)`.
+ */
+export const consoleObservationSink: ObservationSink = createConsoleObservationSink();
 
 function summarize(event: ObservationEvent): object {
     const name = event.observation.name;

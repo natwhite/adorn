@@ -40,8 +40,12 @@ import {Tool} from './src/Markers/Tool';
 // --- Imperative assertion (for call sites with no decoration point) --------
 // `Verify.that` throws; `Verify.check` (DEC-053) returns a discriminated `CheckResult` instead — the
 // non-throwing path an untrusted I/O boundary needs (a bad body → a `400` as a value, not an exception).
-import {Verify} from './src/Validation/Verify';
-export type {CheckResult} from './src/Validation/Verify';
+import {Verify, violationFromCheck} from './src/Validation/Verify';
+export type {CheckResult, CheckFailure} from './src/Validation/Verify';
+// `contract()` — the functional twin of @Contract/@Requires/@Ensures/@Returns/@Observe (L9, DEC-074),
+// so a zero-class codebase can enforce a contract on a plain function from descriptors, no decoration point.
+import {contract} from './src/Functional/contract';
+export type {ContractSpec} from './src/Functional/contract';
 // The reified constraint type (GAP-22) — the declared parameter type of `@Dictionary`/`@ArrayOf`/`@Nullable`
 // and the shape `Verify.that`/`check` narrow from. Type-only; carries the phantom output param (DEC-059),
 // so `ConstraintDescriptor<ConstraintParams, string>` names a string-producing constraint.
@@ -111,7 +115,7 @@ import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 import {setObservationSink, getObservationSink, RETURN_INDEX} from './src/Core/Observation';
 import {settle} from './src/Core/settle';
 // O1c: a ready-made zero-dependency JSON-to-console sink (opt-in; never installed automatically).
-import {consoleObservationSink} from './src/Adapters/legacy/ObservationBehavior';
+import {consoleObservationSink, createConsoleObservationSink} from './src/Adapters/legacy/ObservationBehavior';
 
 // --- Registry introspection (Q-6: this surface is now semver-relevant) -----
 // Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,
@@ -281,6 +285,10 @@ export {
 
     // Imperative assertion
     Verify,
+    // Translate a functional check failure into ViolationFacts for the observation stream (L11, DEC-074)
+    violationFromCheck,
+    // The functional contract wrapper — enforcement (params/requires/returns/ensures/observe) without a class (L9)
+    contract,
 
     // Method decorators
     Log, Time, setTimingSink,
@@ -348,7 +356,7 @@ export {
     // @adorn/otel adapter (DEC-019) ends spans with. `RETURN_INDEX` marks the return value in an
     // EmittedValue. `consoleObservationSink` is a ready-made zero-dep JSON-to-console sink (opt-in; never
     // installed automatically). NOOP_SINK / ViolationError stay internal.
-    setObservationSink, getObservationSink, settle, RETURN_INDEX, consoleObservationSink,
+    setObservationSink, getObservationSink, settle, RETURN_INDEX, consoleObservationSink, createConsoleObservationSink,
 
     // Registry introspection — what the projections read
     getContracts, getContract, getContractedClasses, getContractsForClass,
