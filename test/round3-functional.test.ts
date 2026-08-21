@@ -1,6 +1,6 @@
 /**
- * Voice-agent Round 3 functional-surface additions (DEC-074): `Verify.checkJson` (L10),
- * `violationFromCheck` (L11), and `createConsoleObservationSink` (L12).
+ * Voice-agent Round 3 functional-surface additions (DEC-074): `violationFromCheck` (L11) and
+ * `createConsoleObservationSink` (L12).
  */
 
 import {
@@ -25,36 +25,6 @@ function asFail(r: CheckResult<unknown>): CheckFailure {
     if (r.ok) throw new Error('expected a failed CheckResult');
     return r as CheckFailure;
 }
-
-describe('L10 — Verify.checkJson distinguishes a malformed envelope from a wrong shape', () => {
-    it('parses valid JSON of the right shape and returns the narrowed value', () => {
-        const r = Verify.checkJson(shape, 'args', '{"name":"Al","age":30}');
-        expect(r.ok).toBe(true);
-        if (r.ok) expect(r.value).toEqual({name: 'Al', age: 30});
-    });
-
-    it('flags malformed JSON with malformedJson:true and never says "fields missing"', () => {
-        const r = asFail(Verify.checkJson(shape, 'args', '{"name":"Al","age":'));
-        expect(r.malformedJson).toBe(true);
-        expect(r.message).toMatch(/not valid JSON/i);
-        expect(r.message).not.toMatch(/field/i);
-    });
-
-    it('a non-string / non-JSON primitive is malformed too', () => {
-        expect(asFail(Verify.checkJson(shape, 'args', 'not json at all')).malformedJson).toBe(true);
-    });
-
-    it('valid JSON of the WRONG shape is an ordinary shape failure (no malformedJson), localized', () => {
-        const r = asFail(Verify.checkJson(shape, 'args', '{"age":30}')); // name missing
-        expect(r.malformedJson).toBeUndefined();
-        expect(r.path).toEqual(['name']);
-    });
-
-    it('never leaks the raw text into the message', () => {
-        const secret = '{"ssn":"123-45-6789"'; // malformed, carries a secret
-        expect(asFail(Verify.checkJson(shape, 'args', secret)).message).not.toContain('123-45-6789');
-    });
-});
 
 describe('L11 — violationFromCheck maps a failed CheckResult onto ViolationFacts', () => {
     it('carries constraint/kind and the localized expectation, with boundary defaults', () => {

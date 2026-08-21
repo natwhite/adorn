@@ -103,14 +103,6 @@ export type CheckResult<T> =
            * so it never leaks the received value (DEC-030).
            */
           readonly expected?: string;
-          /**
-           * Set by {@link Verify.checkJson} (voice-agent L10, DEC-074) when the *envelope* was not valid
-           * JSON at all — as opposed to valid JSON of the wrong shape (the ordinary failure, where this is
-           * absent). Lets an LLM boundary tell the model the truth — "your JSON was malformed", not "your
-           * fields are missing" — which a `JSON.parse`-to-`{}` fallback erases before `check` ever sees it.
-           * Never carries the raw text (it may hold sensitive data); the distinction alone is the payload.
-           */
-          readonly malformedJson?: true;
       };
 
 /**
@@ -200,40 +192,6 @@ export class Verify {
             ...(loc && loc.path && loc.path.length > 0 ? {path: loc.path} : {}),
             ...(loc && loc.expected ? {expected: loc.expected} : {}),
         };
-    }
-
-    /**
-     * The JSON-envelope sibling of {@link Verify.check} (voice-agent L10, DEC-074). Every LLM tool call
-     * arrives as a JSON **string**, so the real boundary is `string → JSON.parse → unknown → check` — a hop
-     * that belongs to nobody and therefore drifts. `checkJson` owns it: it parses `raw`, then runs the SAME
-     * `check`, so a *malformed envelope* and a *wrong shape* become two distinguishable failures, not one.
-     *
-     * On a parse failure it returns `{ok:false, malformedJson:true}` — so an LLM boundary can tell the model
-     * "your JSON was malformed" instead of the misleading "your fields are missing" that a `parse`-to-`{}`
-     * fallback produces. On success it returns the validated, narrowed value exactly as {@link Verify.check}.
-     *
-     * This is the JSON *envelope* — the object the tool-call protocol delivers and `toolSchemaFrom` already
-     * describes — NOT a field's value encoding (that was L5, declined: a field's transport is the caller's).
-     * The raw text is never placed in the message (it may be sensitive); only the classification is returned.
-     */
-    static checkJson<T>(
-        constraint: ConstraintDescriptor<ConstraintParams, T>,
-        keyName: string | symbol,
-        raw: string,
-    ): CheckResult<T> {
-        let parsed: unknown;
-        try {
-            parsed = JSON.parse(raw);
-        } catch {
-            return {
-                ok: false,
-                malformedJson: true,
-                message: `Value Error: ${String(keyName)} was not valid JSON`,
-                constraint: 'malformedJson',
-                kind: 'generic',
-            };
-        }
-        return Verify.check(constraint, keyName, parsed);
     }
 
     /*

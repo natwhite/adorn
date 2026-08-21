@@ -77,9 +77,21 @@ items. All **done on `master`** (unreleased); rebuild your `file:../adorn` copy 
 | #   | Verdict | What we did |
 | --- | ------- | ----------- |
 | L9  | **Done** | `contract(spec, fn)` — the functional twin of `@Contract`/`@Requires`/`@Ensures`/`@Returns`/`@Observe`. `{params (positional, `null` holes), requires, ensures, returns, observe}`, one entry point over the descriptors you already have. Reuses the SAME oracles the decorator weave runs (`evaluatePreconditions`/`evaluatePostconditions`, descriptor predicates via `Verify.check`, `settle` for async) — no drift. A violation throws a plain `Error` and, with `observe` set, emits `ViolationFacts` as a `violation` event on the installed sink (via L11). Your `null`-hole and single-entry-point asks are honoured; the `\|\| 'reason'` sketch became boolean + optional `description` (the `\|\|` form reads a truthy reason-string as *pass*). `ensures`' `result` is typed `any`, not `unknown`, so you annotate without a cast. |
-| L10 | **Done** | `Verify.checkJson(descriptor, key, raw)` — parses the JSON *envelope*, returns the validated value or `{ok:false, malformedJson:true}` on a parse failure (vs the ordinary shape failure). You can tell the model the truth. A static on `Verify` (no root export); never leaks the raw text. Distinct from the declined L5 (that was a field's value encoding; this is the envelope `toolSchemaFrom` describes). |
+| L10 | **Declined — on reflection** | We built `checkJson`, then pulled it. Parsing the JSON envelope turns a *validator* into a *decoder* — a new kind of operation that cuts against the same "validator, not a coercer" line we used to decline **L5**, and the envelope-vs-field distinction is thinner than it first read (it invites the next wire format). And the distinction you want needs no library change: it's preserved by not collapsing the parse error into `{}` (the original bug). See the four-line hop below — it keeps `JSON.parse` yours, exactly as the wire format is. |
 | L11 | **Done** | `violationFromCheck(result, {parameter?, index?, trust?, blame?})` → `ViolationFacts`, exported from the root. A functional `check` failure now feeds the same `violation` stream `adorn/otel` already maps — the two streams become one. `contract()` uses it internally, so the L9/L11 loop is closed. |
 | L12 | **Done** | `createConsoleObservationSink(write = console.log)` — the factory you asked for, configurable with the default unchanged. `consoleObservationSink` is untouched; `createConsoleObservationSink(console.error)` keeps observations off a stdout-is-product CLI. |
+
+**→ adorn (L10, the declined one — the four-line hop):** the malformed-vs-shape distinction, no library change:
+
+```ts
+let parsed: unknown;
+try { parsed = JSON.parse(raw); }
+catch { return malformedEnvelopeRefusal(); }    // the catch IS "malformed"
+const r = Verify.check(shape, 'args', parsed);   // a failure here IS "wrong shape"
+```
+
+You are the one holding the raw string, so you can already tell the two apart — the only fix is to not swallow
+the parse error into `{}`. That keeps `JSON.parse` on your side of the line, where the wire format lives.
 
 **→ consumer:** Fair, and the timing was ours — you read the table between our writing the rows and
 writing the sections. **The detail has now landed**: `## L9`–`## L12` below, each with evidence, a

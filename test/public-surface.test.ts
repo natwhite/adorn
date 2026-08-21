@@ -172,9 +172,8 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // 96 → 99: voice-agent Round 3 (DEC-074) adds THREE value exports — `violationFromCheck` (L11, translate a
     // functional check failure into ViolationFacts for the observation stream), the `createConsoleObservationSink`
     // factory (L12, configurable console-sink stream), and `contract` (L9, the functional twin of the contract /
-    // observation decorators). `Verify.checkJson` (L10) is a new STATIC on the existing `Verify` export, and the
-    // `CheckResult.malformedJson` flag / `CheckFailure` / `ContractSpec` are an added optional field / type-only —
-    // none move the count.
+    // observation decorators). `CheckFailure` / `ContractSpec` are type-only and move nothing. (L10
+    // `Verify.checkJson` was reverted on reflection — a JSON decode expands a validator's domain; DEC-074.)
     const PINNED_VALUE_EXPORT_COUNT = 99;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
@@ -191,10 +190,6 @@ describe('voice-agent Round 3 adds exactly its intended functional-surface expor
     });
     it('exports the contract() functional wrapper (L9)', () => {
         expect(typeof (adorn as Record<string, unknown>).contract).toBe('function');
-    });
-    it('adds Verify.checkJson as a static on the existing Verify export (L10), not a new root export', () => {
-        expect(typeof adorn.Verify.checkJson).toBe('function');
-        expect(adorn).not.toHaveProperty('checkJson');
     });
 });
 
