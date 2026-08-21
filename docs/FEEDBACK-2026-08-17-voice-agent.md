@@ -27,6 +27,7 @@ classes, zero module-scope mutable state.
 | L10 | `check` cannot tell malformed JSON from a wrong shape | No — costs a misleading refusal |
 | L11 | A `CheckResult` cannot become a `violation` event     | No — two streams that should be one |
 | L12 | `consoleObservationSink` writes to `console.log`      | No — unusable on a stdout-is-product CLI |
+| L13 | A completed observation can carry only ONE named span attribute | No — facts known at close cannot reach the span |
 
 ---
 
@@ -722,3 +723,57 @@ docstring promises.
 > **→ adorn:** Fixed the pointer. `ISSUES.md` is deliberately kept out of the published repo (it's process
 > exhaust, not product); the convention line now says the issue log is maintained outside this repository
 > rather than linking a file that isn't here.
+
+---
+
+## L13 — a completed observation can contribute exactly one named attribute to its span
+
+**What we hit.** A call's most interesting facts are not known when the span opens. Token usage,
+disposition, how many turns it took — all of them exist only at the end. `ObservationEvent.completed`
+looks like the place for them: it carries `values`, and `createOtelSink` reads them.
+
+It reads them, and then throws the names away:
+
+```js
+function attributeKey(value, prefix) {
+    if (value.index === RETURN_INDEX) return `${prefix}.return`;   // <- `value.name` unused
+    const suffix = value.name !== undefined ? value.name : value.index;
+    return `${prefix}.param.${suffix}`;
+}
+```
+
+Every value at `RETURN_INDEX` maps to the same key, `adorn.return`. Emit three named facts at close
+and the span gets one attribute, last-write-wins, silently. The argument path one line below does
+honour `value.name` — so the asymmetry is not a design position, it reads like the return simply
+never needed more than one slot.
+
+**Why the obvious workarounds do not fit.**
+
+- *Put them on the `scope` call.* They do not exist yet. That is the whole problem.
+- *Use `completed.attributes`.* Documented, and read only on the `message` variant — we lost a day to
+  this exact misreading and it cost a blind trace on a live call.
+- *Emit a `message` event.* Lands as a span **event**, not span attributes. Different query shape, and
+  the wrong one for a number you want to aggregate across calls.
+
+**What we did instead.** Set them directly on `trace.getActiveSpan()` from our own helper. That works
+— `startActiveSpan` plus `provider.register()`'s AsyncLocalStorage means the span is still reachable
+after many awaits, and the attributes export alongside adorn's. But it means reaching past adorn to
+the OTel API for something adorn's own model is one line from expressing, and it only works for
+consumers who have registered a context manager.
+
+**What would fix it.** Honour `value.name` at `RETURN_INDEX` the way the argument branch already does
+— `${prefix}.return.${name}` when a name is present, bare `${prefix}.return` when it is not. Backward
+compatible: today's single unnamed return value keeps its exact key.
+
+**Severity: low.** There is a working path and we are on it. But it is a five-line change to a mapping
+function, and the current shape quietly discards data a consumer explicitly asked to record, which is
+the failure mode worth avoiding whatever the priority.
+
+> **→ adorn (done, DEC-075):** Fixed — a named fact at `RETURN_INDEX` now keys as `adorn.return.<name>`, so
+> several no longer collide. **One catch your suggestion would have hit:** "honour `value.name` at
+> `RETURN_INDEX` like the arg branch" breaks existing users, because the decorator path builds the return
+> `EmittedValue` with `name: 'return'` (not `undefined`) — a plain honour-the-name rewrites every current
+> `@Telemetry.result()` key from `adorn.return` to `adorn.return.return`. So we treat `'return'` (and absent)
+> as the canonical bare-return sentinel and suffix only OTHER names: your multiple-named-facts case works, and
+> not one existing key moves. Ships in `dist/addons/otel` on your next `file:` rebuild — you can drop the reach
+> to `trace.getActiveSpan()` for facts adorn's own model now expresses.

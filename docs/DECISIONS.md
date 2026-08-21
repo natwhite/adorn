@@ -1168,3 +1168,12 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Verified.** Green-twice in-band: typecheck 0, 75 suites / 1252 tests (`test/contract-functional.test.ts`, `test/round3-functional.test.ts`; the count reflects L10 reverted). `dist` rebuilt so the `file:../adorn` consumer gets the new surface.
 
+## DEC-075 — `@adorn/otel` keys named close-time facts as `adorn.return.<name>` (voice-agent L13)
+**Status:** ACCEPTED · **BUILT** (voice-agent L13, red-team gate) · add-on bug fix · no surface change
+
+**Context.** `createOtelSink`'s `attributeKey` honoured `value.name` for a parameter (`adorn.param.<name>`) but discarded it at `RETURN_INDEX`, mapping EVERY return-indexed `EmittedValue` to the single key `adorn.return`. A consumer attaching several facts known only at close (token usage, disposition, turn count) as named `EmittedValue`s on a `completed` event got one attribute, last-write-wins, **silently** — the failure mode worth avoiding regardless of priority. The argument branch one line below already honoured the name, so the asymmetry read as an oversight, not a position.
+
+**The gate's catch — the consumer's suggested fix would have broken existing users.** The proposal was "honour `value.name` at `RETURN_INDEX` like the arg branch." But the decorator path builds the return `EmittedValue` with `name: 'return'` (not `undefined` — `ObservationBehavior.renderReturn`), so a naive honour-the-name would rewrite every existing `@Telemetry.result()` key from `adorn.return` to `adorn.return.return` — a silent break. The consumer's "today's return is unnamed" premise was wrong.
+
+**Decision.** Treat `'return'` (and `undefined`) as the canonical bare-return sentinel: at `RETURN_INDEX`, a `name` present and ≠ `'return'` → `adorn.return.<name>`, else `adorn.return`. Backward compatible (every existing return key stays exactly `adorn.return`), and a functional consumer's named close-time facts each get their own slot with no collision. A five-line change to one mapping function; no public-model or surface change (`EmittedValue.name` already exists). **Verified:** the existing `adorn.return` test still passes; +2 tests pin the named case and the unnamed fallback. Green-twice: 75 suites / 1254 tests. `dist` rebuilt (the add-on ships in `dist/addons/otel` since DEC-073, so the `file:` consumer gets it).
+

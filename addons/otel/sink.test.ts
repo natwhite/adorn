@@ -30,11 +30,13 @@ import {
     Observe,
     Telemetry,
     GreaterThan,
+    RETURN_INDEX,
     setObservationSink,
     type ObservationEvent,
     type ObservationSink,
+    type EmittedValue,
 } from '../../index';
-import {createOtelSink, mapSpanKind} from './index';
+import {createOtelSink, mapSpanKind, attributesFromValues} from './index';
 
 // Test scaffolding (not the public surface) — global registry/config reset between cases, as elsewhere.
 import {resetRegistry} from '../../src/Core/ContractRegistry';
@@ -340,6 +342,26 @@ describe('the disclosed return value lands on the method span, correlated via ca
         expect(spans).toHaveLength(1); // ended exactly once, by its correlated completion
         expect(completed).toHaveLength(1);
         expect(Math.abs(hrToMs(spans[0].duration) - completed[0].durationMs)).toBeLessThan(5);
+    });
+});
+
+describe('named facts attached at close each get their own return attribute (voice-agent L13)', () => {
+    it('keeps the canonical return as adorn.return and keys other named facts as adorn.return.<name>', () => {
+        const values: EmittedValue[] = [
+            {index: RETURN_INDEX, name: 'return', disclosed: true, rendering: 99}, // the decorator's canonical return
+            {index: RETURN_INDEX, name: 'tokens', disclosed: true, rendering: 1500},
+            {index: RETURN_INDEX, name: 'disposition', disclosed: true, rendering: 'booked'},
+        ];
+        const attrs = attributesFromValues(values, 'adorn');
+        // Backward compatible: `name:'return'` (the decorator path) stays `adorn.return`, no last-write-wins.
+        expect(attrs['adorn.return']).toBe(99);
+        expect(attrs['adorn.return.tokens']).toBe(1500);
+        expect(attrs['adorn.return.disposition']).toBe('booked');
+    });
+
+    it('an unnamed return value still keys as adorn.return', () => {
+        const attrs = attributesFromValues([{index: RETURN_INDEX, disclosed: true, rendering: 7}], 'adorn');
+        expect(attrs['adorn.return']).toBe(7);
     });
 });
 

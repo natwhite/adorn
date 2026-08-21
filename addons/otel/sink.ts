@@ -357,9 +357,11 @@ export function mapSpanKind(kind: AdornSpanKind): OtelSpanKind {
 
 /**
  * Project pre-disclosed `EmittedValue[]` onto OTel span attributes. Keyed `adorn.param.<name|index>` for a
- * parameter and `adorn.return` for the return value. The `rendering` is forwarded verbatim — it is already
- * the disclosure OUTCOME (`[REDACTED]`, a value under an opt-in, or a surrogate), so no raw value is ever
- * read. A `null` rendering becomes the string `'null'` because OTel attributes cannot hold a null scalar.
+ * parameter, `adorn.return` for the canonical return rendering, and `adorn.return.<name>` for any OTHER named
+ * fact a consumer attaches at close (voice-agent L13) — so several named close-time facts each get a slot
+ * instead of colliding. The `rendering` is forwarded verbatim — it is already the disclosure OUTCOME
+ * (`[REDACTED]`, a value under an opt-in, or a surrogate), so no raw value is ever read. A `null` rendering
+ * becomes the string `'null'` because OTel attributes cannot hold a null scalar.
  */
 export function attributesFromValues(values: ReadonlyArray<EmittedValue>, prefix = 'adorn'): OtelAttributes {
     const attributes: OtelAttributes = {};
@@ -370,7 +372,17 @@ export function attributesFromValues(values: ReadonlyArray<EmittedValue>, prefix
 }
 
 function attributeKey(value: EmittedValue, prefix: string): string {
-    if (value.index === RETURN_INDEX) return `${prefix}.return`;
+    if (value.index === RETURN_INDEX) {
+        // The canonical single return rendering carries name `'return'` (the decorator path) or none → the
+        // bare `.return` key, UNCHANGED (voice-agent L13). Any OTHER name is a distinct fact a consumer
+        // attached at close — token counts, disposition, turn count — and earns its own `.return.<name>` slot,
+        // so several named facts no longer collide on one attribute (last-write-wins). Backward compatible:
+        // treating `'return'` as the sentinel is what keeps every existing `@Telemetry.result()` key exactly
+        // `adorn.return` (the return EmittedValue is built with `name:'return'`, not `undefined`).
+        return value.name !== undefined && value.name !== 'return'
+            ? `${prefix}.return.${value.name}`
+            : `${prefix}.return`;
+    }
     const suffix = value.name !== undefined ? value.name : value.index;
     return `${prefix}.param.${suffix}`;
 }
