@@ -1188,3 +1188,12 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 
 **Surface.** Two optional fields on the `completed` variant — type-only, additive; no value export → surface 99. Green-twice in-band: typecheck 0, 75 suites / 1258 tests (+4). `dist` rebuilt so the `file:../adorn` consumer can delete `src/obs/interval.ts`.
 
+## DEC-077 — `nextCallId` exported: one correlation-id sequence for a consumer's own emitter (voice-agent)
+**Status:** ACCEPTED · **BUILT** (voice-agent Round 4 integration note, owner-approved) · +1 value export · surface **100**
+
+**Context.** `nextCallId` was module-internal (Q-27/DEC-047) on the reasoning that "a sink never mints ids, it only reads the ones adorn stamped." That held until adorn started encouraging **non-decorator emitters** (the L8 pattern, `contract()`'s observe path, and now L14/L15 record-only trees): such an emitter must supply a `callId`, and with `nextCallId` unexported it mints its OWN counter. DEC-076's `createOtelSink` keys retained parent spans by `callId` across *both* the decorator path and any record-path emitter, so two independent counters that drift into equal ids would nest one call's span tree under another's. The consumer hit exactly this (two counters, `observed.ts` + `interval.ts`) and flagged it as "the smallest possible ask" — not filed, because the collision needs two emitters and a wrap-around to bite.
+
+**Decision.** Export `nextCallId` (the existing function, unchanged — it draws the one process-local monotonic `callSeq` adorn's own wrappers already share). A consumer's emitter drawing its ids from it CANNOT collide with adorn's, by construction. In-identity (it is the observation correlation token), and it hardens the record-only emitter pattern DEC-076 made consequential rather than adding a new capability. Docs updated: the README's "Emitting without decorators" block now draws `callId` from `nextCallId()` (and shows the `startedAt`/`parentCallId` fields), and the function's own JSDoc states the public contract. **Deferred (consumer-side, not a request):** an `annotate()`-style API to recover a `callId` at a call site far from where it was minted — that would need ambient correlation (AsyncLocalStorage), exactly the cross-wrapper inference DEC-046 scoped out; recorded for pattern-watching, not built.
+
+**Surface.** +1 value export (`nextCallId`) → **100**; `test/public-surface.test.ts` pin moved 99→100 with the monotonicity asserted. Green-twice in-band: typecheck 0, 75 suites / 1259 tests. `dist` rebuilt.
+

@@ -112,7 +112,7 @@ import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 // (DEC-019) is a separate future add-on and is NOT built here. `RETURN_INDEX` marks the return
 // value in an EmittedValue. NOOP_SINK and ViolationError stay INTERNAL — a sink author needs
 // neither the sentinel nor the typed error (facts arrive through the sink, not by catching).
-import {setObservationSink, getObservationSink, RETURN_INDEX} from './src/Core/Observation';
+import {setObservationSink, getObservationSink, RETURN_INDEX, nextCallId} from './src/Core/Observation';
 import {settle} from './src/Core/settle';
 // O1c: a ready-made zero-dependency JSON-to-console sink (opt-in; never installed automatically).
 import {consoleObservationSink, createConsoleObservationSink} from './src/Adapters/legacy/ObservationBehavior';
@@ -355,8 +355,10 @@ export {
     // `settle` is the shared sync/thenable/observable settling classifier @Time now rides and an
     // @adorn/otel adapter (DEC-019) ends spans with. `RETURN_INDEX` marks the return value in an
     // EmittedValue. `consoleObservationSink` is a ready-made zero-dep JSON-to-console sink (opt-in; never
-    // installed automatically). NOOP_SINK / ViolationError stay internal.
-    setObservationSink, getObservationSink, settle, RETURN_INDEX, consoleObservationSink, createConsoleObservationSink,
+    // installed automatically). `nextCallId` (DEC-077) is the one shared correlation-id sequence a consumer's
+    // own non-decorator emitter must draw from, so its callIds never collide with adorn's. NOOP_SINK /
+    // ViolationError stay internal.
+    setObservationSink, getObservationSink, settle, RETURN_INDEX, nextCallId, consoleObservationSink, createConsoleObservationSink,
 
     // Registry introspection — what the projections read
     getContracts, getContract, getContractedClasses, getContractsForClass,

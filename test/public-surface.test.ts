@@ -174,7 +174,11 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // factory (L12, configurable console-sink stream), and `contract` (L9, the functional twin of the contract /
     // observation decorators). `CheckFailure` / `ContractSpec` are type-only and move nothing. (L10
     // `Verify.checkJson` was reverted on reflection — a JSON decode expands a validator's domain; DEC-074.)
-    const PINNED_VALUE_EXPORT_COUNT = 99;
+    //
+    // 99 → 100: `nextCallId` (DEC-077, voice-agent) — the shared correlation-id sequence a consumer's OWN
+    // non-decorator observation emitter must draw from, so its `callId`s never collide with adorn's (which now
+    // matters because `createOtelSink` keys retained parent spans by `callId` — DEC-076). Formerly internal.
+    const PINNED_VALUE_EXPORT_COUNT = 100;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -190,6 +194,12 @@ describe('voice-agent Round 3 adds exactly its intended functional-surface expor
     });
     it('exports the contract() functional wrapper (L9)', () => {
         expect(typeof (adorn as Record<string, unknown>).contract).toBe('function');
+    });
+    it('exports nextCallId — the shared correlation-id sequence for a consumer emitter (DEC-077)', () => {
+        const nextCallId = (adorn as Record<string, unknown>).nextCallId as () => number;
+        expect(typeof nextCallId).toBe('function');
+        // Monotonic: each call yields a strictly greater id (the property that prevents cross-emitter collision).
+        expect(nextCallId()).toBeLessThan(nextCallId());
     });
 });
 

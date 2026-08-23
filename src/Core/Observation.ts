@@ -120,8 +120,12 @@ let callSeq = 0;
  * `@Observe` span — different nesting levels, DEC-046) is deliberately out of scope, so those carry
  * distinct ids by construction.
  *
- * Module-internal: a sink never mints ids, it only reads the ones adorn stamped, so this is not on the
- * root export surface (DEC-039).
+ * Public since DEC-077 (voice-agent). A *sink* never mints ids — it reads the ones adorn stamped — but a
+ * consumer building its OWN non-decorator emitter must draw its `callId`s from THIS sequence, not a private
+ * counter. Two independent counters can drift into equal ids, and a sink that keys per-call state by `callId`
+ * — `createOtelSink`'s `parentCallId` span retention does (DEC-076) — would then correlate unrelated calls
+ * (nesting one call's span tree under another's). One shared process-local monotonic sequence, drawn by adorn's
+ * own wrappers AND any consumer emitter alike, makes that impossible.
  */
 export function nextCallId(): number {
     return ++callSeq;

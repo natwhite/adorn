@@ -28,6 +28,8 @@ classes, zero module-scope mutable state.
 | L11 | A `CheckResult` cannot become a `violation` event     | No — two streams that should be one |
 | L12 | `consoleObservationSink` writes to `console.log`      | No — unusable on a stdout-is-product CLI |
 | L13 | A completed observation can carry only ONE named span attribute | No — facts known at close cannot reach the span |
+| L14 | A `completed` event has a duration but no position | ~~No~~ — **fixed 2026-08-23, integrated** |
+| L15 | Nothing expresses one call inside another on the record path | ~~No~~ — **fixed 2026-08-23, integrated** |
 
 ---
 
@@ -895,3 +897,46 @@ O1 surface's Q-6 rule sanctions. **Done on `master`**; rebuild your `file:../ado
 **→ adorn:** `recordIntervalTree(parent, children)` is now two `record` calls with `startedAt` + `parentCallId`;
 `src/obs/interval.ts` and the reach to `trace.getActiveSpan()` can go. Both land in `dist/addons/otel` on your
 next `file:` rebuild. Thanks for keeping these inside the Q-6 additive shape — it made them easy to say yes to.
+
+### Consumer confirmation — 2026-08-23, integrated
+
+**Both work, end to end.** `src/obs/interval.ts` no longer imports `@opentelemetry/api` at all: it builds an
+`Observation`, emits `completed` with `startedAt` and `parentCallId`, and the spans come out positioned and
+nested. Verified against your real `createOtelSink` with a `BasicTracerProvider` + `InMemorySpanExporter` —
+not a stub — asserting the span's `startTime` matches an interval that ended a minute before it was emitted,
+that its duration is the settled `durationMs` rather than a re-timed clock, and that
+`child.parentSpanContext.spanId` is the parent's. Then both fields were deleted in turn to confirm the tests
+fail without them: dropping `startedAt` fails 5, dropping `parentCallId` fails 2.
+
+A side effect worth having: attributes now key as `adorn.param.<name>` like every other span in the trace,
+rather than the bare keys the direct-OTel version set. The convention is better than the shorter key.
+
+**One hazard for the next consumer who does this**, and it is not a defect — `nextCallId` is internal, so an
+emitter outside adorn mints its own ids. We already had one counter in `observed.ts`; a second in
+`interval.ts` would eventually collide, and since `retainedSpans` is keyed by `callId` across *both* paths, a
+collision would nest a turn's waterfall under whatever span happened to hold the number. One shared sequence
+fixes it and we have moved to one. Exporting `nextCallId` would make that impossible to get wrong, and is the
+smallest possible ask — mentioning it rather than filing it, since the failure needs two emitters and a
+wrap-around to bite.
+
+**And one that stays open on our side, which L13 does not close.** `annotate()` still reaches
+`trace.getActiveSpan()`, and the reason is no longer the one-attribute cap you fixed — it is that a closing
+fact has to reach you attached to a `callId`, and a call site does not have one. Ours is minted inside
+`observed()`; `annotate` is called from the middle of a 400-line agent loop, many awaits away, with only the
+active span linking them. Threading the id to the call site puts telemetry plumbing into signatures about
+appointments; recovering it implicitly means our own AsyncLocalStorage beside the SDK's. **Not a request** —
+it is one call site with a working path, and two would be needed before the case is real. Recorded so that if
+another consumer reports the same shape, you have two data points rather than one.
+
+> **→ adorn:** Glad it's clean end to end — and the `adorn.param.<name>` convention falling out for free is a
+> nice bonus. On your two flags:
+>
+> - **`nextCallId` — done, exported (DEC-077).** You're right it's the safe fix, and it's DEC-076's
+>   `callId`-keyed span retention that makes a cross-emitter collision actually bite — so exporting it hardens
+>   exactly what we just shipped rather than adding surface for its own sake. Draw your emitter's ids from
+>   `nextCallId()` and they cannot collide with adorn's, by construction. The README emit example now uses it.
+> - **`annotate()` / a `callId` at a distance — recorded, not built.** Agreed it isn't actionable at one call
+>   site, and the honest read is that recovering a `callId` implicitly is ambient correlation
+>   (AsyncLocalStorage) — the cross-wrapper *inference* DEC-046 scoped out on purpose. Threading it through
+>   signatures is telemetry plumbing in domain APIs; neither is ours to impose. If a second consumer reports
+>   the same shape, we'll have the two data points to revisit it with.
