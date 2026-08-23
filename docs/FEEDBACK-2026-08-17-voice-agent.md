@@ -777,3 +777,121 @@ the failure mode worth avoiding whatever the priority.
 > as the canonical bare-return sentinel and suffix only OTHER names: your multiple-named-facts case works, and
 > not one existing key moves. Ships in `dist/addons/otel` on your next `file:` rebuild — you can drop the reach
 > to `trace.getActiveSpan()` for facts adorn's own model now expresses.
+
+---
+
+# Round 4 — 2026-08-23, the latency trace
+
+One consumer question drove this round: *where does the second between a caller finishing a sentence
+and hearing a reply actually go?* The answer needed a waterfall, and building one is where the two
+items below came from. Both are additive fields on a frozen surface, in the spirit of your Q-6 rule
+that new payload fields are optional and object-shaped.
+
+**Context that matters for judging severity:** the observation layer is adopted here and working.
+`Verbs.run` is accurate to 0.4 ms through `scope`, `NOOP_SINK` being a single `===` compare is why
+this was safe to put in a process that takes live phone calls, and L13's fix landed and is in use.
+The gap below is not about what this process *does*. It is about what it *waits for*.
+
+## L14 — a `completed` event has a duration but no position, so only `scope` can place a span
+
+**What we hit.** The trace had exactly two levels and nothing between them: `Agent.runCall` at
+134,668 ms and `Verbs.run` at 0.402 ms. Every millisecond anyone wanted to see was in the gap — the
+median turn is 675 ms from the caller stopping to audio reaching them, and 1,264 ms when a tool call
+is involved.
+
+Those intervals are not function calls. They are two events arriving on a WebSocket
+(`input_audio_buffer.speech_stopped` → `output_audio_buffer.started`), often many awaits apart, with
+no call stack anywhere near them. `scope` cannot wrap what is not a call, so the record path is the
+only candidate — and `ObservationEvent.completed` carries `durationMs` and no start.
+
+**The adapter already needs the missing half and has to manufacture it.** From your own OTel sink:
+
+```ts
+const startTime = Date.now();                              // addons/otel/sink.ts:165
+pendingSpans.set(call.callId, {span, startTime});          // :179
+entry.span.end(entry.startTime + event.durationMs);        // :273
+```
+
+That is correct and it is the only way to do it today — but it works *exactly when `scope` ran*. A
+completion whose id opened no span ends nothing, which `sink.ts` documents deliberately. So a
+record-only sink, or any interval timed from outside, can express a bar's **length** but not its
+**position**, and it lands on the timeline where it was emitted rather than where it happened.
+
+**Why the obvious workarounds do not fit.**
+
+- *Emit at the right moment instead.* The moment has passed. The interval is discovered after it ends;
+  that is what makes it retroactive.
+- *Open a `scope` at `speech_stopped` and close it at `output_audio_buffer.started`.* `scope` is
+  `(call, proceed) => T` — an around-wrapper. There is no `proceed()` to hand it, and inverting it into
+  a deferred-resolve promise to fake one would put a live phone call behind an observability construct.
+- *Accept the skew.* Emission is 100–2,000 ms after the fact and varies per turn, so the bars would be
+  wrong by a different amount each time. A waterfall whose bars are in the wrong place is worse than no
+  waterfall, because it reads as data.
+
+**What we did instead.** `src/obs/interval.ts` — a second emitter that goes straight to
+`@opentelemetry/api`, because `tracer.startSpan(name, {startTime})` plus `span.end(endTime)` is the
+only API in reach that accepts an explicit start. It is ~40 lines, wrapped in try/catch, and its header
+carries the whole justification so the deviation stays a question rather than becoming a fork. Our own
+`observed.ts` states the rule it breaks — *"the emitter is ours and the sink is adorn's"* — so this is
+recorded as a deviation on our side, not a complaint about yours.
+
+**What would fix it.** An optional `startedAt` (epoch ms) on the `completed` variant. The adapter
+prefers it when present and falls back to the `pendingSpans` entry when absent, so nothing existing
+moves; a record-only sink becomes able to place a span for the first time.
+
+- [x] **Optional `startedAt` on `ObservationEvent.completed`**, so a duration can be positioned rather
+      than only measured. *(done — DEC-076)*
+
+**Severity: low-to-medium.** There is a working path and we are on it, and the cost is one file that
+should not need to exist. It rises if you want `record`-only sinks to be genuinely first-class — today
+they can report that something took 626 ms but not when, which for anything asynchronous is half a fact.
+
+## L15 — `callId` correlates an event to its own call, but nothing expresses one call inside another
+
+**What we hit.** The same waterfall is a *tree*: one `Turn.answer` parent with five children —
+`Turn.serverDecides`, `Model.composesCall`, `Turn.betweenCallAndReply`, `Model.composesSpeech`,
+`Audio.toCaller`. The parent is the sum a caller experiences; the children are where it went, and the
+one that matters (626 ms of the model composing a tool call) is only legible against its siblings.
+
+`callId` (Q-27/DEC-047) gives same-invocation correlation, which is exactly what it promises and is
+what made L13 diagnosable. What it does not give is an *edge*. Nesting today is implicit, via `scope`
+opening a span that becomes the active context — which works beautifully when there is a call stack,
+and is unavailable when the tree is reconstructed from socket events after the fact.
+
+**What we did instead.** Passed the parent span explicitly through
+`trace.setSpan(context.active(), span)` in the same file as L14, and exposed it as
+`recordIntervalTree(parent, children)`.
+
+**What would fix it.** An optional `parentCallId?: number` beside the existing `callId`. A sink that
+does not care ignores it; a sink that does can nest without a context manager.
+
+**On DEC-046.** Your decision scopes cross-wrapper correlation out on purpose, and the reasoning
+(different nesting levels, weave violation vs inner `@Observe` span) is sound for the case it
+addresses. This is not an argument that it was wrong — it is a use case that wants the edge stated
+rather than inferred, offered so you can judge whether one optional scalar is worth reopening it for.
+If the answer is no, saying so in the docs would be worth as much: *"nesting is what `scope` is for; a
+record-only sink emits a flat stream"* is a clear position, and we would stop looking.
+
+- [x] **Optional `parentCallId` on the record path** — or a documented statement that nesting is
+      `scope`-only, which is equally useful to a consumer. *(done — DEC-076)*
+
+**Severity: low.** Only bites alongside L14; on its own a flat stream of correctly-placed spans is
+already most of the value. With both, `recordIntervalTree` becomes two `record` calls and
+`src/obs/interval.ts` is deleted.
+
+---
+
+## adorn dispositions — Round 4 (2026-08-23, DEC-076)
+
+Owner approved both (AskUserQuestion) — additive optional fields on the `completed` variant, the growth the
+O1 surface's Q-6 rule sanctions. **Done on `master`**; rebuild your `file:../adorn` copy and you can delete
+`src/obs/interval.ts`. Surface unchanged (type-only) at 99.
+
+| #   | Verdict | What we did |
+| --- | ------- | ----------- |
+| L14 | **Done** | `startedAt?: number` (epoch ms) on `completed`. `createOtelSink` now places a span at `[startedAt, startedAt + durationMs]` when a completion opened no `scope` span — a record-only sink can POSITION a retroactive interval, not just measure it. Falls back to the pending-span table when absent; an enforcement-weave completion (no scope, no `startedAt`) still opens no span. Duration stays exactly the settled `durationMs` (no re-timed clock). |
+| L15 | **Done** | `parentCallId?: number` on `completed`. The sink nests the created span under the retained parent span — a record-only tree without a context manager. On DEC-046: your framing is right and it's why we could add this cleanly — an explicit `parentCallId` is *declaration*, not the cross-wrapper *inference* DEC-046 scoped out, so it complements that decision. Parent spans are kept in a **bounded** map (2048, oldest-evicted) so a long-running process can't grow it; an unresolved parent degrades to a root span, never a crash. |
+
+**→ adorn:** `recordIntervalTree(parent, children)` is now two `record` calls with `startedAt` + `parentCallId`;
+`src/obs/interval.ts` and the reach to `trace.getActiveSpan()` can go. Both land in `dist/addons/otel` on your
+next `file:` rebuild. Thanks for keeping these inside the Q-6 additive shape — it made them easy to say yes to.

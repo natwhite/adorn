@@ -35,6 +35,7 @@ import {
     type ObservationEvent,
     type ObservationSink,
     type EmittedValue,
+    type Observation,
 } from '../../index';
 import {createOtelSink, mapSpanKind, attributesFromValues} from './index';
 
@@ -362,6 +363,101 @@ describe('named facts attached at close each get their own return attribute (voi
     it('an unnamed return value still keys as adorn.return', () => {
         const attrs = attributesFromValues([{index: RETURN_INDEX, disclosed: true, rendering: 7}], 'adorn');
         expect(attrs['adorn.return']).toBe(7);
+    });
+});
+
+describe('record-only positioning and nesting (voice-agent L14 / L15)', () => {
+    const obs = (name: string): Observation => ({
+        owner: name.split('.')[0],
+        member: name.split('.')[1] || name,
+        name,
+        isStatic: false,
+        detail: 'always',
+        kind: 'internal',
+        parameters: [],
+    });
+    const parentIdOf = (span: ReadableSpan): string | undefined =>
+        (span as {parentSpanId?: string; parentSpanContext?: {spanId?: string}}).parentSpanId ??
+        (span as {parentSpanContext?: {spanId?: string}}).parentSpanContext?.spanId;
+
+    it('L14 — a completed event with startedAt but no scope becomes a positioned span', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const start = Date.now() - 5000; // clearly in the past — proves it is placed, not stamped "now"
+        sink.record!({
+            kind: 'completed',
+            observation: obs('Turn.betweenCallAndReply'),
+            callId: 1,
+            startedAt: start,
+            durationMs: 626,
+            outcome: 'returned',
+            settled: true,
+        });
+        const spans = finishedSpans();
+        expect(spans).toHaveLength(1);
+        expect(spans[0].name).toBe('Turn.betweenCallAndReply');
+        expect(hrToMs(spans[0].duration)).toBeCloseTo(626, 0); // measured length
+        expect(Math.abs(hrToMs(spans[0].startTime) - start)).toBeLessThan(5); // positioned, not "now"
+    });
+
+    it('a completed event with NEITHER a scope span NOR startedAt still opens no span (unchanged)', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        sink.record!({
+            kind: 'completed',
+            observation: obs('Weave.completion'),
+            callId: 2,
+            durationMs: 10,
+            outcome: 'returned',
+            settled: true,
+        });
+        expect(finishedSpans()).toHaveLength(0);
+    });
+
+    it('L15 — a child completed nests under its parentCallId span (same trace, parent edge)', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const start = Date.now() - 5000;
+        sink.record!({
+            kind: 'completed',
+            observation: obs('Turn.answer'),
+            callId: 10,
+            startedAt: start,
+            durationMs: 675,
+            outcome: 'returned',
+            settled: true,
+        });
+        sink.record!({
+            kind: 'completed',
+            observation: obs('Model.composesCall'),
+            callId: 11,
+            parentCallId: 10,
+            startedAt: start + 40,
+            durationMs: 626,
+            outcome: 'returned',
+            settled: true,
+        });
+        const spans = finishedSpans();
+        expect(spans).toHaveLength(2);
+        const parent = spans.find(s => s.name === 'Turn.answer')!;
+        const child = spans.find(s => s.name === 'Model.composesCall')!;
+        expect(child.spanContext().traceId).toBe(parent.spanContext().traceId);
+        expect(parentIdOf(child)).toBe(parent.spanContext().spanId);
+    });
+
+    it('an unresolved parentCallId degrades to a root span, not a crash', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const start = Date.now() - 5000;
+        expect(() =>
+            sink.record!({
+                kind: 'completed',
+                observation: obs('Orphan.child'),
+                callId: 20,
+                parentCallId: 999, // never seen
+                startedAt: start,
+                durationMs: 5,
+                outcome: 'returned',
+                settled: true,
+            }),
+        ).not.toThrow();
+        expect(finishedSpans()).toHaveLength(1);
     });
 });
 

@@ -256,6 +256,20 @@ export type ObservationEvent =
           readonly kind: 'completed';
           readonly observation: Observation;
           readonly callId: number; // correlation token (Q-27) — shared with this call's scope
+          /**
+           * Epoch-ms start (voice-agent L14, DEC-076). Optional and additive: with it a record-only sink can
+           * POSITION this interval — place a span at `[startedAt, startedAt + durationMs]` — not only measure
+           * its length. The retroactive/socket-driven case (two events many awaits apart, no call stack to
+           * wrap with `scope`). Absent → a sink falls back to the span its `scope` opened, as before.
+           */
+          readonly startedAt?: number;
+          /**
+           * The `callId` of the enclosing call (voice-agent L15, DEC-076). Optional and additive: a consumer
+           * emitting a TREE from the record path states the parent EDGE explicitly — declaration, not the
+           * cross-wrapper INFERENCE DEC-046 scoped out. A sink that nests via `scope`'s active context ignores
+           * it; a record-only sink rebuilding a tree from socket events uses it to nest without a context manager.
+           */
+          readonly parentCallId?: number;
           readonly durationMs: number;
           readonly outcome: 'returned' | 'threw';
           readonly settled: boolean;

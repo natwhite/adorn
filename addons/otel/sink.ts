@@ -76,12 +76,14 @@ import {
 } from '../../index';
 import {
     trace,
+    context as otelContext,
     metrics as otelMetrics,
     SpanKind as OtelSpanKind,
     SpanStatusCode,
     type Tracer,
     type Meter,
     type Span,
+    type Context,
     type Attributes as OtelAttributes,
     type AttributeValue as OtelAttributeValue,
     type Exception,
@@ -157,6 +159,18 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
     // global) so a fresh `createOtelSink` starts clean. See the header's "The span lifecycle" note.
     const pendingSpans = new Map<number, PendingSpan>();
 
+    // Every span this sink creates, retained (bounded, oldest-evicted) so a later `completed` carrying a
+    // `parentCallId` (L15, DEC-076) can nest under the parent's span even after it has ended — the record-only
+    // TREE case, where the parent is not a live active context. Bounded so a long-running process cannot grow it.
+    const retainedSpans = new Map<number, Span>();
+    const retainSpan = (callId: number, span: Span): void => {
+        retainedSpans.set(callId, span);
+        if (retainedSpans.size > RETAINED_SPAN_CAP) {
+            const oldest = retainedSpans.keys().next().value;
+            if (oldest !== undefined) retainedSpans.delete(oldest);
+        }
+    };
+
     return {
         scope<T>(call: ObservationCall, proceed: () => T): T {
             const observation = call.observation;
@@ -177,6 +191,7 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
                     // yet — it is produced when the call settles, on the record path). The span is active
                     // only for the synchronous prefix here, exactly as before; only the END is deferred.
                     pendingSpans.set(call.callId, {span, startTime});
+                    retainSpan(call.callId, span); // available as a parentCallId target (L15)
                     // The SHARED settle classifier still owns the outcome (status + a developer-authored
                     // throw's exception) from the raw settlement — control-flow only, emitting no value
                     // (DEC-036/DEC-025). It no longer ends the span; finishPendingSpan does, at `completed`.
@@ -187,11 +202,25 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
 
         record(event: ObservationEvent): void {
             switch (event.kind) {
-                case 'completed':
+                case 'completed': {
                     // End the method's own span (opened by `@Observe`'s `scope`) once its correlated
                     // completion arrives, landing the disclosed return rendering on it (Q-27 — the win).
-                    // A completion whose id opened no span here (an enforcement-weave completion) ends none.
-                    finishPendingSpan(pendingSpans, event, prefix);
+                    const pending = pendingSpans.get(event.callId);
+                    if (pending) {
+                        finishPendingSpan(pendingSpans, event, prefix);
+                    } else if (event.startedAt !== undefined) {
+                        // Record-only positioning (L14): a completion whose id opened no `scope` span, but
+                        // carries an explicit `startedAt`, is placed on the timeline at `[startedAt, +duration]`
+                        // — nested under `parentCallId` (L15) when that parent span is still retained.
+                        createPositionedSpan(
+                            tracer,
+                            event,
+                            prefix,
+                            parentContextFor(retainedSpans, event.parentCallId),
+                            retainSpan,
+                        );
+                    }
+                    // else: an enforcement-weave completion (no scope span, no explicit start) still opens none.
                     if (durationHistogram) {
                         durationHistogram.record(event.durationMs, {
                             [`${prefix}.method`]: event.observation.name,
@@ -200,6 +229,7 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
                         });
                     }
                     return;
+                }
                 case 'violation':
                     recordViolation(tracer, event.observation, event.violation, event.error, prefix);
                     if (violationCounter) {
@@ -271,6 +301,50 @@ function finishPendingSpan(
     const returns = (event.values || []).filter(value => value.index === RETURN_INDEX);
     if (returns.length > 0) entry.span.setAttributes(attributesFromValues(returns, prefix));
     entry.span.end(entry.startTime + event.durationMs);
+}
+
+/** Bound on the retained-span map, so a long-running process cannot grow it without limit (L15, DEC-076). */
+const RETAINED_SPAN_CAP = 2048;
+
+/** The parent context to create a span under, when a `completed` event names a still-retained `parentCallId`. */
+function parentContextFor(retained: Map<number, Span>, parentCallId: number | undefined): Context | undefined {
+    if (parentCallId === undefined) return undefined;
+    const parent = retained.get(parentCallId);
+    return parent ? trace.setSpan(otelContext.active(), parent) : undefined;
+}
+
+/**
+ * Create a span POSITIONED from a record-only `completed` event's explicit `startedAt` (L14/L15, DEC-076) —
+ * the retroactive interval that opened no `scope` span. Placed at `[startedAt, startedAt + durationMs]`, so its
+ * duration is exactly the settled `durationMs` (no re-timed clock, DEC-006); nested under `parentCtx` when a
+ * `parentCallId` resolved to a retained span. A record-only completion carries ALL disclosed values (args AND
+ * return renderings) on `event.values`, so they are attached at creation. Retained as a parent for its children.
+ */
+function createPositionedSpan(
+    tracer: Tracer,
+    event: Extract<ObservationEvent, {kind: 'completed'}>,
+    prefix: string,
+    parentCtx: Context | undefined,
+    retain: (callId: number, span: Span) => void,
+): void {
+    const startTime = event.startedAt as number;
+    const span = tracer.startSpan(
+        event.observation.name,
+        {
+            kind: mapSpanKind(event.observation.kind),
+            startTime,
+            attributes: attributesFromValues(event.values || [], prefix),
+        },
+        parentCtx,
+    );
+    if (event.outcome === 'threw' && event.error) {
+        span.recordException({name: event.error.type, message: event.error.message});
+        span.setStatus({code: SpanStatusCode.ERROR, message: event.error.message});
+    } else {
+        span.setStatus({code: SpanStatusCode.OK});
+    }
+    span.end(startTime + event.durationMs);
+    retain(event.callId, span);
 }
 
 // ---------------------------------------------------------------------------
