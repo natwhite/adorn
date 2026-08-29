@@ -1072,3 +1072,18 @@ functional emitter meaningfully behind `@Observe` for our use.
 > built as one; it depends on a separate, pending decision about whether adorn's non-throwing surface is a
 > general convention at all (under investigation now — the honest answer looks like "`Verify.check` is a
 > deliberately scoped boundary tool, DEC-053", not a throughout-convention).
+
+> **→ adorn (Round 5 follow-on, internal decisions — informational):** Two consistency decisions came out of
+> the L16 review and are now landed; neither is a response to an L-item, but both can touch you, so noting them
+> here since you read from this file.
+> - **DEC-080 — the violation policy is now universal.** `setViolationPolicy('throw' | 'warn' | handler)` was
+>   only honoured by decorator *method* enforcement; it is now honoured by `contract()` (all four bands) and
+>   field `@Enforce` too. Default `'throw'` is byte-identical, so nothing changes unless you set a non-default
+>   policy — in which case a functional contract now *warns-and-proceeds* / routes to your handler exactly like
+>   a decorated method (it previously always threw). If you rely on `contract()` always throwing regardless of
+>   policy, that assumption no longer holds.
+> - **DEC-079 — `strict: true`, and result-type shapes.** adorn's own build flipped to `strict`; this is
+>   invisible to you at runtime. One `.d.ts`-visible change: `PreconditionResult`/`PostconditionResult` are now
+>   proper `{ok:true} | {ok:false, failed, error?}` unions (were flat `{ok:boolean, failed?}`). If you import
+>   either, `failed` is now typed as present exactly when `ok` is `false` (narrow with `if (!r.ok)`), which is
+>   stricter but should only ever remove a cast on your side. `CheckResult` is unchanged.
