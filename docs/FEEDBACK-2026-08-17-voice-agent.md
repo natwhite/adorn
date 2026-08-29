@@ -1087,3 +1087,95 @@ functional emitter meaningfully behind `@Observe` for our use.
 >   proper `{ok:true} | {ok:false, failed, error?}` unions (were flat `{ok:boolean, failed?}`). If you import
 >   either, `failed` is now typed as present exactly when `ok` is `false` (narrow with `if (!r.ok)`), which is
 >   stricter but should only ever remove a cast on your side. `CheckResult` is unchanged.
+
+---
+
+## Round 5 consumer response — 2026-08-29
+
+**L17 verified working, in the shape you built it.** `ObservedSpec` gained `returns?: (value) => Attributes`,
+emitted into `completed.attributes`, and `Reasoning.answer` now carries `reasoning.outcome`,
+`reasoning.tokens` and `reasoning.failure.category` on its span. Asserted end to end through the real
+`createOtelSink` with a `BasicTracerProvider` and an in-memory exporter — `test/obs/returns.test.ts`.
+That test exists rather than a shape-only one because this codebase already spent a day writing
+close-time facts to a field nothing read; a shape test was green throughout.
+
+**L16 accepted, and the guardrail changed our type for the better.** Green is the right status and
+the OTel reasoning is sound. Acting on the bounded-category note, `Answer.failed` was split: `reason`
+stays free vendor text and stays *off* the span, and a new four-member `FailureCategory` goes on it.
+That surfaced something the original type conflated — `rateLimited`/`transport` mean *the call
+failed*, `noOutput` means the call succeeded and the reasoning did not, and they read identically in
+a log. So the guardrail improved the domain model rather than just the telemetry.
+
+**DEC-079 / DEC-080 are no-ops here.** We import neither `PreconditionResult`/`PostconditionResult`
+nor `contract()`/`setViolationPolicy`; verified by grep, and our gate is green against the new build.
+
+## L18 — on the `scope` path, a throw produces a green, exception-free span
+
+**What we hit.** Every `observed()` seam that throws exports a span with **no error status and no
+exception event**. Ten verbs, `Verbs.run`, `runVoiceAgent` and `Reasoning.answer` — the whole traced
+surface. Probed both ways on 2026-08-29; a synchronous throw and a rejected promise behave
+identically:
+
+```
+scope  -> P.rejects callId 1
+record -> completed | outcome threw | error? true
+SPAN P.rejects | status 0 | events 0
+```
+
+The `completed` event is correct — `outcome: 'threw'`, `error` populated. It is the span that is
+wrong.
+
+**Why, and it is an ordering problem specific to a consumer emitter.** `scope` does
+`settle(proceed, s => markSpanOutcome(span, s))`. Our `proceed` is *itself* a `settle`, and its
+callback is what emits the completion — which reaches `finishPendingSpan`, which calls
+`span.end()`. So by the time the throw propagates out to `markSpanOutcome`, the span is closed, and
+OTel silently drops `setStatus` and `recordException` on an ended span.
+
+**`@Observe` is unaffected** and you have a passing test for it (`addons/otel/sink.test.ts:157`),
+because the weave emits its completion after the outcome is marked. This only bites an emitter that
+records from inside its own `settle` — which is what a functional emitter built on the public
+surface naturally does, since `settle` is the classifier you export for exactly that purpose.
+
+**Where the asymmetry is.** Your two span paths disagree about whether `completed.error` is worth
+honouring:
+
+- `createPositionedSpan` (~line 356): `if (event.outcome === 'threw' && event.error)` →
+  `recordException` + ERROR. **Correct.** This is why record-only `interval.ts` spans are fine.
+- `finishPendingSpan` (~line 294): applies return values and, since DEC-078, `attributes` — then
+  ends the span. **Never touches `event.error`.**
+
+**What would fix it.** The same block `createPositionedSpan` already has, in `finishPendingSpan`,
+before `span.end()`. For `@Observe` it is idempotent — `markSpanOutcome` has already set the same
+status from the same settlement — and for a consumer emitter it is the difference between a legible
+trace and a green one. It needs no core or surface change, same shape as DEC-078.
+
+**What we did instead.** Nothing that fixes it — the span belongs to your sink and the ordering is
+not ours to reach. We wrote a **tripwire test** asserting the broken behaviour, named as such, so
+that when you fix it our suite fails and tells us to flip the expectation rather than the fix landing
+silently.
+
+**Severity, honestly.** Higher than L16 or L17. Those were about how well a *successful* call is
+described; this one means a failed call is not described at all — and it has been true for every
+seam in this project since we adopted the observation layer on 2026-08-19.
+
+> **→ adorn (L18 — done, DEC-081):** Fixed, and thank you — the diagnosis was exactly right (your emitter
+> records its completion from inside its own `settle`, so `finishPendingSpan` ends the span before `scope`'s
+> `markSpanOutcome` runs). One correction to the fix you proposed, because it changes what your tripwire's
+> replacement should assert: "give `finishPendingSpan` the block `createPositionedSpan` has" would have
+> DOUBLE-recorded the exception for `@Observe`. The weave's `completed` event carries `error` too, and on the
+> `@Observe` ordering `markSpanOutcome` runs FIRST (its completion is emitted in an OUTER `settle`, after
+> `scope` returns), so it has already recorded the exception — a second `recordException` in
+> `finishPendingSpan` is not idempotent (it adds a second span event). "Idempotent" holds for `setStatus`, not
+> `recordException`. So the shipped fix guards it with a per-span `outcomeMarked` flag: `finishPendingSpan`
+> records from `event.error` ONLY when `markSpanOutcome` has NOT already run. Net effect for you (your
+> emitter's ordering): the thrown span now gets ERROR + exactly ONE exception, sourced from `event.error`.
+> Flip your tripwire to expect `status 2 | events 1` (ERROR, one `exception` event). Verified end to end in
+> `addons/otel/sink.test.ts` — a functional-emitter thrown completion -> ERROR + one exception, a returned
+> completion never falsely errored, and the existing `@Observe` throw now asserts exactly one exception as a
+> regression guard. Add-on only, no core/surface change; `dist` rebuilt.
+>
+> **On L16/L17 verified + the domain-model improvement:** glad L17 landed in the shape it was built, and that
+> the L16 bounded-category guardrail split `Answer.failed` into a legible `FailureCategory` — call-failed
+> (`rateLimited`/`transport`) vs reasoning-failed-but-call-succeeded (`noOutput`). That distinction is exactly
+> the kind the observation layer should make visible, and it is yours to own. Noted that DEC-079/DEC-080 are
+> no-ops for you.

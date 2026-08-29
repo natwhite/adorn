@@ -171,6 +171,9 @@ describe('scope maps a @Contract()+@Observe() call to one span', () => {
         const exception = eventNamed(span, 'exception');
         expect(exception?.attributes?.['exception.type']).toBe('TypeError');
         expect(exception?.attributes?.['exception.message']).toBe('nope');
+        // Exactly ONE exception event: `markSpanOutcome` records it (from the raw settlement) and
+        // `finishPendingSpan` must NOT record it again on the @Observe ordering (L18/DEC-081 regression guard).
+        expect(span.events.filter(e => e.name === 'exception')).toHaveLength(1);
     });
 });
 
@@ -536,6 +539,72 @@ describe('completed.attributes land on the span (voice-agent L17)', () => {
         const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
         expect(span.attributes['adorn.return.reasoningTokens']).toBe(128); // disclosure channel intact
         expect(span.attributes['gen_ai.response.model']).toBe('o4-mini'); // attributes channel too
+    });
+});
+
+// ---------------------------------------------------------------------------
+// L18 (DEC-081) — a THROWN completion on the scope path must land its error on the span, even when a
+// functional emitter records its completion from INSIDE its own settle (so finishPendingSpan runs before
+// scope's markSpanOutcome, ending the span green before the outcome could be marked).
+// ---------------------------------------------------------------------------
+
+describe('a thrown completion on the scope path lands its error on the span (voice-agent L18)', () => {
+    const obs = (name: string): Observation => ({
+        owner: name.split('.')[0],
+        member: name.split('.')[1] || name,
+        name,
+        isStatic: false,
+        detail: 'always',
+        kind: 'client',
+        parameters: [],
+    });
+
+    it('a functional emitter that records its completion from inside proceed still gets ERROR + one exception', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const callId = 700;
+        const call: ObservationCall = {observation: obs('Reasoning.answer'), thisArg: undefined, values: [], callId};
+        // Mirror `observed()`: proceed emits the completion from INSIDE its own settle, then the throw
+        // propagates out to scope's markSpanOutcome — by which point the span is already ended.
+        expect(() =>
+            sink.scope!(call, () => {
+                sink.record!({
+                    kind: 'completed',
+                    observation: obs('Reasoning.answer'),
+                    callId,
+                    durationMs: 5,
+                    outcome: 'threw',
+                    settled: true,
+                    error: {type: 'RateLimitError', message: 'boom'},
+                });
+                throw new Error('boom');
+            }),
+        ).toThrow(/boom/);
+
+        const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
+        expect(span.status.code).toBe(SpanStatusCode.ERROR);
+        const exceptions = span.events.filter(e => e.name === 'exception');
+        expect(exceptions).toHaveLength(1); // finishPendingSpan records it; markSpanOutcome (ended span) is dropped
+        expect(exceptions[0].attributes?.['exception.type']).toBe('RateLimitError');
+    });
+
+    it('a returned completion on the same path is never falsely errored', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const callId = 701;
+        const call: ObservationCall = {observation: obs('Reasoning.answer'), thisArg: undefined, values: [], callId};
+        sink.scope!(call, () => {
+            sink.record!({
+                kind: 'completed',
+                observation: obs('Reasoning.answer'),
+                callId,
+                durationMs: 5,
+                outcome: 'returned',
+                settled: true,
+            });
+            return 'ok';
+        });
+        const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
+        expect(span.status.code).not.toBe(SpanStatusCode.ERROR);
+        expect(span.events.filter(e => e.name === 'exception')).toHaveLength(0);
     });
 });
 

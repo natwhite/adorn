@@ -198,7 +198,16 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
                     // The SHARED settle classifier still owns the outcome (status + a developer-authored
                     // throw's exception) from the raw settlement — control-flow only, emitting no value
                     // (DEC-036/DEC-025). It no longer ends the span; finishPendingSpan does, at `completed`.
-                    return settle(proceed, (settlement: Settlement<T>) => markSpanOutcome(span, settlement));
+                    return settle(proceed, (settlement: Settlement<T>) => {
+                        markSpanOutcome(span, settlement);
+                        // Record that the outcome was set from the raw settlement (L18/DEC-081), so the
+                        // correlated `completed` — which on the @Observe ordering arrives AFTER this — does not
+                        // re-record the exception. A functional emitter records its completion from INSIDE
+                        // `proceed`, so `finishPendingSpan` already ran and deleted the entry; this get() finds
+                        // nothing and there is nothing to double.
+                        const pending = pendingSpans.get(call.callId);
+                        if (pending) pending.outcomeMarked = true;
+                    });
                 },
             );
         },
@@ -260,6 +269,12 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
 interface PendingSpan {
     readonly span: Span;
     readonly startTime: number;
+    /**
+     * Set once `scope`'s settle has run `markSpanOutcome` — the @Observe ordering, where the outcome is
+     * marked from the raw settlement BEFORE the correlated completion arrives. `finishPendingSpan` reads it
+     * so it does NOT record a thrown exception a second time (recordException is not idempotent) — L18/DEC-081.
+     */
+    outcomeMarked?: boolean;
 }
 
 /**
@@ -310,6 +325,15 @@ function finishPendingSpan(
     // disclosure channel cannot express. Applied last so an explicit attribute wins a key collision; these
     // are developer-authored low-cardinality values, never a raw disclosed value (DEC-036).
     if (event.attributes) entry.span.setAttributes(toOtelAttributes(event.attributes));
+    // A THROWN completion must land its error on the span (voice-agent L18, DEC-081). On the @Observe ordering
+    // `markSpanOutcome` already recorded it from the raw settlement (`entry.outcomeMarked`), so we do NOT record
+    // again — recordException is not idempotent. But a functional emitter records its completion from INSIDE its
+    // own `settle`, so this runs BEFORE scope's `markSpanOutcome`; without it the span would be ended green and
+    // the later markSpanOutcome would no-op on the ended span. Mirrors `createPositionedSpan`'s error block.
+    if (!entry.outcomeMarked && event.outcome === 'threw' && event.error) {
+        entry.span.recordException(errorFactsToException(event.error));
+        entry.span.setStatus({code: SpanStatusCode.ERROR, message: event.error.message});
+    }
     entry.span.end(entry.startTime + event.durationMs);
 }
 
