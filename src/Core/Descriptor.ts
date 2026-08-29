@@ -52,11 +52,11 @@ export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export interface JsonObject {
     // `| undefined` so an OPTIONAL property on a type extending JsonObject (e.g. `minItems?: number` on
     // `ArrayOfParams`) is assignable to this index under a consumer's `strictNullChecks` — otherwise the
-    // shipped `.d.ts` fails to compile for a strict consumer that has not set `skipLibCheck`. adorn builds
-    // with `strictNullChecks` OFF (SMELL-12), so it never sees the conflict itself, but declaration emit
-    // preserves it into the published types. JSON has no `undefined`; `JSON.stringify` drops such a key,
-    // which is exactly "the (optional) property is absent". Under `strict:false` the `| undefined` collapses,
-    // so adorn's own build and emitted `.js` are unchanged.
+    // shipped `.d.ts` fails to compile for a strict consumer that has not set `skipLibCheck`. Since DEC-079
+    // adorn ALSO builds under `strict`, so indexing a JsonObject yields `JsonValue | undefined` internally
+    // too: readers guard for it (the value is never actually undefined at runtime — JSON has none, and
+    // `JSON.stringify` drops such a key, which is exactly "the optional property is absent"), and untrusted
+    // params that DO carry an undefined value are rejected as non-serialisable by `cloneSerializable`.
     [key: string]: JsonValue | undefined;
 }
 
@@ -465,7 +465,16 @@ function cloneSerializable(value: JsonValue, path: string): JsonValue {
         const source = value as JsonObject;
         const clone: JsonObject = {};
         Object.keys(source).forEach(key => {
-            clone[key] = cloneSerializable(source[key], `${path}.${key}`);
+            const entry = source[key];
+            if (entry === undefined) {
+                // `undefined` is not JSON-serialisable: the params object is INVALID (this key can never
+                // survive JSON), not "this key absent". Reject it here — the JsonObject index's `| undefined`
+                // artifact only shows up under `strict` (DEC-079); the throw matches the non-JSON-scalar case below.
+                throw new TypeError(
+                    `Constraint params at '${path}.${key}' must be JSON-serialisable, received undefined`,
+                );
+            }
+            clone[key] = cloneSerializable(entry, `${path}.${key}`);
         });
         Object.freeze(clone);
         return clone;

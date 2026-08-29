@@ -1208,3 +1208,20 @@ On precedent: adorn *has* the declaration CodeQL lacks, so the source problem is
 **Not L16.** The sibling item — a *returned* value that means failure producing a green span — is a change to the frozen core event model's documented `error present iff outcome === 'threw'` invariant and a product-direction question (does the observation stream represent result-typed failure?). Held for owner review against the contracts-as-source-of-truth premise; NOT built here. See the feedback doc's Round 5 disposition.
 
 **Surface.** Add-on internal only; no core model change, no value export → surface **100**. Green-twice in-band: typecheck 0, 75 suites / 1262 tests (+3, `addons/otel/sink.test.ts` — positioned path, scope path, and coexistence with the `adorn.return.<name>` channel). `dist` rebuilt so the `file:../adorn` consumer gets it in `dist/addons/otel`.
+
+## DEC-079 — `strict: true`: the result-type workarounds go, and the `strict:false` casts with them (voice-agent Round 5 follow-up)
+**Status:** ACCEPTED · **BUILT** (owner-approved via AskUserQuestion, red-team gated) · tsconfig + type-shape changes, no value-export change · surface **100**
+
+**Context.** Round 5's L16 review surfaced that three sibling "check-outcome-as-a-value" types split on shape for one reason: `strict: false`. `CheckResult` shipped a `{ok:true}|{ok:false}` union that does NOT narrow under this repo's `strict:false` (a boolean-discriminant limitation), so its consumers cast `as CheckFailure`; `Pre/PostconditionResult` dodged that by going flat (`{ok:boolean, failed?}`). `settle.ts` had already shown the fix — a *string* discriminant narrows even under `strict:false` — proving the boolean-union casts were a self-imposed tax on one tsconfig line. Measured cost to remove the disease: ~38 errors (30 in one fuzz-harness file), 8 in core, 0 `strictPropertyInitialization`.
+
+**Decision.** Flip `strict: true`. The five strict sub-flags formerly staged individually (SMELL-12) are now implied and removed from `tsconfig.json`; the remaining three (`strictNullChecks`, `noImplicitAny`, `strictPropertyInitialization`) are on. With boolean unions now narrowing:
+- The two `as CheckFailure` casts in `contract.ts` are deleted (the `if (!r.ok)` guard narrows).
+- `Pre/PostconditionResult` become proper `{ok:true} | {ok:false, failed, error?}` unions — the flat shape's only rationale was the now-gone `strict:false`; `failed` is present exactly when `ok` is `false`, no optional field readable on the success path.
+- The fuzz harness's `PreparedRun` becomes a `{declined} | RunPlan` union so `if (p.declined) return` narrows the run fields (30 of the 44 errors).
+- The 8 core `strictNullChecks`/`noImplicitAny` fixes: `getParamNames(func: Function): string[]` (cascaded a fix into `Log.ts`), guards on the `JsonObject`-index `| undefined` in `schema.ts` (×4, trusted internal data — dead type-guards), and an explicit non-serialisable REJECT for an undefined param value in `Descriptor.cloneSerializable` (untrusted data — preserves the pre-strict throw, pinned by the `rejects undefined` test).
+
+**Thorough cast sweep (owner-requested).** Every `strict:false`-era workaround pulled, not just the two in the plan: the `asFail`/`failOf` helpers in `round3-functional.test.ts`, `Fields.test.ts`, `tools/q31/roundtrip.ts`, `tools/q31/capstone.ts` drop their casts (the guard/ternary narrows); the stale `strict:false` comments in `Descriptor.ts` (the JsonObject index note) and `settle.ts` are corrected. Zero `as CheckFailure`/`as unknown as CheckFail` remain.
+
+**Not touched.** The three `strict: false` compiler-option objects in `tools/sensitive-flow/compilerHost.ts` and `src/cli/check.ts` set strict OFF for the USER code the sensitive-flow detector analyses — not adorn's own build — and are left as-is.
+
+**Surface.** tsconfig + type-shape only; no value-export change → surface **100**. Green-twice in-band: build 0, typecheck 0, 75 suites / 1262 tests. `dist` rebuilt.

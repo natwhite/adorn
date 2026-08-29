@@ -48,14 +48,14 @@ const API_KEY = readEnvKey('OPENAI_API_KEY');
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 
-// The `ok:false` arm — the union doesn't narrow under this repo's strict:false, so read failures via a cast.
+// The `ok:false` arm — since DEC-079 (strict) the ternary narrows `r` for us, no cast.
 interface CheckFail {
     readonly ok: false;
     readonly message: string;
     readonly path?: ReadonlyArray<string | number>;
     readonly expected?: string;
 }
-const failOf = (r: CheckResult<unknown>): CheckFail | null => (r.ok ? null : (r as unknown as CheckFail));
+const failOf = (r: CheckResult<unknown>): CheckFail | null => (r.ok ? null : r);
 
 // --------------------------------------------------------------------------------------------------
 // Descriptors + schemas — built by the REAL code, once, and REUSED as the validators (so nothing can drift)

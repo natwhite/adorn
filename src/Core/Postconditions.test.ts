@@ -19,7 +19,7 @@ describe('evaluatePostconditions', () => {
         const first = post(() => false, 'first');
         const second = post(() => false, 'second');
         const verdict = evaluatePostconditions([first, second], 1, []);
-        expect(verdict.ok).toBe(false);
+        if (verdict.ok) throw new Error('expected a postcondition failure');
         expect(verdict.failed).toBe(first);
     });
 
@@ -39,7 +39,7 @@ describe('evaluatePostconditions', () => {
             throw boom;
         }, 'throws');
         const verdict = evaluatePostconditions([p], 1, []);
-        expect(verdict.ok).toBe(false);
+        if (verdict.ok) throw new Error('expected a postcondition failure');
         expect(verdict.failed).toBe(p);
         expect(verdict.error).toBe(boom);
     });

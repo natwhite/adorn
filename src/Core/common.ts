@@ -10,7 +10,7 @@ const STRIP_COMMENTS =
 const ARGUMENT_NAMES = /([^\s,]+)/g;
 
 export abstract class DecoratorFactory {
-    static getParamNames(func) {
+    static getParamNames(func: Function): string[] {
         const fnStr = func.toString().replace(STRIP_COMMENTS, '');
         const result = fnStr.slice(fnStr.indexOf('(') + 1, fnStr.indexOf(')')).match(ARGUMENT_NAMES);
         return result === null ? [] : result;

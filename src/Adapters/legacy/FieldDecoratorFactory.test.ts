@@ -138,7 +138,7 @@ describe('installation', () => {
     it('installFieldContracts covers statics and instance fields from the constructor', () => {
         class Host {
             static limit: number;
-            count: number;
+            count!: number; // decorator-managed; definite-assignment for strictPropertyInitialization (DEC-079)
         }
         recordFieldConstraint(Host, 'limit', GreaterThan(0));
         recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
@@ -151,7 +151,7 @@ describe('installation', () => {
 
     it('installFieldContracts is safe to re-drive, so @Contract() could call it', () => {
         class Host {
-            count: number;
+            count!: number; // decorator-managed; definite-assignment for strictPropertyInitialization (DEC-079)
         }
         recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
 
@@ -237,7 +237,7 @@ describe('the accessor — BUG-1', () => {
     it('reads undefined for a contracted field that was never assigned', () => {
         class Sparse {
             @CreateFieldDecorator(GreaterThan(0))
-            count: number;
+            count!: number; // decorator-managed; definite-assignment for strictPropertyInitialization (DEC-079)
         }
         expect(new Sparse().count).toBeUndefined();
     });
@@ -306,7 +306,7 @@ describe('observability — why the WeakMap side table was rejected', () => {
     it('does not list an unassigned contracted field in for...in', () => {
         class Sparse {
             @CreateFieldDecorator(GreaterThan(0))
-            count: number;
+            count!: number; // decorator-managed; definite-assignment for strictPropertyInitialization (DEC-079)
 
             assigned: number = 1;
         }

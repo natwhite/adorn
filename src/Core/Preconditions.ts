@@ -10,18 +10,21 @@
 import {Precondition} from './ContractRegistry';
 
 /**
- * The verdict {@link evaluatePreconditions} returns. Flat rather than a `{ok:true} | {ok:false}`
- * discriminated union for the same reason {@link import('./Postconditions').PostconditionResult} is:
- * this project compiles with `strict: false`, under which TypeScript does not narrow a boolean
- * discriminant. `v.failed`/`v.error` are populated only when `ok` is `false`.
+ * The verdict {@link evaluatePreconditions} returns. A discriminated union on `ok`, the input-side twin
+ * of {@link import('./Postconditions').PostconditionResult}: the failure arm carries the first
+ * precondition that did not hold plus the value it threw (if it threw rather than returning falsy).
+ * Since DEC-079 this project compiles under `strict`, so the boolean discriminant narrows and the union
+ * can state precisely that `failed` is present exactly when `ok` is `false`.
  */
-export interface PreconditionResult {
-    readonly ok: boolean;
-    /** The first precondition that did not hold. Present iff `ok` is `false`. */
-    readonly failed?: Precondition;
-    /** The value the failing predicate threw, if it threw rather than returning falsy. */
-    readonly error?: unknown;
-}
+export type PreconditionResult =
+    | {readonly ok: true}
+    | {
+          readonly ok: false;
+          /** The first precondition that did not hold. */
+          readonly failed: Precondition;
+          /** The value the failing predicate threw, if it threw rather than returning falsy. */
+          readonly error?: unknown;
+      };
 
 /**
  * Evaluate every precondition against the call's arguments. First failure wins, and because

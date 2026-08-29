@@ -325,22 +325,30 @@ export async function fuzzClassAsync(
 // Run preparation (shared by the sync and async entry points)
 // ---------------------------------------------------------------------------
 
-/** Everything a run needs, or a `declined` result to return immediately. */
-interface PreparedRun {
-    declined?: FuzzResult;
-    ctx?: OracleContext;
-    coverage?: ParameterArbitrary[];
-    argsArbitrary?: Arbitrary<unknown[]>;
-    mode?: OracleMode;
-    oraclesChecked?: string[];
-    className?: string;
-    methodName?: string;
-    isStatic?: boolean;
-    invariantsChecked?: string[];
-    seed?: number;
-    numRuns?: number;
+/**
+ * Everything a run needs, or a `declined` result to return immediately. A discriminated union on
+ * `declined`: after `if (p.declined) return p.declined`, `p` narrows to {@link RunPlan} and every run
+ * field is present — no per-field `| undefined` (the flat shape this replaced predated `strict`, which
+ * now narrows a boolean-discriminant union; DEC-079).
+ */
+type PreparedRun = {readonly declined: FuzzResult} | RunPlan;
+
+/** The good-to-go arm of {@link PreparedRun} — a run with every field resolved. */
+interface RunPlan {
+    readonly declined?: undefined;
+    readonly ctx: OracleContext;
+    readonly coverage: ParameterArbitrary[];
+    readonly argsArbitrary: Arbitrary<unknown[]>;
+    readonly mode: OracleMode;
+    readonly oraclesChecked: string[];
+    readonly className: string;
+    readonly methodName: string;
+    readonly isStatic: boolean;
+    readonly invariantsChecked: string[];
+    readonly seed?: number;
+    readonly numRuns: number;
     /** `@Requires` generate-and-filter starvation warnings, merged into the run's warnings (DEC-057 fuzzing). */
-    preconditionWarnings?: string[];
+    readonly preconditionWarnings?: string[];
 }
 
 function prepareRun(options: FuzzOptions): PreparedRun {
@@ -457,7 +465,7 @@ function prepareRun(options: FuzzOptions): PreparedRun {
     };
 }
 
-function assemblePassed(p: PreparedRun, details: fc.RunDetails<[unknown[]]>): FuzzResult {
+function assemblePassed(p: RunPlan, details: fc.RunDetails<[unknown[]]>): FuzzResult {
     return {
         target: p.className,
         method: p.methodName,
@@ -475,7 +483,7 @@ function assemblePassed(p: PreparedRun, details: fc.RunDetails<[unknown[]]>): Fu
 }
 
 function assembleFinding(
-    p: PreparedRun,
+    p: RunPlan,
     details: fc.RunDetails<[unknown[]]>,
     outcome: OracleOutcome | null,
     counterexampleArgs: unknown[],

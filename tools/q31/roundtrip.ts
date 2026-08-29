@@ -78,11 +78,7 @@ interface ParamValidator {
     readonly optional?: boolean;
 }
 
-/**
- * The `ok:false` arm of `CheckResult`. The discriminated union doesn't narrow cleanly under this repo's
- * `strict:false` config (the same quirk the Verify tests handle with a cast), so read a failure through
- * this helper rather than relying on `if (!r.ok)` narrowing.
- */
+/** The `ok:false` arm of `CheckResult`. Since DEC-079 (strict) the ternary narrows `r` for us — no cast. */
 interface CheckFail {
     readonly ok: false;
     readonly message: string;
@@ -90,7 +86,7 @@ interface CheckFail {
     readonly kind: unknown;
     readonly path?: ReadonlyArray<string | number>;
 }
-const failOf = (r: CheckResult<unknown>): CheckFail | null => (r.ok ? null : (r as unknown as CheckFail));
+const failOf = (r: CheckResult<unknown>): CheckFail | null => (r.ok ? null : r);
 
 interface Case {
     readonly name: string;

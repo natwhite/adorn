@@ -19,11 +19,11 @@ const shape = ObjectContracts.Fields({
     age: NumberContracts.Between(0, 120),
 });
 
-// `strict:false` does not narrow a `CheckResult` on `r.ok`, so cast after the guard (the codebase's
-// established asFail pattern). Sound: we throw unless the result is a failure.
+// Narrow a CheckResult to its failure arm, throwing if it unexpectedly succeeded. Since DEC-079 (strict)
+// the `if (r.ok) throw` guard narrows `r` for us — no cast.
 function asFail(r: CheckResult<unknown>): CheckFailure {
     if (r.ok) throw new Error('expected a failed CheckResult');
-    return r as CheckFailure;
+    return r;
 }
 
 describe('L11 — violationFromCheck maps a failed CheckResult onto ViolationFacts', () => {

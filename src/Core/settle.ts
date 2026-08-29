@@ -17,8 +17,9 @@
  * The seam extracted here is re-pinned to a single object-shaped, discriminated callback carrying the
  * settled value **or** the thrown error, so an adapter can both read the value (return-derived span
  * attributes) and `recordException` the error — the gap the adversarial review (F2) found. Because the
- * union discriminates on the *string* literal `outcome`, it narrows even under `strict: false` (unlike
- * a boolean discriminant), so `Settlement<T>` is a real discriminated union. One arity, one object,
+ * union discriminates on the *string* literal `outcome`, `Settlement<T>` is a real discriminated union that
+ * narrows cleanly — the house style since `settle` (it did so even under the former `strict:false`, unlike a
+ * boolean discriminant, the choice DEC-079 later generalised by flipping strict on). One arity, one object,
  * forever — a later field is an additive change, never an arity break (Q-6).
  *
  * ## Takes a thunk, not a pre-evaluated result

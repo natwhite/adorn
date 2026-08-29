@@ -19,16 +19,15 @@
     "module": "node16",
     "moduleResolution": "node16",
     "target": "es2019",
-    // SMELL-12: `strict` stays false (strictNullChecks / noImplicitAny /
-    // strictPropertyInitialization carry real, deferred cost). These five strict sub-flags
-    // were re-measured post-@Returns/Fuzzing-B/Observability-O1 and enabled together as the
-    // genuinely-free staged subset — all three build/typecheck paths inherit them from here.
-    "strict": false,
-    "strictFunctionTypes": true,
-    "strictBindCallApply": true,
-    "noImplicitThis": true,
-    "useUnknownInCatchVariables": true,
-    "alwaysStrict": true,
+    // `strict: true` (voice-agent Round 5, DEC-079). The five strict sub-flags formerly listed here
+    // (strictFunctionTypes / strictBindCallApply / noImplicitThis / useUnknownInCatchVariables /
+    // alwaysStrict) were staged on individually while `strict` stayed false (SMELL-12); they are now
+    // implied by `strict` and removed. The remaining three — strictNullChecks / noImplicitAny /
+    // strictPropertyInitialization — were measured (~38 errors, 30 in one fuzz-harness file) and turned
+    // on together. Full strict is what makes a boolean-discriminant union narrow under this repo's config,
+    // which is what let the `as CheckFailure` casts and the flat result-type workarounds go (DEC-053/DEC-074
+    // fallout). All three build/typecheck paths inherit `strict` from here.
+    "strict": true,
     "lib": ["es2019", "dom"],
     "declaration": true,
     // Source/declaration maps OFF (npm-release prep): the published package ships `dist` only

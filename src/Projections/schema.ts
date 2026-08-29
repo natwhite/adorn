@@ -699,7 +699,12 @@ function mergeFragments(fragments: JsonObject[]): JsonObject {
                 merged[key] = fragment[key];
                 continue;
             }
-            const combined = combineKeyword(key, merged[key], fragment[key]);
+            const existing = merged[key];
+            const incoming = fragment[key];
+            // Both are present here (`key in merged`, and `key` came from `fragment`'s own keys); the guard
+            // only satisfies the JsonObject index's `| undefined` artifact (JSON carries no undefined).
+            if (existing === undefined || incoming === undefined) continue;
+            const combined = combineKeyword(key, existing, incoming);
             if (combined === CONFLICT) {
                 conflicted = true;
                 break;
@@ -746,7 +751,9 @@ function tightenObjects(fragment: JsonValue): JsonValue {
         if (isObjectFragment(properties) && !('additionalProperties' in fragment)) {
             const tightened: JsonObject = {};
             Object.keys(properties).forEach(name => {
-                tightened[name] = tightenObjects(properties[name]);
+                const prop = properties[name];
+                if (prop === undefined) return; // JSON has no undefined (JsonObject index artifact)
+                tightened[name] = tightenObjects(prop);
             });
             // Respect a pre-existing `required` — a `@Fields` fragment carries its own optional-aware subset
             // (round-4 §2.1), so an optional field is NOT force-required. `@Shape` emits none → require all.
@@ -859,7 +866,9 @@ function strictifyForProvider(node: JsonValue, path: string, ctx: StrictifyConte
             const already = new Set<string>(Array.isArray(out.required) ? (out.required as string[]) : propKeys);
             const props: JsonObject = {};
             for (const key of propKeys) {
-                const child = strictifyForProvider(out.properties[key], `${path}.properties.${key}`, ctx);
+                const prop = out.properties[key];
+                if (prop === undefined) continue; // JSON has no undefined (JsonObject index artifact)
+                const child = strictifyForProvider(prop, `${path}.properties.${key}`, ctx);
                 props[key] = child;
                 if (!already.has(key) && !fragmentAdmitsNull(child)) {
                     throw new TypeError(
@@ -943,7 +952,9 @@ function canonicalize(value: JsonValue): JsonValue {
         Object.keys(object)
             .sort(compareKeys)
             .forEach(key => {
-                ordered[key] = canonicalize(object[key]);
+                const entry = object[key];
+                if (entry === undefined) return; // JSON has no undefined (JsonObject index artifact)
+                ordered[key] = canonicalize(entry);
             });
         return ordered;
     }

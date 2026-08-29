@@ -21,25 +21,25 @@ import {Postcondition} from './ContractRegistry';
 import {REDACTED, shouldDiscloseValue} from './redaction';
 
 /**
- * The verdict {@link evaluatePostconditions} returns. `ok` is the whole answer; `failed` and `error`
- * are populated only when `ok` is `false` — the first postcondition that did not hold, and the value
- * it threw if it threw rather than returning falsy. Both are carried for the violation message and for
- * the fuzzer's counterexample report.
+ * The verdict {@link evaluatePostconditions} returns. A discriminated union on `ok`: the success arm
+ * carries nothing (the caller still holds the result and the args), the failure arm carries the first
+ * postcondition that did not hold plus the value it threw if it threw rather than returning falsy — both
+ * for the violation message and the fuzzer's counterexample report.
  *
- * A flat shape rather than a `{ok:true} | {ok:false, failed}` discriminated union, **deliberately**:
- * this project compiles with `strict: false`, under which TypeScript does not narrow a
- * *boolean*-discriminant union (a known `strictNullChecks`-off limitation — `true`/`false` collapse),
- * so a consumer writing `if (!v.ok) { v.failed }` would not type-check. The flat interface reads
- * `v.failed` cleanly after `if (v.ok) return`, is identical at runtime, and is exactly as usable by
- * the fuzz driver (`if (!verdict.ok) record(verdict.failed)`).
+ * A proper `{ok:true} | {ok:false, failed}` union rather than the former flat `{ok:boolean, failed?}`
+ * shape: since DEC-079 this project compiles under `strict`, so a boolean-discriminant union narrows
+ * (`if (!v.ok) { v.failed }` type-checks) and the union states precisely that `failed` is present exactly
+ * when `ok` is `false` — no optional field that a consumer could read on the success path.
  */
-export interface PostconditionResult {
-    readonly ok: boolean;
-    /** The first postcondition that did not hold. Present iff `ok` is `false`. */
-    readonly failed?: Postcondition;
-    /** The value the failing predicate threw, if it threw rather than returning falsy. */
-    readonly error?: unknown;
-}
+export type PostconditionResult =
+    | {readonly ok: true}
+    | {
+          readonly ok: false;
+          /** The first postcondition that did not hold. */
+          readonly failed: Postcondition;
+          /** The value the failing predicate threw, if it threw rather than returning falsy. */
+          readonly error?: unknown;
+      };
 
 /**
  * Evaluate every postcondition against one outcome. First failure wins, and because

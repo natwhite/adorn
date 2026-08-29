@@ -361,7 +361,7 @@ describe('Observable-returning methods', () => {
 
         const seen: string[] = [];
         new Task().work().subscribe({
-            next: value => seen.push(value),
+            next: (value: string) => seen.push(value),
             complete: () => {
                 expect(seen).toEqual(['value']);
                 expect(records).toHaveLength(1);
@@ -386,7 +386,7 @@ describe('Observable-returning methods', () => {
         }
 
         new Task().work().subscribe({
-            error: error => {
+            error: (error: unknown) => {
                 expect(error).toBe(boom);
                 expect(records).toHaveLength(1);
                 expect(records[0].outcome).toBe('threw');

@@ -18,8 +18,8 @@ import {
 
 const {Fields} = ObjectContracts;
 
-// The discriminated `CheckResult` doesn't narrow cleanly under the repo's `strict:false` (same quirk the
-// Verify/locate tests handle), so read a failure through this cast rather than `if (!r.ok)` narrowing.
+// Narrow a CheckResult to its failure arm (throwing if it unexpectedly passed). Since DEC-079 (strict) the
+// `if (r.ok) throw` guard narrows for us — no cast.
 type Fail = {
     ok: false;
     message: string;
@@ -30,7 +30,7 @@ type Fail = {
 };
 function asFail<T>(r: {ok: true; value: T} | Fail): Fail {
     if (r.ok) throw new Error('expected a violation');
-    return r as Fail;
+    return r;
 }
 
 describe('Fields — predicate (optional-aware)', () => {

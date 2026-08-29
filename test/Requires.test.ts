@@ -99,7 +99,7 @@ describe('@Requires — the shared oracle and no-drift (DEC-057)', () => {
         const pre = {predicate: (a: number, b: number) => a < b, description: 'a < b'};
         expect(evaluatePreconditions([pre], [1, 2])).toEqual({ok: true});
         const verdict = evaluatePreconditions([pre], [2, 1]);
-        expect(verdict.ok).toBe(false);
+        if (verdict.ok) throw new Error('expected a precondition failure');
         expect(verdict.failed).toBe(pre);
     });
 });

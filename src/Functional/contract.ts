@@ -36,7 +36,6 @@
 
 import type {ConstraintDescriptor, ConstraintParams} from '../Core/Descriptor';
 import {Verify, violationFromCheck} from '../Validation/Verify';
-import type {CheckFailure} from '../Validation/Verify';
 import {evaluatePreconditions} from '../Core/Preconditions';
 import {evaluatePostconditions} from '../Core/Postconditions';
 import type {Precondition, Postcondition} from '../Core/ContractRegistry';
@@ -142,10 +141,9 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                 if (!descriptor) continue; // a hole
                 const r = Verify.check(descriptor, `arg${i}`, args[i]);
                 if (!r.ok) {
-                    // `strict:false` does not narrow `r` on `!r.ok`; cast (sound after the guard).
-                    const fail = r as CheckFailure;
-                    emitViolation(violationFromCheck(fail, {index: i, blame: 'caller'}));
-                    throw new Error(fail.message);
+                    // `strict` narrows `r` to the CheckResult failure arm here (DEC-079) — no cast.
+                    emitViolation(violationFromCheck(r, {index: i, blame: 'caller'}));
+                    throw new Error(r.message);
                 }
             }
         }
@@ -179,9 +177,9 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
             if (spec.returns) {
                 const rr = Verify.check(spec.returns, 'return', result);
                 if (!rr.ok) {
-                    const fail = rr as CheckFailure;
-                    emitViolation(violationFromCheck(fail, {parameter: 'return', index: RETURN_INDEX, blame: 'callee'}));
-                    throw new Error(fail.message);
+                    // `strict` narrows `rr` to the failure arm here (DEC-079) — no cast.
+                    emitViolation(violationFromCheck(rr, {parameter: 'return', index: RETURN_INDEX, blame: 'callee'}));
+                    throw new Error(rr.message);
                 }
             }
 
