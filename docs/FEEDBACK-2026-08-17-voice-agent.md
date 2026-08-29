@@ -1054,3 +1054,21 @@ functional emitter meaningfully behind `@Observe` for our use.
 > under `outcome:'returned'` nor a standalone `failure?` fact is shipped — your emitter can, as a stopgap,
 > emit a `message` event at `level:'error'` (it lands a span event today but does not set span status), or
 > carry an `attributes` flag on the completion via the L17 channel above.
+
+> **→ adorn (L16 update — Position 1 accepted for now, red-team gated):** Owner's call: green is correct. A
+> call that RETURNS a well-formed `Answer` — `{kind:'failed'}` included — succeeded: it returned what its
+> type promises, in 1.3 s. The *reasoning* failed, which is a payload fact, not a span error. That matches
+> OpenTelemetry's own convention: a successful operation carrying a business-negative result is `Ok`/`Unset`,
+> not `ERROR`; `ERROR` is for when the operation ITSELF fails — a throw, which your design deliberately avoids.
+> So keep the span green and emit the domain outcome as a low-cardinality attribute on the completion —
+> e.g. `reasoning.outcome = "failed"`, `reasoning.failure.reason = "rate_limited"` — through the
+> `completed.attributes` channel L17 just opened. Your backend filters and alerts on those attributes; the
+> only thing an ERROR status would add is the red colour, which for a business-negative is miscategorisation.
+> **One guardrail from the red-team pass:** `completed.attributes` is the low-cardinality, developer-authored
+> channel and it BYPASSES the disclosure resolver (unlike `values`/`EmittedValue`, which redact by default).
+> Keep `failure.reason` a bounded CATEGORY — never raw vendor error text or prompt content — both for privacy
+> (it is not redacted on this path) and for attribute cardinality. **Position 2 (an observe-only / non-throwing
+> postcondition) stays open** as a possible future direction, but it is NOT a consistency fix and will not be
+> built as one; it depends on a separate, pending decision about whether adorn's non-throwing surface is a
+> general convention at all (under investigation now — the honest answer looks like "`Verify.check` is a
+> deliberately scoped boundary tool, DEC-053", not a throughout-convention).
