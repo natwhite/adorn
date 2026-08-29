@@ -34,6 +34,7 @@ import {
     setObservationSink,
     type ObservationEvent,
     type ObservationSink,
+    type ObservationCall,
     type EmittedValue,
     type Observation,
 } from '../../index';
@@ -458,6 +459,83 @@ describe('record-only positioning and nesting (voice-agent L14 / L15)', () => {
             }),
         ).not.toThrow();
         expect(finishedSpans()).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// completed.attributes → span attributes (voice-agent L17, DEC-078). A non-decorator emitter attaches
+// low-cardinality facts (e.g. semconv gen_ai.usage.*) to the completion; the sink lands them on the span,
+// distinct from the disclosure-gated adorn.return.<name> value channel, and honoured as `message` already is.
+// ---------------------------------------------------------------------------
+
+describe('completed.attributes land on the span (voice-agent L17)', () => {
+    const obs = (name: string): Observation => ({
+        owner: name.split('.')[0],
+        member: name.split('.')[1] || name,
+        name,
+        isStatic: false,
+        detail: 'always',
+        kind: 'client',
+        parameters: [],
+    });
+
+    it('applies a completion’s attributes to a record-only positioned span (the functional-emitter case)', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const start = Date.now() - 5000;
+        sink.record!({
+            kind: 'completed',
+            observation: obs('Reasoning.answer'),
+            callId: 300,
+            startedAt: start,
+            durationMs: 1300,
+            outcome: 'returned',
+            settled: true,
+            attributes: {'gen_ai.usage.output_tokens': 4096, 'gen_ai.response.model': 'o4-mini'},
+        });
+        const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
+        expect(span.attributes['gen_ai.usage.output_tokens']).toBe(4096);
+        expect(span.attributes['gen_ai.response.model']).toBe('o4-mini');
+    });
+
+    it('applies a completion’s attributes to the method’s own scope span (pending-span path)', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const call: ObservationCall = {
+            observation: obs('Reasoning.answer'),
+            thisArg: undefined,
+            values: [],
+            callId: 301,
+        };
+        sink.scope!(call, () => 'ok');
+        sink.record!({
+            kind: 'completed',
+            observation: obs('Reasoning.answer'),
+            callId: 301,
+            durationMs: 1300,
+            outcome: 'returned',
+            settled: true,
+            attributes: {'gen_ai.usage.output_tokens': 512},
+        });
+        const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
+        expect(span.attributes['gen_ai.usage.output_tokens']).toBe(512);
+    });
+
+    it('coexists with the disclosed adorn.return.<name> value channel (both land, neither disturbs the other)', () => {
+        const sink = createOtelSink({tracer: provider.getTracer('m')});
+        const start = Date.now() - 5000;
+        sink.record!({
+            kind: 'completed',
+            observation: obs('Reasoning.answer'),
+            callId: 302,
+            startedAt: start,
+            durationMs: 900,
+            outcome: 'returned',
+            settled: true,
+            values: [{index: RETURN_INDEX, name: 'reasoningTokens', disclosed: true, rendering: 128}],
+            attributes: {'gen_ai.response.model': 'o4-mini'},
+        });
+        const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
+        expect(span.attributes['adorn.return.reasoningTokens']).toBe(128); // disclosure channel intact
+        expect(span.attributes['gen_ai.response.model']).toBe('o4-mini'); // attributes channel too
     });
 });
 

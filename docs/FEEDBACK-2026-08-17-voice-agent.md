@@ -940,3 +940,117 @@ another consumer reports the same shape, you have two data points rather than on
 >   (AsyncLocalStorage) — the cross-wrapper *inference* DEC-046 scoped out on purpose. Threading it through
 >   signatures is telemetry plumbing in domain APIs; neither is ours to impose. If a second consumer reports
 >   the same shape, we'll have the two data points to revisit it with.
+---
+
+## Round 5 — 2026-08-29, adopting the observation layer on a network seam
+
+Context: this project has pivoted from a dental confirmation agent to the voice front end of a
+personal assistant, and gained a **second model** — a reasoning agent, reached from the voice agent
+through a `findOut` verb, answered by an OpenAI Responses call at **1.3–3.9 s**. That is the first
+seam here that genuinely leaves the process; the previous slowest verb in the system averaged
+**2.72 ms**, so this is also the first time a span's duration has been the interesting part.
+
+Wrapped with the functional emitter from L8 (`observed()`), as `Reasoning.answer`, `kind: 'client'`.
+**It worked** — no changes needed, the seam is free when no sink is installed, and the argument-derived
+attributes land on the span exactly as L13's fix arranged. Two limitations surfaced, both specific to
+a seam whose interesting facts are on the way *out* rather than the way *in*.
+
+## L16 — a returned value that means failure is indistinguishable from success
+
+**What we hit.** `answer()` never throws. A vendor 429, an empty `output` array, a dropped socket —
+all of them resolve to a value:
+
+```ts
+type Answer =
+    | {kind: 'answered'; text: string; model: string; ms: number; reasoningTokens: number}
+    | {kind: 'failed'; reason: string; ms: number};
+```
+
+That is deliberate and it is not going to change: this runs while a phone call is open, and an
+unhandled rejection mid-sentence is worse than a slow answer. It is also not unusual here — our
+`Verify.check` failures are ordinary returned values for the same reason (DEC-018).
+
+`settle` classifies by *how the call ended*, so every one of those is `outcome: 'returned'`. **A
+rate-limited reasoning call produces a green span**, identical to a successful one apart from
+duration. The one thing an operator most wants to filter on is the one thing the stream cannot say.
+
+`error`/`ErrorFacts` exists but is reachable only from `outcome: 'threw'`. `ViolationFacts` is the
+nearest analogue and is contract-specific.
+
+**What we did instead.** Nothing, so far. The honest options are both bad: throw and catch at the
+call site purely to make the telemetry right — letting the observability layer dictate the error
+model — or emit a second `message` observation on failure, which decouples it from the span whose
+duration it explains.
+
+**What would fix it.** An optional classifier on the emitter, so a *returned* value can be reported
+as a failure without being thrown:
+
+```ts
+observed({owner, member, failed: (answer) => answer.kind === 'failed' ? answer.reason : undefined}, fn)
+```
+
+carried on the `completed` event as something a sink can map to `span.setStatus({code: ERROR})` — the
+existing `error?: ErrorFacts` field would do, if it were permitted alongside `outcome: 'returned'`.
+
+**Why it may be worth more than it looks.** Result-typed error handling is the norm in the codebases
+least able to use decorators — functional TypeScript, exactly the population L8/L9 were about. For
+those, `outcome` currently reports the *language mechanism* rather than the *outcome*, which is the
+one word in the field's name.
+
+## L17 — the functional emitter cannot put anything from the return value on the span
+
+**What we hit.** For `Reasoning.answer` the low-cardinality facts worth having are almost all on the
+way out — did it answer or fail, how many reasoning tokens it spent, which model actually served it.
+`ObservedSpec.attributes` is `(...args: A) => Attributes`, so the emitter can only see the arguments.
+We currently ship `model`, `effort` and `question.length`, and the first two are configuration rather
+than observation.
+
+**This is partly ours and we know it.** Your model is coherent and we wrote it down after getting it
+wrong once: arguments belong to the span from the moment it opens; the return is not known until it
+closes, and `createOtelSink` reads it from the completed event's values filtered to `RETURN_INDEX`.
+So the *channel* exists. What is missing is a way for a **non-decorator** emitter to fill it —
+`@Observe` gets there by reflection, and L8's functional projection has no equivalent.
+
+**What we did instead.** Left the return facts off the span. They are in the script output and in
+`POC-findings.md`, which is to say they are not in the trace, which is where a running system would
+need them.
+
+**What would fix it.** A `returns?: (value: R) => Attributes` beside `attributes`, emitted as values
+at `RETURN_INDEX` on the completed event. It composes with L16 — the same hook could carry both — and
+it needs no change to the sink, since `createOtelSink` already reads that position.
+
+**Scope note.** L13's fix made *one* named attribute reachable from a completed observation, which
+solved the case it was raised for. This is the general form, and it is the last thing keeping the
+functional emitter meaningfully behind `@Observe` for our use.
+
+> **→ adorn (L17 — done, DEC-078):** Shipped. `createOtelSink` now applies `completed.attributes` to the
+> span on both paths — the `scope`-correlated span (`finishPendingSpan`) and the record-only positioned span
+> (`createPositionedSpan`) — exactly as it already did for `message.attributes`. The field was defined on the
+> completed event but silently dropped there; that was the whole gap. So your emitter can now land
+> semconv-correct keys (`gen_ai.usage.output_tokens`, `gen_ai.response.model`) directly via `attributes` on
+> the completion, not only the `adorn.return.<name>` form. One clarification on the framing: your literal
+> proposal — "`returns?: (value) => Attributes` emitted as values at `RETURN_INDEX`" — already worked with
+> zero adorn change, because a *named* `EmittedValue` at `RETURN_INDEX` keys as `adorn.return.<name>`
+> (DEC-075). Both channels now exist and coexist, and they mean different things: use `values` at
+> `RETURN_INDEX` for the disclosure-gated return *rendering* under `adorn.return.*` (subject to
+> `@Telemetry`/`@Sensitive` semantics if you ever route through them), and `completed.attributes` for
+> arbitrary low-cardinality/semconv keys. `ObservedSpec` is your type — add the return-hook there; adorn ships
+> no `observed()`. Verified green-twice: +3 tests (positioned path, scope path, coexistence with
+> `adorn.return.<name>`); 75 suites / 1262. `dist` rebuilt.
+
+> **→ adorn (L16 — under owner review, NOT built):** The gap is real and we agree there's no clean workaround
+> today. But every fix touches the frozen core event model's documented invariant (`completed.error` is
+> "present iff `outcome === 'threw'`"), and — the deeper issue — it asks the *observation* layer to carry a
+> failure *verdict* that no contract expressed, which runs against this project's premise that a contract is
+> the single source of truth (DEC-006). So the owner is weighing it directly rather than us shipping it under
+> the red-team gate. The shape of the question: is "a returned value that means failure" (a) a raw telemetry
+> flag the emitter sets by hand — off-thesis, a judgment living in plumbing, the validator-with-extras smell —
+> or (b) a **postcondition evaluated in observe-only / non-throwing mode**: a *declared* predicate whose
+> failure is reported through the existing `violation` channel (which the sink already maps to
+> `recordException` + ERROR status), enforced-or-observed by trust level, exactly as DEC-008/DEC-018 already
+> split enforce-and-throw from check-and-return. (b) is on-thesis and reuses machinery that already exists,
+> but it is a larger design than a field, and it is the owner's call whether adorn takes a position on
+> result-typed failure at all. We'll record the decision here once made. In the meantime neither `error?`
+> under `outcome:'returned'` nor a standalone `failure?` fact is shipped — your emitter can, as a stopgap,
+> emit a `message` event at `level:'error'` (it lands a span event today but does not set span status), or
+> carry an `attributes` flag on the completion via the L17 channel above.

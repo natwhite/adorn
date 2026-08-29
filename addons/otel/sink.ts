@@ -22,6 +22,9 @@
  *     opt-in via a `Meter`). Correlated to its `scope` span by the per-call `callId` (DEC-047), the
  *     completion lands the disclosed RETURN rendering on the span and ends it at `startTime + durationMs`,
  *     so the span duration IS the settled number `@Time` and the metric report and cannot drift (DEC-006).
+ *     Any low-cardinality `attributes` the emitter put on the completion also land on the span (voice-agent
+ *     L17, DEC-078) — the semconv-key channel a non-decorator emitter needs, honoured as `message` already
+ *     does, distinct from the disclosure-gated `adorn.return.<name>` value renderings.
  *     An `async` method returns a pending promise in ~0 ms, but its completion — and thus its span end —
  *     fires only when the promise settles, so spans are never "flat" or early-ended.
  *   - **`violation` → `span.recordException` + error status + a value-free span event** carrying the
@@ -300,6 +303,13 @@ function finishPendingSpan(
     // verbatim as the disclosure OUTCOME; no raw value is ever read (DEC-036). Absent on a throw.
     const returns = (event.values || []).filter(value => value.index === RETURN_INDEX);
     if (returns.length > 0) entry.span.setAttributes(attributesFromValues(returns, prefix));
+    // Low-cardinality attributes a consumer attached to the completion (voice-agent L17, DEC-078). Honoured
+    // exactly as `recordMessage` honours `message.attributes` — the field is defined on the completed event
+    // but was silently dropped here. It lets a NON-decorator emitter land return-derived facts on the span
+    // under keys of its own choosing (e.g. semconv `gen_ai.usage.*`), which the `adorn.return.<name>`
+    // disclosure channel cannot express. Applied last so an explicit attribute wins a key collision; these
+    // are developer-authored low-cardinality values, never a raw disclosed value (DEC-036).
+    if (event.attributes) entry.span.setAttributes(toOtelAttributes(event.attributes));
     entry.span.end(entry.startTime + event.durationMs);
 }
 
@@ -333,7 +343,13 @@ function createPositionedSpan(
         {
             kind: mapSpanKind(event.observation.kind),
             startTime,
-            attributes: attributesFromValues(event.values || [], prefix),
+            // Disclosed value renderings (args + return) PLUS any low-cardinality attributes the emitter
+            // attached to the completion (voice-agent L17, DEC-078). Explicit attributes spread last so they
+            // win a key collision, matching finishPendingSpan.
+            attributes: {
+                ...attributesFromValues(event.values || [], prefix),
+                ...toOtelAttributes(event.attributes || {}),
+            },
         },
         parentCtx,
     );
