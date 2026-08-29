@@ -23,6 +23,7 @@ import {GreaterThan, GreaterThanEqual, LessThanEqual} from '../../Contracts/numb
 import {StringMinLength} from '../../Contracts/string';
 import {getFieldContract, getFieldContractsForClass} from '../../Core/ContractRegistry';
 import {Enforce} from '../../FieldDecorators/Enforce';
+import {setViolationPolicy, resetConfiguration, setConfigurationSink} from '../../Core/Configuration';
 
 describe('the constraint store', () => {
     it('reports nothing for an untouched target', () => {
@@ -314,6 +315,54 @@ describe('observability — why the WeakMap side table was rejected', () => {
         const keys: string[] = [];
         for (const key in new Sparse()) keys.push(key);
         expect(keys).toEqual(['assigned']);
+    });
+});
+
+describe('field enforcement honours the violation policy (DEC-080)', () => {
+    afterEach(resetConfiguration);
+
+    it("under 'warn', an invalid assignment is stored instead of throwing", () => {
+        setConfigurationSink(() => {}); // swallow the warn line
+        setViolationPolicy('warn');
+        class Host {
+            count!: number;
+        }
+        recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
+        installFieldContracts(Host);
+
+        const h = new Host();
+        expect(() => {
+            h.count = -5;
+        }).not.toThrow();
+        expect(h.count).toBe(-5); // warn proceeds -> the invalid value is stored
+    });
+
+    it('routes an invalid assignment to a handler (blame caller, member = the field)', () => {
+        const seen: Array<{blame: string; member: string}> = [];
+        setViolationPolicy((_violation, site) => seen.push({blame: site.blame, member: site.member}));
+        class Host {
+            count!: number;
+        }
+        recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
+        installFieldContracts(Host);
+
+        const h = new Host();
+        h.count = -5; // handler returns (suppresses) -> stored
+        expect(h.count).toBe(-5);
+        expect(seen).toEqual([{blame: 'caller', member: 'count'}]);
+    });
+
+    it("still throws under the default 'throw' policy (regression)", () => {
+        class Host {
+            count!: number;
+        }
+        recordFieldConstraint(Host.prototype, 'count', GreaterThan(0));
+        installFieldContracts(Host);
+
+        const h = new Host();
+        expect(() => {
+            h.count = -5;
+        }).toThrow(/greater than 0/i);
     });
 });
 

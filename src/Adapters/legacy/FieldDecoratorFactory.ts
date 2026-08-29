@@ -152,6 +152,7 @@ import {
     setFieldMetadata,
 } from '../../Core/ContractRegistry';
 import {shouldDiscloseValue} from '../../Core/redaction';
+import {applyViolationPolicy, DEFAULT_TRUST, type ViolationSite} from '../../Core/Configuration';
 
 /** A field name. Symbols are supported because a class may declare `[sym] = value`. */
 export type FieldKey = string | symbol;
@@ -588,10 +589,14 @@ function defineInstanceSlot(instance: object, owner: object, key: FieldKey, init
 }
 
 /**
- * Run every constraint recorded for the field, in declaration order, and throw on the first failure.
+ * Run every constraint recorded for the field, in declaration order, and route the first failure through
+ * the violation policy (DEC-080): it throws by default, but `setViolationPolicy('warn')`/a suppressing
+ * handler lets the assignment proceed — the field path now honours the policy exactly as decorator method
+ * enforcement does (the audit's INC-3 gap).
  *
- * On failure the previously stored value is left untouched: the throw happens before `slot` is
- * reassigned (and before the slot exists at all, on a first assignment).
+ * On a throwing policy the previously stored value is left untouched (the throw happens before `slot` is
+ * reassigned, and before the slot exists at all on a first assignment); under `'warn'`/a suppressing handler
+ * the new value IS stored, exactly as an unenforced assignment would store it.
  *
  * `boundary` is the accessor being executed. `attributeToCaller` cuts the stack there, so the trace
  * points at the line that performed the assignment rather than at adorn's internals — the same
@@ -616,7 +621,13 @@ function assertFieldValue(owner: object, key: FieldKey, value: unknown, boundary
 
         const error = new Error(constraint.message({value, signature: describeField(owner, key), disclose}));
         DecoratorFactory.attributeToCaller(error, boundary);
-        throw error;
+        // Route through the policy (DEC-080): throws by default, or `'warn'`/a suppressing handler returns
+        // here so the setter stores the value. Stop at the first failing constraint either way.
+        const ownerName =
+            typeof owner === 'function' ? owner.name : ((owner as {constructor?: Function}).constructor?.name ?? '');
+        const site: ViolationSite = {owner: ownerName, member: String(key), trust: DEFAULT_TRUST, blame: 'caller'};
+        applyViolationPolicy(error, site);
+        return;
     }
 }
 

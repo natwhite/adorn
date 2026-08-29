@@ -25,19 +25,25 @@
  * postcondition failure throws after it returns (a `completed` event, then a `violation`). A throw from the
  * body itself skips the postconditions, exactly as a decorated method does.
  *
- * ## Failure surfacing
+ * ## Failure surfacing — routed through the violation policy (DEC-080)
  *
- * A violation throws a plain `Error` carrying the descriptor's (redacted) message — the same thing
- * `Verify.that` throws — because `ViolationError` is deliberately package-internal (facts reach a consumer
- * through the sink, not a typed catch). When `observe` is set, the structured {@link ViolationFacts} are
- * ALSO emitted as a `violation` event on the installed {@link getObservationSink}, via {@link violationFromCheck}
- * for a descriptor failure — which is L11, and is what lets a functional refusal be counted like a decorated one.
+ * A violation is routed through `setViolationPolicy` exactly as the decorator weave routes one, so a
+ * functional contract honours `'warn'`/a handler too (the audit's INC-3/INC-4 parity gap). By default it
+ * throws a plain `Error` carrying the descriptor's (redacted) message — the same thing `Verify.that` throws;
+ * `'warn'` logs and proceeds (into the body for a precondition, returning the settled value for a
+ * postcondition); a handler takes control. `ViolationError` stays package-internal (facts reach a consumer
+ * through the sink, not a typed catch). When `observe` is set, the structured {@link ViolationFacts} are ALSO
+ * emitted as a `violation` event on the installed {@link getObservationSink} **before** the policy runs, so a
+ * sink sees every violation regardless of how control flow is routed (seeing ≠ emitting, DEC-036) — via
+ * {@link violationFromCheck} for a descriptor failure (L11, what lets a functional refusal be counted like a
+ * decorated one).
  */
 
 import type {ConstraintDescriptor, ConstraintParams} from '../Core/Descriptor';
 import {Verify, violationFromCheck} from '../Validation/Verify';
 import {evaluatePreconditions} from '../Core/Preconditions';
 import {evaluatePostconditions} from '../Core/Postconditions';
+import {applyViolationPolicy, DEFAULT_TRUST, type ViolationSite} from '../Core/Configuration';
 import type {Precondition, Postcondition} from '../Core/ContractRegistry';
 import {settle, Settlement} from '../Core/settle';
 import {
@@ -127,6 +133,18 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
     const observe = spec.observe;
     const observation = observe ? makeObservation(observe, fn) : undefined;
 
+    // The site a violation is routed to (DEC-080). `contract()` now consults `setViolationPolicy` exactly
+    // as the decorator weave does, so `'warn'`/a handler governs a functional contract too — the parity the
+    // audit's INC-3/INC-4 named. Owner/member are derived from `observe.name` or `fn.name` (best-effort;
+    // an anonymous fn yields ''/'anonymous'); trust is the process default (`contract()` models no trust
+    // level of its own — a precondition still blames the caller, a postcondition the callee).
+    const siteName = (observe && observe.name) || fn.name || 'anonymous';
+    const siteDot = siteName.indexOf('.');
+    const siteOwner = siteDot > 0 ? siteName.slice(0, siteDot) : '';
+    const siteMember = siteDot > 0 ? siteName.slice(siteDot + 1) : siteName;
+    const callerSite: ViolationSite = {owner: siteOwner, member: siteMember, trust: DEFAULT_TRUST, blame: 'caller'};
+    const calleeSite: ViolationSite = {owner: siteOwner, member: siteMember, trust: DEFAULT_TRUST, blame: 'callee'};
+
     const wrapped = function (this: unknown, ...args: any[]): any {
         const sink = observe ? getObservationSink() : undefined;
         const callId = observe ? nextCallId() : 0;
@@ -143,7 +161,10 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                 if (!r.ok) {
                     // `strict` narrows `r` to the CheckResult failure arm here (DEC-079) — no cast.
                     emitViolation(violationFromCheck(r, {index: i, blame: 'caller'}));
-                    throw new Error(r.message);
+                    // Route through the policy (DEC-080): throws by default, or `'warn'`/a handler proceeds
+                    // — the loop then continues into the body with the offending argument. The violation
+                    // event above already fired, regardless (seeing ≠ emitting, DEC-036).
+                    applyViolationPolicy(new Error(r.message), callerSite);
                 }
             }
         }
@@ -153,7 +174,11 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
             const pre = evaluatePreconditions(pres, args);
             if (!pre.ok) {
                 emitViolation(closureViolation(pre.failed && pre.failed.description, 'caller'));
-                throw new Error(closureMessage('Precondition', pre.failed && pre.failed.description, pre.error));
+                // Policy-routed (DEC-080): `'warn'`/a handler falls through into the call below.
+                applyViolationPolicy(
+                    new Error(closureMessage('Precondition', pre.failed && pre.failed.description, pre.error)),
+                    callerSite,
+                );
             }
         }
 
@@ -179,7 +204,9 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                 if (!rr.ok) {
                     // `strict` narrows `rr` to the failure arm here (DEC-079) — no cast.
                     emitViolation(violationFromCheck(rr, {parameter: 'return', index: RETURN_INDEX, blame: 'callee'}));
-                    throw new Error(rr.message);
+                    // Policy-routed (DEC-080): under `'warn'`/a suppressing handler, `onSettle` does not
+                    // throw, so `settle` returns the (contract-violating) value — as the decorator does.
+                    applyViolationPolicy(new Error(rr.message), calleeSite);
                 }
             }
 
@@ -188,7 +215,11 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                 const post = evaluatePostconditions(posts, result, args);
                 if (!post.ok) {
                     emitViolation(closureViolation(post.failed && post.failed.description, 'callee'));
-                    throw new Error(closureMessage('Postcondition', post.failed && post.failed.description, post.error));
+                    // Policy-routed (DEC-080): `'warn'`/a suppressing handler returns the value.
+                    applyViolationPolicy(
+                        new Error(closureMessage('Postcondition', post.failed && post.failed.description, post.error)),
+                        calleeSite,
+                    );
                 }
             }
         };

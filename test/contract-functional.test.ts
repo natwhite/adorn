@@ -7,10 +7,12 @@
 import {
     contract,
     setObservationSink,
+    setViolationPolicy,
     NumberContracts,
     StringContracts,
 } from '../index';
 import type {ObservationEvent} from '../index';
+import {resetConfiguration, setConfigurationSink} from '../src/Core/Configuration';
 
 type ViolationEvent = Extract<ObservationEvent, {kind: 'violation'}>;
 
@@ -139,5 +141,64 @@ describe('contract() — this binding and empty spec', () => {
             }),
         };
         expect(obj.run(2)).toBe(6);
+    });
+});
+
+describe('contract() honours the violation policy (DEC-080)', () => {
+    afterEach(resetConfiguration);
+
+    it("under 'warn', a failing precondition proceeds into the body and returns the value", () => {
+        setConfigurationSink(() => {}); // swallow the warn line
+        setViolationPolicy('warn');
+        let ran = false;
+        const f = contract({requires: [(a: number, b: number) => a < b]}, (a: number, b: number) => {
+            ran = true;
+            return a + b;
+        });
+        expect(f(5, 1)).toBe(6); // a<b fails, but warn proceeds into the body
+        expect(ran).toBe(true);
+    });
+
+    it("under 'warn', a failing per-parameter check proceeds with the offending argument", () => {
+        setConfigurationSink(() => {});
+        setViolationPolicy('warn');
+        const f = contract({params: [NumberContracts.Between(1, 7)]}, (n: number) => n * 2);
+        expect(f(99)).toBe(198); // 99 is out of range, but warn proceeds with it
+    });
+
+    it("under 'warn', a failing postcondition returns the (violating) value", () => {
+        setConfigurationSink(() => {});
+        setViolationPolicy('warn');
+        const f = contract({ensures: [(r: number) => r >= 0]}, (n: number) => n);
+        expect(f(-5)).toBe(-5); // r>=0 fails, but warn returns the settled value
+    });
+
+    it("under 'warn', a failing return descriptor returns the value", () => {
+        setConfigurationSink(() => {});
+        setViolationPolicy('warn');
+        const f = contract({returns: NumberContracts.GreaterThanEqual(0)}, (n: number) => n);
+        expect(f(-5)).toBe(-5);
+    });
+
+    it('routes to a handler with the site blame (caller for a precondition, callee for a postcondition)', () => {
+        const seen: Array<{blame: string; member: string}> = [];
+        setViolationPolicy((_violation, site) => seen.push({blame: site.blame, member: site.member}));
+        const pre = contract({requires: [(a: number) => a > 0]}, function precheck(a: number) {
+            return a;
+        });
+        const post = contract({ensures: [(r: number) => r > 0]}, function postcheck(n: number) {
+            return n;
+        });
+        pre(-1); // handler returns (suppresses) -> no throw
+        post(-1);
+        expect(seen).toEqual([
+            {blame: 'caller', member: 'precheck'},
+            {blame: 'callee', member: 'postcheck'},
+        ]);
+    });
+
+    it("keeps throwing under the default 'throw' policy (regression)", () => {
+        const f = contract({requires: [(a: number, b: number) => a < b]}, (a: number, b: number) => a + b);
+        expect(() => f(5, 1)).toThrow(/precondition/i);
     });
 });
