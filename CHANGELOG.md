@@ -22,8 +22,8 @@ drift by construction.
   (optional-aware object literals), and `@Nullable`. Author your own with `defineConstraint`.
 - **LLM tool-calling** — `toolSchemaForMethod` (from a decorated method) and `toolSchemaFrom`
   (descriptor-first, so a per-session enum needs no class) emit the prescriptive `parameters` object a
-  function-calling API expects; the same declaration validates the model's reply. `toolSchemaFrom(…,
-  { providerStrict })` emits OpenAI-strict-compatible schemas (recursive; nullability lives in the
+  function-calling API expects; the same declaration validates the model's reply. Both take
+  `{ providerStrict }` to emit OpenAI-strict-compatible schemas (recursive; nullability lives in the
   declaration). The output was round-tripped end-to-end through OpenAI `gpt-4o-mini`.
 - **Imperative validation** — `Verify.that` (throws) and `Verify.check` (non-throwing; narrows
   `unknown` to the constraint's output type, with the failing `path` and `expected` on a violation).
@@ -39,8 +39,10 @@ drift by construction.
 ### Notes
 
 - The only runtime dependency is `tslib`.
-- The validation half — `Verify.check` + the `*Contracts` descriptor namespaces + `toolSchemaFrom` —
-  needs no decorators and compiles with `experimentalDecorators` / `emitDecoratorMetadata` off.
+- Decorators are the authoring path (`experimentalDecorators` / `emitDecoratorMetadata`). For a value
+  with no signature to decorate — a raw `unknown` off the wire, a per-session schema — the same
+  constraints are usable directly (`Verify.check`, the `*Contracts` namespaces, `toolSchemaFrom`) with
+  those flags off; the escape hatch, not the front door.
 - The `@adorn/test` (property-based testing) and `@adorn/otel` (OpenTelemetry) add-ons live in the
   repository but are not yet published to npm.
 
