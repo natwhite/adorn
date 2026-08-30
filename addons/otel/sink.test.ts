@@ -559,12 +559,19 @@ describe('a thrown completion on the scope path lands its error on the span (voi
         parameters: [],
     });
 
-    it('a functional emitter that records its completion from inside proceed still gets ERROR + one exception', () => {
+    it('a functional emitter that records its completion from inside proceed gets ERROR + the raw exception', () => {
         const sink = createOtelSink({tracer: provider.getTracer('m')});
         const callId = 700;
         const call: ObservationCall = {observation: obs('Reasoning.answer'), thisArg: undefined, values: [], callId};
-        // Mirror `observed()`: proceed emits the completion from INSIDE its own settle, then the throw
-        // propagates out to scope's markSpanOutcome — by which point the span is already ended.
+        class RateLimitError extends Error {
+            constructor(message: string) {
+                super(message);
+                this.name = 'RateLimitError';
+            }
+        }
+        // Mirror `observed()`: proceed emits the completion from INSIDE its own settle (so finishPendingSpan
+        // runs FIRST and only enriches + waits), then the throw propagates out to scope's markSpanOutcome —
+        // which, thanks to the join, runs on a still-open span and records the RAW error before ending it.
         expect(() =>
             sink.scope!(call, () => {
                 sink.record!({
@@ -576,18 +583,18 @@ describe('a thrown completion on the scope path lands its error on the span (voi
                     settled: true,
                     error: {type: 'RateLimitError', message: 'boom'},
                 });
-                throw new Error('boom');
+                throw new RateLimitError('boom');
             }),
         ).toThrow(/boom/);
 
         const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
         expect(span.status.code).toBe(SpanStatusCode.ERROR);
         const exceptions = span.events.filter(e => e.name === 'exception');
-        expect(exceptions).toHaveLength(1); // finishPendingSpan records it; markSpanOutcome (ended span) is dropped
+        expect(exceptions).toHaveLength(1); // single source: markSpanOutcome, on the still-open span
         expect(exceptions[0].attributes?.['exception.type']).toBe('RateLimitError');
     });
 
-    it('a returned completion on the same path is never falsely errored', () => {
+    it('a returned completion on the same path gets an explicit OK (never falsely errored)', () => {
         const sink = createOtelSink({tracer: provider.getTracer('m')});
         const callId = 701;
         const call: ObservationCall = {observation: obs('Reasoning.answer'), thisArg: undefined, values: [], callId};
@@ -603,7 +610,9 @@ describe('a thrown completion on the scope path lands its error on the span (voi
             return 'ok';
         });
         const span = finishedSpans().find(s => s.name === 'Reasoning.answer')!;
-        expect(span.status.code).not.toBe(SpanStatusCode.ERROR);
+        // markSpanOutcome sets OK on the still-open span (the join) — not UNSET, as it was when the span was
+        // ended before markSpanOutcome could run.
+        expect(span.status.code).toBe(SpanStatusCode.OK);
         expect(span.events.filter(e => e.name === 'exception')).toHaveLength(0);
     });
 });

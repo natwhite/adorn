@@ -36,20 +36,26 @@
  *     standalone span, so the exception is never silently lost.
  *   - **`message` → a span event** on the active-or-standalone span.
  *
- * ## The span lifecycle — end at the correlated `completed`, not inside `scope` (Q-27, DEC-047)
+ * ## The span lifecycle — end on the JOIN of `scope`'s settle and the correlated `completed` (Q-27, DEC-047, L18/DEC-081)
  *
  * DEC-046 ended the span inside `scope` via `settle` because the event union carried no per-call
  * correlation token, so under concurrent same-method async a record-path event could not be matched back
  * to its span. That is now fixed: `ObservationCall` and every `ObservationEvent` carry a `callId`
- * (Q-27), so this sink opens the span in `scope`, registers it under that id, and ends it when its
- * **own** `completed` event arrives (Option B). The single win DEC-046 could not have: the disclosed
- * **return-value** rendering only exists on the `completed` record event, and now lands on the method's
- * own span (`adorn.return`) before it closes — impossible under the old end-in-`scope` lifecycle, where
- * the span was already gone by the time the rendering was produced. Duration is unaffected: the span is
- * ended at `startTime + completed.durationMs`, the same settled number the metric and completion carry
- * (DEC-006, no re-timed clock). Active-context nesting is unaffected too — the span is still active only
- * for the synchronous prefix inside `startActiveSpan`'s callback, exactly as before. `scope` always
- * emits a correlated `completed` (returned or threw), so a registered span is always ended, exactly once.
+ * (Q-27), so this sink opens the span in `scope` and registers it under that id. It ends the span on the
+ * **join** — the LAST of two events: `scope`'s settle marking the outcome (`markSpanOutcome`, from the raw
+ * settlement), and the span's **own** `completed` event arriving (which enriches it with the disclosed
+ * return rendering). The single win DEC-046 could not have: the disclosed **return-value** rendering only
+ * exists on the `completed` record event, and now lands on the method's own span (`adorn.return`) before it
+ * closes. Ending on the JOIN — not merely on `completed` — is what L18/DEC-081 fixed: the span stays open
+ * while `markSpanOutcome` runs, so a throw's exception + ERROR status land from the raw settlement whichever
+ * side runs first. `@Observe` marks the outcome BEFORE its completion (it wraps `scope` in an outer `settle`);
+ * a functional emitter records its completion from INSIDE its own `settle`, so its completion arrives first —
+ * without the join it would close the span green and the later `markSpanOutcome` would no-op on an ended span.
+ * `markSpanOutcome` is the SINGLE exception source (raw, full fidelity); `finishPendingSpan` only enriches.
+ * Duration is unaffected: the span is ended at `startTime + completed.durationMs`, the same settled number the
+ * metric and completion carry (DEC-006, no re-timed clock). Active-context nesting is unaffected too — the span
+ * is still active only for the synchronous prefix inside `startActiveSpan`'s callback. `scope` always runs its
+ * settle AND always emits a correlated `completed`, so both join events arrive and the span is ended exactly once.
  *
  * ## "Seeing ≠ emitting" (DEC-036), preserved end-to-end
  *
@@ -199,14 +205,18 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
                     // throw's exception) from the raw settlement — control-flow only, emitting no value
                     // (DEC-036/DEC-025). It no longer ends the span; finishPendingSpan does, at `completed`.
                     return settle(proceed, (settlement: Settlement<T>) => {
+                        // The span is ALWAYS still open here — the join defers `end()` until BOTH the outcome is
+                        // marked AND the completion has arrived — so a throw's exception + ERROR status land from
+                        // the RAW settlement (DEC-025 fidelity), whichever side ran first (L18/DEC-081).
                         markSpanOutcome(span, settlement);
-                        // Record that the outcome was set from the raw settlement (L18/DEC-081), so the
-                        // correlated `completed` — which on the @Observe ordering arrives AFTER this — does not
-                        // re-record the exception. A functional emitter records its completion from INSIDE
-                        // `proceed`, so `finishPendingSpan` already ran and deleted the entry; this get() finds
-                        // nothing and there is nothing to double.
                         const pending = pendingSpans.get(call.callId);
-                        if (pending) pending.outcomeMarked = true;
+                        if (!pending) return;
+                        pending.outcomeMarked = true;
+                        // If the completion already arrived and enriched the span, we are the second event: end it.
+                        if (pending.endAt !== undefined) {
+                            pending.span.end(pending.endAt);
+                            pendingSpans.delete(call.callId);
+                        }
                     });
                 },
             );
@@ -265,16 +275,14 @@ export function createOtelSink(options: OtelSinkOptions = {}): ObservationSink {
 // Span lifecycle — settle sets the outcome, the correlated `completed` ends it (Q-27, DEC-047)
 // ---------------------------------------------------------------------------
 
-/** An opened-but-not-yet-ended span and the epoch-ms start it will be ended relative to (DEC-006). */
+/** An opened-but-not-yet-ended span, ended on the JOIN of two events (L18/DEC-081 — see the lifecycle note). */
 interface PendingSpan {
     readonly span: Span;
     readonly startTime: number;
-    /**
-     * Set once `scope`'s settle has run `markSpanOutcome` — the @Observe ordering, where the outcome is
-     * marked from the raw settlement BEFORE the correlated completion arrives. `finishPendingSpan` reads it
-     * so it does NOT record a thrown exception a second time (recordException is not idempotent) — L18/DEC-081.
-     */
+    /** `scope`'s settle has run `markSpanOutcome` (status + a throw's exception recorded from the raw settlement). */
     outcomeMarked?: boolean;
+    /** The correlated `completed` has arrived and enriched the span; the value is its epoch-ms end time. */
+    endAt?: number;
 }
 
 /**
@@ -313,7 +321,8 @@ function finishPendingSpan(
 ): void {
     const entry = pending.get(event.callId);
     if (!entry) return;
-    pending.delete(event.callId);
+    // ENRICH only — status and a throw's exception belong to `markSpanOutcome` (the raw settlement, DEC-025);
+    // this side never touches them, so there is exactly one exception source and no ordering-dependent double.
     // Only the RETURN rendering — the arguments were already attached at span start by `scope`. Forwarded
     // verbatim as the disclosure OUTCOME; no raw value is ever read (DEC-036). Absent on a throw.
     const returns = (event.values || []).filter(value => value.index === RETURN_INDEX);
@@ -325,16 +334,14 @@ function finishPendingSpan(
     // disclosure channel cannot express. Applied last so an explicit attribute wins a key collision; these
     // are developer-authored low-cardinality values, never a raw disclosed value (DEC-036).
     if (event.attributes) entry.span.setAttributes(toOtelAttributes(event.attributes));
-    // A THROWN completion must land its error on the span (voice-agent L18, DEC-081). On the @Observe ordering
-    // `markSpanOutcome` already recorded it from the raw settlement (`entry.outcomeMarked`), so we do NOT record
-    // again — recordException is not idempotent. But a functional emitter records its completion from INSIDE its
-    // own `settle`, so this runs BEFORE scope's `markSpanOutcome`; without it the span would be ended green and
-    // the later markSpanOutcome would no-op on the ended span. Mirrors `createPositionedSpan`'s error block.
-    if (!entry.outcomeMarked && event.outcome === 'threw' && event.error) {
-        entry.span.recordException(errorFactsToException(event.error));
-        entry.span.setStatus({code: SpanStatusCode.ERROR, message: event.error.message});
+    // The join (L18/DEC-081): record the end time, and end the span only if `scope`'s settle has already marked
+    // the outcome. Otherwise wait — `markSpanOutcome` ends it, with the span STILL OPEN so its raw exception
+    // lands (the functional-emitter ordering, where this runs first). Ends exactly once, on the second event.
+    entry.endAt = entry.startTime + event.durationMs;
+    if (entry.outcomeMarked) {
+        entry.span.end(entry.endAt);
+        pending.delete(event.callId);
     }
-    entry.span.end(entry.startTime + event.durationMs);
 }
 
 /** Bound on the retained-span map, so a long-running process cannot grow it without limit (L15, DEC-076). */

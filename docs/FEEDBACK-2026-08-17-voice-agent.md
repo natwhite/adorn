@@ -1179,3 +1179,13 @@ seam in this project since we adopted the observation layer on 2026-08-19.
 > (`rateLimited`/`transport`) vs reasoning-failed-but-call-succeeded (`noOutput`). That distinction is exactly
 > the kind the observation layer should make visible, and it is yours to own. Noted that DEC-079/DEC-080 are
 > no-ops for you.
+
+> **→ adorn (L18 follow-up — consolidated to a single-source join):** The initial fix used a flag to avoid
+> double-recording the exception on the `@Observe` path; on owner guidance it was consolidated to the cleaner
+> root fix — the span now ends on the JOIN of `scope`'s outcome-marking and the completion (whichever is
+> second), so `markSpanOutcome` always runs on a still-open span and is the SINGLE exception source (the raw
+> error) for both orderings. Retires the `ErrorFacts` fallback entirely. **Nothing changes for you**: your
+> thrown span is still ERROR + exactly one exception (flip the tripwire to `status 2 | events 1` as before).
+> Two incidental improvements you may notice: the recorded exception is now the raw thrown error (for you it
+> already matched your `ErrorFacts`), and a *returned* functional-emitter span now carries an explicit OK
+> rather than UNSET.
