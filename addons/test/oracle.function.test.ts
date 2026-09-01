@@ -12,6 +12,7 @@
  * reset keeps these tests independent of order regardless.
  */
 
+import * as fc from 'fast-check';
 import {contract, contractSpecOf, NumberContracts, StringContracts} from '../../index';
 import {resetConfiguration} from '../../src/Core/Configuration';
 import {resetValueDisclosure} from '../../src/Core/redaction';
@@ -192,6 +193,57 @@ describe('fuzzFunctionAsync — the async twin (L19)', () => {
     });
 });
 
+describe('fuzzFunction infers arity, so a params-less spec is not a false positive (L22)', () => {
+    it('generates a position for an argument the spec does not describe (arity from Function.length)', () => {
+        // A spec with only `returns` is legal — every ContractSpec field is optional. The function still
+        // takes an argument; deriving zero positions and calling it with none would throw and misreport a
+        // clean function. Arity is now read from the function, so the position is generated and gap-filled.
+        const usesArg = contract(
+            {returns: NumberContracts.GreaterThanEqual(0)},
+            function usesArg(o: {n: number}): number {
+                return Math.abs(o.n); // dereferences its argument — a no-arg call would throw
+            },
+        );
+
+        const result = fuzzFunction(usesArg, {numRuns: 50, gapFill: fc.record({n: fc.integer()})});
+
+        expect(result.coverage.length).toBe(1); // from Function.length, not the absent spec.params
+        expect(result.declined).toBe(false);
+        expect(result.passed).toBe(true); // no spurious unexpected-throw from a zero-argument call
+    });
+
+    it('generates every position up to the arity, gap-filling the ones the spec does not declare', () => {
+        const twoArgs = contract(
+            {params: [NumberContracts.Between(0, 10)]}, // declares position 0 only
+            function twoArgs(a: number, b: {n: number}): number {
+                return a + b.n;
+            },
+        );
+
+        const result = fuzzFunction(twoArgs, {numRuns: 50, gapFill: fc.record({n: fc.integer()})});
+
+        expect(result.coverage.length).toBe(2); // max(spec.params.length = 1, Function.length = 2)
+        expect(result.coverage[0].constraints).toContain('between'); // declared position keeps its generator
+        expect(result.coverage[1].strategy).toBe('gap-fill'); // undeclared position, gap-filled
+        expect(result.passed).toBe(true);
+    });
+
+    it('a genuinely nullary function runs with no arguments and is not declined', () => {
+        const nullary = contract(
+            {returns: NumberContracts.GreaterThanEqual(0)},
+            function nullary(): number {
+                return 42;
+            },
+        );
+
+        const result = fuzzFunction(nullary, {numRuns: 10});
+
+        expect(result.coverage.length).toBe(0);
+        expect(result.declined).toBe(false);
+        expect(result.passed).toBe(true);
+    });
+});
+
 describe('the wrapper is now introspectable (L19)', () => {
     it('contractSpecOf recovers the spec a contract() wrapper enforces; a plain function has none', () => {
         const spec = {params: [NumberContracts.Between(1, 7)]};
@@ -206,6 +258,17 @@ describe('the wrapper is now introspectable (L19)', () => {
             return s;
         });
         expect(f.name).toBe('greet');
+    });
+
+    it('preserves the wrapped function arity (Function.length), not just its name (L22)', () => {
+        const f = contract(
+            {returns: NumberContracts.GreaterThanEqual(0)},
+            function add(a: number, b: number): number {
+                return a + b;
+            },
+        );
+        expect(f.length).toBe(2); // a bare (...args) => … wrapper would report 0
+        expect(f.name).toBe('add');
     });
 });
 

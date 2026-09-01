@@ -274,11 +274,15 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
         return invoke();
     };
 
-    // Make the wrapper introspectable (voice-agent L19): preserve the wrapped function's own name (a bare
-    // `const wrapped = function () {}` would report `"wrapped"`, so a fuzz report could not say what it
-    // fuzzed), and hang the spec + raw target + normalised bands off it so the spec is no longer
-    // closure-captured and unreadable. The symbol is non-enumerable, so no serialiser or key-walk sees it.
+    // Make the wrapper carry the wrapped function's identity (voice-agent L19/L22): its `name` (a bare
+    // `const wrapped = function () {}` reports `"wrapped"`, so a fuzz report could not say what it fuzzed)
+    // AND its arity (`length`). A `(...args) => …` wrapper has `length` 0, which erases the signature every
+    // arity-aware caller reads — `Function.prototype.bind`, currying helpers, argument-count assertions,
+    // and a fuzzer inferring how many positions to generate (L22). Both are restored here; then the spec +
+    // raw target + normalised bands are hung off a non-enumerable symbol (invisible to any key-walk) so the
+    // spec is no longer closure-captured and unreadable.
     Object.defineProperty(wrapped, 'name', {value: fn.name, configurable: true});
+    Object.defineProperty(wrapped, 'length', {value: fn.length, configurable: true});
     Object.defineProperty(wrapped, CONTRACT_META, {
         value: {spec, target: fn, pres, posts} satisfies ContractMeta,
         enumerable: false,

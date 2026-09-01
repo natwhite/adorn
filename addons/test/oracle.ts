@@ -199,7 +199,14 @@ export interface FuzzFunctionOptions {
     readonly numRuns?: number;
     /** Fix the seed to reproduce a run exactly. Omitted, fast-check picks one and it is reported. */
     readonly seed?: number;
-    /** The arbitrary for unconstrained (`null`-hole) positions. Defaults to `fc.anything()` (§8). */
+    /**
+     * The arbitrary for unconstrained positions. Defaults to `fc.anything()` — broad by design (§8). For a
+     * `contract()` function, positions are **declared** (`spec.params`, using `null` for an unconstrained
+     * one) or **inferred from the function's arity** (`Function.length`) — they are NOT discovered the way
+     * the method path discovers undecorated parameters. A position within the arity that the spec does not
+     * describe is filled with this arbitrary; a rest-parameter function whose true arity `length` cannot
+     * see should declare `params` explicitly (voice-agent L22).
+     */
     readonly gapFill?: Arbitrary<unknown>;
     /** Override the oracle. Default is auto: `'postcondition'` when the spec has a `returns` or any
      *  `ensures`, else the `'weak-invariant'` floor (doesn't-throw). */
@@ -486,13 +493,22 @@ function prepareFunctionRun(fn: Function, options: FuzzFunctionOptions): Prepare
 
     const spec = meta.spec;
 
-    // Per-position generators from `spec.params` — one descriptor (or a `null` hole) per position. A hole
-    // becomes a gap-fill (broad arbitrary); a recognised descriptor its sound generator, exactly as a
-    // decorated position resolves (`buildCoverage`).
-    const params = spec.params || [];
-    const coverage: ParameterArbitrary[] = params.map((descriptor, index) =>
-        arbitraryForParameter(descriptor ? [descriptor] : [], index),
-    );
+    // How many positions to generate. `spec.params` is OPTIONAL (every `ContractSpec` field is), so a spec
+    // that declares only `ensures`/`returns` — the first thing a consumer writes — describes no positions,
+    // yet the function still takes arguments. Deriving the count from `spec.params` alone would then
+    // generate ZERO positions and call the function with no arguments, misattributing the resulting throw
+    // to the function (a false positive — voice-agent L22). So arity is the WIDER of what the spec declares
+    // and the raw function's own `length`: a declared position keeps its descriptor, an undeclared one below
+    // the arity gap-fills, exactly as the method path gap-fills an undecorated position (`buildCoverage`).
+    // (A `length` of 0 with no `params` is a genuinely nullary function — run it with no arguments; a
+    // rest-parameter function whose real arity `length` cannot see should declare `params`, per `gapFill`.)
+    const declared = spec.params || [];
+    const arity = Math.max(declared.length, meta.target.length);
+    const coverage: ParameterArbitrary[] = [];
+    for (let index = 0; index < arity; index++) {
+        const descriptor = declared[index] ?? null;
+        coverage.push(arbitraryForParameter(descriptor ? [descriptor] : [], index));
+    }
 
     const declinedPosition = coverage.find(plan => plan.declined);
     if (declinedPosition) {

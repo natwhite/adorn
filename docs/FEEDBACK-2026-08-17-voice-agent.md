@@ -1438,3 +1438,173 @@ correct end state over the smallest diff, and to treat the pre-publish surface a
 frozen — so L19 grew the root surface by one export (`contractSpecOf`, 100 → 101) and reshaped the oracle
 internals rather than adding a second code path. If any of the three interacts badly with your real
 `verbs.ts` shapes, that is exactly the kind of thing this ledger is for.
+
+---
+
+## Round 7 — 2026-09-01, Round 6 verified and adopted
+
+All three landed. Verified by running them against the shapes this repo actually has, same discipline
+as the round that filed them. **Round 6's conclusion is reversed: `adorn/test` is now in the suite.**
+
+### L20 — verified, and the generalisation is better than what was asked for
+
+All four measured cases, plus the ISO-date stacking `verbs.ts` also carries:
+
+```
+[NotEmpty(), Matches(TIME)]       delegation  filtered=false  ["6:04","0:20","6:07","1:43","20:11"]
+[Matches(TIME), NotEmpty()]       delegation  filtered=false  ["20:25","12:25","23:37","4:30"]
+[MaxLength(5), Matches(TIME)]     delegation  filtered=false  ["22:24","20:29","6:07","23:13"]
+[Matches(TIME), Matches(/:/)]     delegation  filtered=false  ["01:24","20:40","4:43","6:28"]
+[NotEmpty(), Matches(ISO_DATE)]   delegation  filtered=false  ["7821-94-76","1996-60-87"]
+
+[Matches(/^\d{4}$/), MaxLength(2)]  declined  acceptance=0    (still declines — correct)
+```
+
+Every one was `declined / acceptance=0` four hours ago. **Measuring each candidate base rather than
+ranking them by kind is the better call** — the rule filed was *"prefer a delegation base"*, which
+would have been wrong for a stack where the delegation is the looser of the two, and would have needed
+a tie-break for `[Matches(A), Matches(B)]`. Measuring has no such case. Reporting `delegation /
+filtered=false` when the base is exact, rather than a filter that never ran, is the part that makes the
+coverage line trustworthy again.
+
+### L21 — verified
+
+`Between(0, 1439)` carries *"float domain — stack Integer() to sample integers, not sub-integer
+floats"*; `Integer()` carries none. Agreed on skipping the computed distribution warning — a heuristic
+with a threshold to tune, for a case this ledger itself rated non-bug, is the wrong trade and the static
+note carries the same information.
+
+### L19 — verified, and it found a real defect in this repo within a minute of being usable
+
+```
+name preserved?        "minutesFrom"          (was "wrapped")
+contractSpecOf?        yes
+clean run:             oracle=postcondition  passed=true  runs=300
+  oraclesChecked:      ["@Returns between: a number between 0 and 1439 (inclusive)",
+                        "@Ensures: (anonymous closure postcondition)"]
+planted bug:           postcondition-violation, counterexample ["0:00"], 3 shrinks
+non-contract function: declined, "...wrap it with contract({...}, fn) so its spec can be read"
+```
+
+Shrinking to `["0:00"]` — the leading-zero hour, the minimal case — is the whole value proposition
+working. `(fn)` over `(spec, fn)` was the right call.
+
+**What it is now doing for us.** `test/reasoning/payload.test.ts` fuzzes the two functions that turn an
+OpenAI Responses payload into something a caller hears (`textFrom`, `reasoningTokensFrom`). They are
+pure, they are ours, their input is a vendor wire this repo has a standing rule about, and a throw in
+them strands a caller mid-call waiting for an answer that never arrives. **First run, first finding:**
+
+```
+reasoningTokensFrom broke: a number between 0 and 9007199254740991 (inclusive)
+counterexample: [{"usage":{"output_tokens_details":{"reasoning_tokens":-1}}}]
+```
+
+The guard was `typeof detail === 'number'`, which admits `-1`, `NaN` and `Infinity` — and the value goes
+onto a span attribute, where a `NaN` is not a loud failure but a quietly meaningless data point that
+nothing downstream would ever have noticed. Fixed. The contract is applied **in the test, not in
+`openai.ts`**, deliberately: an enforcing wrapper on the live path would turn a shape-tolerance bug into
+a thrown exception mid-call. `fuzzFunction` running the raw target is what makes that possible, so that
+design note earned its keep immediately.
+
+---
+
+## L22 — `contract()` does not preserve `Function.length`, so a correct function fuzzes as broken
+
+**Severity: this is a false positive, which is worse than a decline.** A clean function is reported as
+throwing, with an empty counterexample, at `numRuns: 1`.
+
+```
+raw fn:                length=1  name="target"
+contract() wrapper:    length=0  name="target"     <- name preserved (L19), arity lost
+
+fuzzFunction(noParams,     {gapFill}) -> passed=false  finding=unexpected-throw
+                                          counterexample=[]   coverage positions=0   runs=1
+                                          message="Cannot read properties of undefined (reading 'a')"
+fuzzFunction(paramsIsNull, {gapFill}) -> passed=true   coverage positions=1 [gap-fill]  runs=50
+```
+
+**What happens.** `ContractSpec.params` is optional and documented as such — *"Every field is optional"*
+— so a spec that only declares `ensures`/`returns` is legal and normal, and is what a consumer writes
+first. With `params` absent, `fuzzFunction` falls back to the wrapper's `Function.length` to decide how
+many positions to generate. `contract()` returns `(...args) => …`, whose `length` is **0**. So it builds
+zero positions, calls the target with no arguments, the target dereferences its missing first argument,
+and the throw is reported as a finding against the target.
+
+This is our first-run experience of `fuzzFunction` on a real function, and the finding was not real.
+
+**Why it is worse than a decline.** `oracle.ts`'s header is explicit that a postcondition which *throws*
+must be *"reported as an oracle bug, not mistaken for the method bug it hunts"*. This is the same
+principle one level out: the driver called the function wrongly and attributed the consequence to the
+function. A consumer who does not already suspect the arity — and there is nothing in the result to
+suggest it; `coverage: []` reads as "no constrained positions", which is true and not the problem —
+reads `unexpected-throw` with counterexample `[]` and goes looking for a bug that is not there.
+
+**Three candidate fixes, cheapest first.** They are not exclusive and the first two are independent:
+
+1. **Preserve `length` in `contract()`, the way `name` now is.** One `Object.defineProperty`, and it is
+   the same fix you already shipped for the same reason — the wrapper should carry the wrapped
+   function's identity. It also makes `contract()` better for everyone, not just the fuzzer:
+   `fn.length` is what `Function.prototype.bind`, currying helpers and argument-count assertions read.
+2. **Read arity from the raw target in `fuzzFunction`.** It has the spec off the symbol, so it plausibly
+   has the target too — and it is already running the raw target by design, so the information is in
+   hand at the point of use. This is the belt to (1)'s braces, and it also covers a hand-rolled wrapper
+   that never went through `contract()`.
+3. **Decline rather than run, when zero positions are derived for a function that may take arguments.**
+   The honest-decline floor already exists and this is a case for it: *"could not determine the arity —
+   declare `params`, including `null` for unconstrained positions"* is a result a consumer can act on.
+   A zero-position run against an unknown-arity target is a guess.
+
+**The workaround is fine and we are using it**, so this is not blocking: `params: [null]` declares the
+position explicitly and is arguably better style anyway. It is written up in `payload.test.ts` with the
+reason, because the next person to omit it will otherwise spend the same twenty minutes.
+
+**One documentation note that would have saved all of it.** `FuzzOptions.gapFill` reads *"the arbitrary
+for undecorated positions"*, which implies undecorated positions are discovered. For a `contract()`
+function they are not discovered — they are declared, or they do not exist. Saying so on `gapFill` or on
+`fuzzFunction` costs a sentence.
+
+---
+
+## Round 7 verdict
+
+**Round 6 said "evaluated, mostly not adopted". That is reversed.** The oracle half is in the suite, it
+found a real defect on its first run, and the generation half's cliff is gone. Two rounds, three fixes,
+one new bug — and the new bug is a false positive on the very first thing a consumer does, which is
+worth more attention than its size suggests.
+
+---
+
+## adorn dispositions — Round 7 (2026-09-01, DEC-085)
+
+Verification of Round 6 noted with thanks — L20/L21/L19 confirmed against real shapes, `adorn/test`
+adopted, and `fuzzFunction` earning its keep by finding a genuine `reasoningTokensFrom` defect on first
+run is exactly the loop this ledger is for. The design notes you singled out (measured base selection
+over kind-ranking; `delegation`/`filtered=false` reporting; `(fn)` over `(spec, fn)`; running the raw
+target) are the ones the gate weighed hardest, so it is good to see them hold up in use.
+
+**L22 — BUILT (DEC-085). Agreed it is worse than a decline, and fixed at the root — both fixes you named.**
+You had the mechanism right. Two independent changes shipped:
+
+1. **Arity is now read from the function, not just `spec.params`.** `prepareFunctionRun` generates
+   `max(spec.params.length, target.length)` positions — a declared position keeps its descriptor, an
+   undeclared one below the arity gap-fills, exactly as the method path gap-fills an undecorated
+   parameter. So a `returns`-only spec on a one-argument function now generates one gap-filled position
+   and passes, instead of calling with no arguments and misreporting the throw. Your `noParams` case now
+   behaves like your `paramsIsNull` case, as you predicted.
+2. **`contract()` preserves `Function.length`**, alongside the `name` it already preserved — one
+   `defineProperty`, the same "the wrapper carries the wrapped function's identity" principle. This fixes
+   arity for every reader (`bind`, currying, argument-count assertions), not just the fuzzer.
+
+**On your option 3 (decline rather than run).** Not taken as the primary fix, because with arity read
+from the function there is nothing to guess-decline in the common case. The one residual it would cover —
+a `length`-0 rest-parameter function with no `params` — is indistinguishable by reflection from a genuine
+nullary function, so declining all `length`-0 functions would wrongly reject legitimate nullary ones. The
+`gapFill` doc now tells a rest-parameter author to declare `params` explicitly.
+
+**Your documentation note is taken.** `FuzzOptions.gapFill` implied undecorated positions are
+*discovered*; for a `contract()` function they are **declared** (`params`, including `null`) or **inferred
+from arity**, never discovered. `FuzzFunctionOptions.gapFill` now says so.
+
+Green-twice in-band (76 suites / 1298 tests), `dist` rebuilt. Applying `contract()` in the test rather
+than on the live `openai.ts` path — turning a shape-tolerance question into a test finding instead of a
+mid-call throw — is the right call, and running the raw target is what keeps that option open.
