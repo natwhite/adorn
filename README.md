@@ -134,7 +134,9 @@ work in two:
 >   defaulted one as optional, so an omitted (or explicitly `undefined`) argument is not validated as
 >   `undefined` (a default is compiled into the body, which runs *after* the wrapper). The one exception is a
 >   *required* parameter placed **after** a defaulted one (`f(a, b = 1, c)`), a signature TS lint discourages;
->   mark it `@Optional()`/`@Default()` explicitly if you must write it.
+>   mark it `@Optional()`/`@Default()` explicitly if you must write it. `@Default(x)` is still worth reaching
+>   for — after this, its job is publishing the default into the generated **schema** (a TS default is
+>   invisible to projections), not enforcement, which a plain TS default now handles on its own.
 > - **Constructor parameters can't carry decorators** (TS1239 — a constructor's `propertyKey` is `undefined`,
 >   which the decorator signature rejects). Validate at construction with a **static factory**: a
 >   `static of(...)` decorated with `@Validate()` that returns `new`; a private constructor then makes the
