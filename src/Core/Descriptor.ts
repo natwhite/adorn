@@ -410,6 +410,15 @@ function formatMessage(kind: ConstraintKind, expectation: string, context: Viola
  * quote the value and numeric ones do not, matching the pre-BUG-19 behaviour.
  */
 function formatReceived(kind: ConstraintKind, value: unknown, disclose?: boolean): string {
+    // `undefined`/`null` name no subject that can be leaked — they are the ABSENCE of a value, not a
+    // value about anyone — and blanking them to [REDACTED] destroys the most useful fact the message
+    // carries: was the argument WRONG, or ABSENT? Those have different fixes (an out-of-range number vs.
+    // a missing/defaulted argument), and `[REDACTED]` makes them indistinguishable (job-agent 2.4). Render
+    // them literally, before the disclosure gate and regardless of `@Sensitive` — an absent value discloses
+    // nothing. Every other value stays redacted by default (BUG-19); disclosure is the only thing that
+    // turns it back on.
+    if (value === undefined) return 'undefined';
+    if (value === null) return 'null';
     if (disclose !== true) return REDACTED;
     return kind === 'string' ? `'${String(value)}'` : String(value);
 }

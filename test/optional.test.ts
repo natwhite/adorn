@@ -86,6 +86,58 @@ describe('@Optional enforcement (DEC-051)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A TypeScript default value makes a decorated parameter implicitly optional (job-agent 2.1)
+// ---------------------------------------------------------------------------
+
+describe('a TypeScript default value is implicitly optional (job-agent 2.1)', () => {
+    it('an omitted defaulted argument uses its default instead of throwing on `undefined`', () => {
+        @Contract()
+        class Auth {
+            // The exact repro shape: a decorated parameter with a TS default and NO @Default/@Optional.
+            detect(host: string, @GreaterThanEqual(1000) timeoutMs = 30_000): string {
+                return `${host}@${timeoutMs}`;
+            }
+        }
+        const a = new Auth();
+
+        // Omitted — before the fix this threw "expected >= 1000 but received undefined", because the
+        // wrapper validates before the body applies the default. Now the default is used.
+        expect((a.detect as (h: string) => string)('indeed')).toBe('indeed@30000');
+        // An explicit `undefined` gets the default too, matching JS.
+        expect(a.detect('indeed', undefined as unknown as number)).toBe('indeed@30000');
+        // A PRESENT value is still checked — the constraint bites a bad one.
+        expect(a.detect('indeed', 5000)).toBe('indeed@5000');
+        expect(() => a.detect('indeed', 500)).toThrow(/greater than or equal to 1000/);
+    });
+
+    it('only positions at/after the first default are inferred optional — earlier ones stay required', () => {
+        @Contract()
+        class Auth {
+            // `host` is required (index 0 < arity 1); `timeoutMs` is defaulted (index 1 >= arity 1).
+            detect(@NotEmpty() host: string, @GreaterThanEqual(1000) timeoutMs = 30_000): string {
+                return `${host}@${timeoutMs}`;
+            }
+        }
+        const a = new Auth();
+
+        expect(() => a.detect('', 5000)).toThrow(); // required host still enforced
+        expect(a.detect('x')).toBe('x@30000'); // defaulted timeout still optional
+    });
+
+    it('a required argument passed `undefined` still throws — and the message says so (2.1 + 2.4)', () => {
+        @Contract()
+        class Svc {
+            run(@GreaterThanEqual(1) n: number): string {
+                return `n=${n}`;
+            }
+        }
+        // `n` is required (no default, index 0), so undefined is genuinely wrong and still throws — and the
+        // message renders "undefined" literally now, so "absent" is not mistaken for a bad value (2.4).
+        expect(() => new Svc().run(undefined as unknown as number)).toThrow(/received undefined/);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // The four inheritance invariants — each pinned (S2, the safety fix)
 // ---------------------------------------------------------------------------
 

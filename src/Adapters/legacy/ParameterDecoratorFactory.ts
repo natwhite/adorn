@@ -391,7 +391,21 @@ function planChecks(target: object, propertyKey: MethodKey, original: Function):
         // argument is `undefined`** — a present value, `null` included, runs every check. It wraps the
         // WHOLE position (descriptor + staged checks) together and only ever short-circuits its own
         // index, so it never changes which violation another position reports (M3).
-        const optional = getEffectiveParameterOptional(target, propertyKey, index);
+        //
+        // A TypeScript **default value** makes the position implicitly optional too (job-agent 2.1). A
+        // default is compiled into the method BODY (`t = t === void 0 ? 30000 : t`), so this wrapper —
+        // which validates BEFORE delegating to the body — sees `undefined` for an omitted defaulted
+        // argument and would throw against a value the body is about to supply. `Function.length` counts
+        // parameters up to the first default, so any index `>= original.length` is defaulted (or trails a
+        // default) and is skip-if-undefined too: an omitted argument gets its default in JS, and a caller
+        // who passes `undefined` explicitly gets the default as well, so accepting `undefined` matches the
+        // language exactly (the guard still only skips on `undefined` — a present value is always checked).
+        // `original` is the raw method (the same source `getParamNames` parses for the names above), so its
+        // `.length` is the declared arity. Caveat: a REQUIRED parameter placed AFTER a defaulted one
+        // (`f(a, b = 1, c)` → length 1) — a pathological signature TS lint discourages — would be skipped
+        // only if a caller passes it `undefined` explicitly; see the README `@Default`/`@Optional` note.
+        const optional =
+            getEffectiveParameterOptional(target, propertyKey, index) || index >= original.length;
         const guard: (check: PlannedCheck) => PlannedCheck = optional
             ? check => (args: any[]) => {
                   if (args[index] === undefined) return; // absent ⇒ satisfied

@@ -4,9 +4,9 @@
 > an LLM reads, the runtime validation its arguments face, JSON Schema, documentation, and observability —
 > all descended from a single source, so they **don't drift by construction**, not by discipline.
 
-**Status: released — `0.1.0`, MIT.** `npm i adorn`. The public surface is frozen (`index.ts` exports **96
-values** plus the projection and observation model types) and pinned by a test; the suite is **1223 tests
-across 72 suites**, all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
+**Status: released — `0.1.0`, MIT.** `npm i adorn`. The public surface is pinned by a test (`index.ts`
+exports **101 values** plus the projection and observation model types); the suite is **1303 tests
+across 76 suites**, all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
 and field inheritance, closure and reified pre-/postconditions, five in-core projections (docs, JSON Schema,
 prescriptive LLM tool schema, observability, privacy review), a safe-by-default redaction runtime, a
 build-time sensitive-flow detector, and a CLI. Two opt-in add-ons ship as **subpath exports** — `adorn/otel`
@@ -126,6 +126,22 @@ work in two:
 > that also registers the class for projection (DEC-016) — adorn never enforces what it would omit from a
 > generated artifact. Prefer class-level `@Contract()`: it installs **outermost**, so guard-before-flow and
 > postcondition-on-final-result hold by construction (DEC-043); the per-method form is order-sensitive.
+
+> #### ⚠ Three shapes that surprise new consumers
+>
+> - **A TypeScript default value is honoured.** `detect(@GreaterThanEqual(1000) timeoutMs = 30_000)` called
+>   as `detect()` uses the default rather than throwing — adorn treats any parameter at or after the first
+>   defaulted one as optional, so an omitted (or explicitly `undefined`) argument is not validated as
+>   `undefined` (a default is compiled into the body, which runs *after* the wrapper). The one exception is a
+>   *required* parameter placed **after** a defaulted one (`f(a, b = 1, c)`), a signature TS lint discourages;
+>   mark it `@Optional()`/`@Default()` explicitly if you must write it.
+> - **Constructor parameters can't carry decorators** (TS1239 — a constructor's `propertyKey` is `undefined`,
+>   which the decorator signature rejects). Validate at construction with a **static factory**: a
+>   `static of(...)` decorated with `@Validate()` that returns `new`; a private constructor then makes the
+>   validated path the only path.
+> - **A `static #private` member blocks a class decorator** (TS18036 — TypeScript's own limitation, though the
+>   error blames the decorator). Move the static private to module scope, or use `@Validate()` per method.
+>   Instance `#private` members are fine.
 
 Constraints evaluate in **declaration order** — parameters left to right, stacked decorators top to bottom
 (DEC-015/017). When several arguments are invalid, the first one in the signature is the one reported.

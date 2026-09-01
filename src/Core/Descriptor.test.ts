@@ -317,4 +317,25 @@ describe('message formatting', () => {
             'received [REDACTED] instead',
         );
     });
+
+    // --- job-agent 2.4: an ABSENT value is not a leak, and blanking it hides "absent vs wrong" ------
+
+    it('renders `undefined`/`null` literally even when redacting — absent is diagnosable, not [REDACTED]', () => {
+        // undefined and null name no subject that could be leaked; blanking them destroyed the single
+        // most useful fact (was the argument absent, or wrong?). They render literally regardless of
+        // disclosure, so a missing/defaulted-but-unseen argument no longer masquerades as a bad value.
+        expect(numeric({min: 5}).message({value: undefined, paramName: 'count'})).toBe(
+            'Value Error: count expected a number greater than or equal to 5 but received undefined instead',
+        );
+        expect(numeric({min: 5}).message({value: null, paramName: 'count'})).toBe(
+            'Value Error: count expected a number greater than or equal to 5 but received null instead',
+        );
+    });
+
+    it('does not quote `undefined`/`null` even for a string constraint (they are absence, not a string)', () => {
+        expect(stringy({}).message({value: undefined, paramName: 'name'})).toContain('received undefined instead');
+        expect(stringy({}).message({value: null, paramName: 'name'})).toContain('received null instead');
+        // A real string value is still redacted by default — the exemption is only for absence.
+        expect(stringy({}).message({value: 'hunter2', paramName: 'name'})).toContain('received [REDACTED] instead');
+    });
 });
