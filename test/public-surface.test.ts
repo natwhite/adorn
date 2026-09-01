@@ -178,7 +178,14 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // 99 → 100: `nextCallId` (DEC-077, voice-agent) — the shared correlation-id sequence a consumer's OWN
     // non-decorator observation emitter must draw from, so its `callId`s never collide with adorn's (which now
     // matters because `createOtelSink` keys retained parent spans by `callId` — DEC-076). Formerly internal.
-    const PINNED_VALUE_EXPORT_COUNT = 100;
+    //
+    // 100 → 101: `contractSpecOf` (DEC-084, voice-agent L19) — recover the `ContractSpec` a `contract()`
+    // wrapper enforces, so the spec is no longer closure-captured and unreadable. It makes a functional
+    // contract introspectable and, in particular, lets `@adorn/test`'s new `fuzzFunction` read the spec off
+    // the wrapper and fuzz it as `fuzzMethod` fuzzes a class method. `contractMetaOf` (the richer read that
+    // also exposes the raw target) stays package-internal. (The owner has waived the pre-publish surface
+    // freeze; this pin now tracks the surface rather than fencing it — DEC-079 note, Round 5.)
+    const PINNED_VALUE_EXPORT_COUNT = 101;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -200,6 +207,17 @@ describe('voice-agent Round 3 adds exactly its intended functional-surface expor
         expect(typeof nextCallId).toBe('function');
         // Monotonic: each call yields a strictly greater id (the property that prevents cross-emitter collision).
         expect(nextCallId()).toBeLessThan(nextCallId());
+    });
+    it('exports contractSpecOf — a contract() wrapper is now introspectable (DEC-084, L19)', () => {
+        const {contract, contractSpecOf} = adorn as Record<string, unknown> as {
+            contract: (spec: unknown, fn: unknown) => unknown;
+            contractSpecOf: (fn: unknown) => unknown;
+        };
+        expect(typeof contractSpecOf).toBe('function');
+        const spec = {};
+        const wrapped = contract(spec, (x: unknown) => x);
+        expect(contractSpecOf(wrapped)).toBe(spec); // the exact spec, read back off the wrapper
+        expect(contractSpecOf((x: unknown) => x)).toBeUndefined(); // a plain function has none
     });
 });
 

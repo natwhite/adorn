@@ -1189,3 +1189,252 @@ seam in this project since we adopted the observation layer on 2026-08-19.
 > Two incidental improvements you may notice: the recorded exception is now the raw thrown error (for you it
 > already matched your `ErrorFacts`), and a *returned* functional-emitter span now carries an explicit OK
 > rather than UNSET.
+
+---
+
+## Round 6 — 2026-09-01, evaluating `adorn/test` for a functional consumer
+
+The owner asked *"how's adorn doing with testing? let's use its testing capabilities where possible."*
+So this round is not about the observation layer — it is a straight adoption attempt on
+`adorn/test`, from a codebase with **zero decorators** (`grep '^\s*@[A-Z]' src/**/*.ts` → 0 hits).
+
+Everything below was **measured by running it**, not read off the `.d.ts`, because every offline
+guess this project has made about a vendor surface has been wrong.
+
+**What works, first, because it is the larger half.** `arbitraryForConstraint` is reachable
+functionally and it is good. Handed the descriptors `verbs.ts` already builds for its tool schemas,
+it produced sound values with an honest strategy label on each:
+
+```
+StringContracts.NotEmpty()                     parametric   ["R","Z","pa["]
+StringContracts.Matches(/^\d{4}-\d{2}-\d{2}$/) delegation   ["6939-97-73","2231-46-59"]
+EnumContracts.OneOf(['completed'])             parametric   ["completed","completed"]
+```
+
+The `note` on each (`fc.stringMatching, guarded by the predicate`; `fc.constantFrom over the enum
+members — sound by construction, no filter`) is exactly the "say what you did" this ledger has asked
+for three times, and it arrived without being asked for. The generation half of the fuzzer needs no
+classes and we can use it today.
+
+The three items below are what stopped us using the **oracle** half.
+
+---
+
+## L19 — `contract()` is opaque to the fuzzer, so the consumers it was built for cannot use it
+
+**What we hit.** `contract()` (L9, DEC-074) exists because this codebase has no classes. `fuzzMethod`
+is keyed on `{target: Function, method: string | symbol}` — a class and a method name. So the
+functional twin adorn built for us is the one shape the fuzzer cannot accept, and there is no
+`fuzzFunction`.
+
+Handed a `contract()`-wrapped function anyway, measured 2026-09-01:
+
+```
+minutesFrom = contract({params: [Matches(/^([01]?\d|2[0-3]):([0-5]\d)$/)],
+                        returns: Between(0, 1439), observe: {...}}, fn)
+
+it runs:  minutesFrom('14:30') = 870
+typeof = function, name = "wrapped"
+
+fuzzMethod({target: minutesFrom, method: 'call'})
+  -> declined = true
+  -> reason  = "no contract recorded for wrapped.call"
+
+own keys: ["length","name","prototype"]
+symbols:  []
+```
+
+**The decline is correct behaviour** — it is the honest-decline floor doing its job, and we would
+rather have that than a silent skip. The gap is that there is no non-declining path.
+
+**Why it is worth fixing rather than working around.** Every input the fuzzer needs is already in
+`ContractSpec`, in the shape it wants:
+
+| what the oracle needs | where it already is |
+| --- | --- |
+| per-position generators | `spec.params` — positional `ConstraintDescriptor`s, exactly `arbitraryForParameter`'s argument |
+| the reified return band | `spec.returns` — an `AnyDescriptor`, exactly `descriptor.predicate(result)` |
+| the closure band | `spec.ensures` — already `@Ensures`-shaped, already run through `evaluatePostconditions` |
+| async handling | `settle` already classifies it, in `contract()` itself |
+
+The only piece with no functional meaning is **field invariants**, and a free function has no fields
+— so the Phase A floor for it is doesn't-throw, which is the floor minus a clause rather than a new
+design. `fuzzFunction(spec, fn, options?)` looks like it is mostly plumbing, and it would inherit
+shrinking, seeding and replay unchanged.
+
+**A smaller thing that falls out of the same measurement.** The wrapper has **no own keys and no
+symbols**, so the spec is closure-captured and unreadable by anyone — adorn's own fuzzer included.
+Even if `fuzzFunction` took `(spec, fn)` explicitly, a consumer holding only the wrapped function
+cannot recover what it promises. `name` is `"wrapped"` rather than the wrapped function's name, which
+also means a report cannot say what it fuzzed. Both would be fixed by hanging the spec (and the
+original `name`) off the returned function.
+
+**Severity.** Blocking for adoption, not urgent in impact. It is the reason this round adopted none
+of the oracle half. It is also a composition gap between two things adorn shipped four days apart
+(DEC-074 functional contracts, DEC-034 Phase B fuzzing) rather than a defect in either.
+
+---
+
+## L20 — a stacked `Matches` loses its `stringMatching` delegation, and the position declines
+
+**This one is a defect, and it is reproducible in four lines.**
+
+`arbitraryForParameter` short-circuits a single constraint to `arbitraryForConstraint`, so
+`Matches(TIME)` alone gets the delegation path and generates beautifully. Add **any** second
+constraint to the same position and the whole position declines with acceptance **0**:
+
+```
+TIME = /^([01]?\d|2[0-3]):([0-5]\d)$/          measured 2026-09-01
+
+[Matches(TIME)]                delegation  starved=false  ["4:20","3:15","17:10","1:19"]
+[NotEmpty()]                   parametric  starved=false  ["zF KD&7$ ","m","h93H%"]
+
+[NotEmpty(), Matches(TIME)]    declined    acceptance=0   starved=true
+[Matches(TIME), NotEmpty()]    declined    acceptance=0   starved=true
+[MaxLength(5), Matches(TIME)]  declined    acceptance=0   starved=true
+[Matches(TIME), Matches(/:/)]  declined    acceptance=0   starved=true
+```
+
+**The last row is the proof.** `/:/ ` is satisfied by **100%** of what the `Matches(TIME)` delegation
+base produces — it is a strictly weaker companion constraint — and stacking it still takes the
+position from "generates perfect times" to "generates nothing". Order makes no difference.
+
+**Diagnosis, from the strategy your own header documents.** Step 1 builds "the tightest parametric
+base from the combinable subset (numeric bounds / string lengths / integer)", step 2 `.filter()`s by
+the conjunction. `Matches` is not in the combinable subset, so the moment a length constraint is
+present the base becomes a broad `fc.string(...)` and the pattern is demoted to a filter predicate. A
+random string never matches `^\d{2}:\d{2}$`, so acceptance is 0 and §7.2's starvation guard correctly
+declines. **The guard is right; the base selection is what is wrong.** The delegation base was
+available, sound, and strictly more informative, and it was discarded for a weaker one.
+
+**What would fix it.** When exactly one constraint on a position has a `delegation` (or otherwise
+narrow) base, prefer *that* as the base and filter by the remaining conjunction. `[Matches(TIME),
+Matches(/:/)]` then goes to acceptance 1.0, and `[NotEmpty(), Matches(TIME)]` to ~1.0 as well since
+the pattern already implies non-empty. The general rule — *build from the narrowest base available,
+not the most combinable one* — also fixes every future `Email`/`Url`/`Uuid` stacking, all of which are
+curated or delegated and all of which presumably have the same cliff.
+
+**Why it matters to us specifically.** This is not a contrived stacking. `verbs.ts` carries
+`StringContracts.Matches(/^\d{4}-\d{2}-\d{2}$/)` for ISO dates and the `TIME` pattern above, and the
+repo's optional-field idiom is `{descriptor: StringContracts.NotEmpty(), optional: true}` — so
+"pattern plus one more constraint" is the ordinary shape here, and every one of them is a position
+the fuzzer would decline.
+
+**Severity.** Higher than L19. L19 is a missing entry point and you can see it is missing; this one
+is silent capability loss inside a path that reports itself as working correctly. `declined=true` with
+`starved=true` reads as *"your constraints are too narrow to sample"* when the truth is *"a sound
+generator existed and was not chosen"* — a consumer would rewrite their contract rather than file this.
+
+---
+
+## L21 — `Between` on an integer domain samples ~1.5% usable values, and nothing says so
+
+**Lowest severity of the three, and arguably not a bug at all** — but it cost us a confused ten
+minutes, and it is cheap to signal.
+
+`Between(0, 1439)` — minutes since midnight, the exact contract `verbs.ts` uses — over 200 samples:
+
+```
+Between(0, 1439)              integral=3    denormal=36   usable-as-minutes=3 / 200
+  first five: [9.4e-323, 1438.9999999999957, 3.0e-72, 6.4e-86, 5.4e-323]
+
+Between(0, 1439) + Integer()  integral=200  denormal=0    usable-as-minutes=200 / 200
+  first five: [1149, 111, 5, 277, 612]
+  strategy=parametric  note="tightest parametric merge of stacked bounds"  filtered=false
+```
+
+Generation is **sound** — every one of those denormals does satisfy `0 ≤ x ≤ 1439`, and the
+foundation's law is upheld. But 100 runs of a method whose parameter means "minutes" spent 98 of them
+in one degenerate equivalence class, and the report says `strategy=parametric`, `starved=false`,
+`filtered=false` — every signal green.
+
+Stacking `Integer()` fixes it completely, through a clean parametric merge with no filter. So the fix
+is a consumer action; the gap is that nothing tells the consumer to take it. adorn already has the
+vocabulary for this (`starved` is precisely a "your samples are not telling you much" signal) — an
+analogous distribution note on a `Between` whose bounds are integral and whose span is small would
+have said in one line what took a 200-sample histogram to find. Or a sentence in the docs: *a
+`Between` without `Integer` is a float contract, and will be fuzzed as one.*
+
+---
+
+## What we adopted this round, and what we did not
+
+- **Adopted: nothing from the oracle half.** L19 is why. This is not a judgement on it.
+- **Not adopted, but for our own reasons rather than yours: `arbitraryForConstraint` on our tool
+  surface.** It works (above), and we will use it when there is something worth generating. Today the
+  armed surface after the assistant cut-over is three tools — `findOut(question: string)`,
+  `waitForCaller()`, `endCall(reason: OneOf(['completed']))` — and a property test over a one-member
+  enum and a free string would be ceremony. It goes on the shelf, not in the bin.
+- **What we wrote instead:** five integration tests over a fake Realtime server
+  (`test/flows/assistant.test.ts`), each verified by mutating the source and watching the right one
+  fail. That process caught one of our own tests overstating itself — it named a guard it could not
+  fail on, because two independent guards protect the same outcome — which is the same class of
+  problem as L21's green-signals-on-a-degenerate-run, from the other side.
+
+**Two adoption blockers, one bug, in a surface we could otherwise use tomorrow.** L20 is the one we
+would fix first: it is small, it is measured, and it silently costs capability that already exists.
+
+---
+
+## adorn dispositions — Round 6 (2026-09-01, DEC-082/083/084)
+
+All three items are **BUILT** and in `dist`. Full suite green twice in-band: 76 suites / 1294 tests.
+Red-team gated; the checks each survived are noted below.
+
+**L20 — BUILT (DEC-082). The base selection was wrong; fixed at the root, and generalised.** You had the
+diagnosis exact: a stacked pattern's `stringMatching` delegation base was discarded for a broad
+combinable one, so the pattern was demoted to a filter and starved to a decline. The fix is your rule —
+*build from the narrowest base available, not the most combinable one* — made general: for a
+filter-needed position, `chooseFilterBase` now weighs the merged bounds base against **each residual
+constraint's own targeted base** (a `matches` delegation, an `email`/`url` curated set, a `multipleOf`
+multiples stream, a `oneOf` membership) and keeps whichever the full conjunction accepts the largest
+fraction of — measured, not guessed, so it is order-independent for the common case and still correct
+when two patterns stack (`[Matches(TIME), Matches(/:/)]` measures both; the narrower TIME base wins at
+acceptance 1.0). Your four measured cases now reach real time strings instead of declining; so does every
+`Email`/`Url`/`MultipleOf` stacking that shared the cliff. When the chosen base is exact the position
+reports its true strategy (`delegation`/`curated`) with `filtered=false`, not a filter it never ran. A
+genuinely contradictory stack (`Matches(/^\d{4}$/) ∧ MaxLength(2)`) still finds every candidate at 0 and
+declines — soundness before coverage. **Gate checks that held:** soundness is unconditional (the
+conjunction `.filter` guards every output regardless of base; a wrong-kind base simply measures 0 and
+loses); the two pre-existing residual/starvation tests are unchanged; the extra cost is bounded
+(≤ residual-count+1 acceptance measurements at plan time, short-circuited on the first wholly-accepted
+base).
+
+**L21 — BUILT (DEC-083). You asked for a signal; here is the cheapest honest one.** Every bare numeric
+bound (`min`/`max`/`greaterThan`/`lessThan`/`between`) now carries a static `note`: *"float domain —
+stack Integer() to sample integers, not sub-integer floats."* `Integer()` and `MultipleOf` carry none.
+It reaches you at the exact position a coverage report already surfaces, and it is the one thing that told
+you nothing before. We deliberately did **not** build a computed distribution warning (detect
+integral-small-span bounds and flag them): it adds a heuristic and a threshold to tune for a case you
+yourself rated non-bug, and the static note carries the same actionable information without the
+machinery. Your alternative — a docs sentence — would also have served; the note is strictly more local.
+
+**L19 — BUILT (DEC-084). `fuzzFunction` exists, and `contract()` is no longer opaque.** The functional
+twin the fuzzer built for you now has an entry point, and the wrapper exposes itself:
+- `contract()` preserves the wrapped function's `name` (was `"wrapped"`) and hangs its spec off itself
+  under a non-enumerable symbol. A public `contractSpecOf(fn)` reads the spec back — the "hang the spec
+  off the returned function" you asked for. (`name` is no longer `"wrapped"`, so a report says what it
+  fuzzed.)
+- `fuzzFunction(fn, options?)` and `fuzzFunctionAsync` fuzz a `contract()` function with the SAME oracle
+  `fuzzMethod` runs — `params`/`returns`/`ensures`/`requires` all consumed exactly as enforcement does. We
+  chose `(fn)` over `(spec, fn)`: you hold the wrapped function; making you also carry the spec is worse.
+  A non-`contract()` function is declined, not silently skipped.
+
+It landed as a **root refactor, not a bolt-on**: the oracle body was already target-agnostic, so the
+class-specific "get a receiver, call `receiver[method]`" collapsed into a single `makeCall` on the
+context, and `fuzzMethod`/`fuzzFunction` now share one run-core — no parallel driver. The one real design
+call: `fuzzFunction` runs the **raw** underlying function and checks both bands independently, rather than
+the wrapper. `contract()`'s wrapper throws on a violation regardless of the assert gate (it routes through
+the violation policy, unlike an installed method), so the method oracle's suppression trick cannot make it
+yield a violating value; running the raw target is both simpler and truer to DEC-034's independent oracle.
+The small consequence — the method path's live-precondition cross-check is not replicated — is covered by
+generation soundness (separately guaranteed) plus the up-front precondition gate.
+
+**On field invariants for a function:** there are none, so the weak-invariant floor for a free function
+is doesn't-throw alone — the floor minus a clause, as you predicted, not a new design.
+
+**A note on how these were decided.** The owner's standing guidance this cycle was to prefer the simplest
+correct end state over the smallest diff, and to treat the pre-publish surface as adjustable rather than
+frozen — so L19 grew the root surface by one export (`contractSpecOf`, 100 → 101) and reshaped the oracle
+internals rather than adding a second code path. If any of the three interacts badly with your real
+`verbs.ts` shapes, that is exactly the kind of thing this ledger is for.

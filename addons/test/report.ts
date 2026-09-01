@@ -81,8 +81,10 @@ export function formatFuzzReport(
 
 function renderMethod(result: FuzzResult): string[] {
     const lines: string[] = [];
-    const kind = result.isStatic ? 'static ' : '';
-    const header = `${kind}${result.target}.${result.method}`;
+    // A free function (voice-agent L19) is named `target()`, not `target.method` — it has neither a class
+    // to prefix nor a static/instance distinction. A method keeps the `[static ]Class.method` header.
+    const kind = result.free ? '' : result.isStatic ? 'static ' : '';
+    const header = result.free ? `${result.target}()` : `${kind}${result.target}.${result.method}`;
 
     if (result.declined) {
         lines.push(`- ${header}: DECLINED — ${result.reason}`);
@@ -110,7 +112,7 @@ function renderMethod(result: FuzzResult): string[] {
     lines.push(...renderCoverage(result.coverage, '    '));
     if (result.invariantsChecked.length > 0) {
         lines.push(`    invariants re-checked: ${result.invariantsChecked.join(', ')}`);
-    } else if (!result.isStatic) {
+    } else if (!result.isStatic && !result.free) {
         lines.push('    invariants re-checked: none (class declares no field contracts)');
     }
     return lines;

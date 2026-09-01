@@ -89,6 +89,12 @@ import {
     ParameterArbitrary,
     STARVATION_THRESHOLD,
 } from './arbitraries';
+// `contract()`'s self-description (voice-agent L19), read the same way the postcondition reads above are:
+// from the module, not re-derived. `contractMetaOf` recovers the spec + raw target + normalised bands a
+// `contract()` wrapper now hangs off itself, so a free function can be fuzzed as a method is — the spec is
+// no longer closure-captured and unreadable. The RAW target is run (not the wrapper) so the oracle stays
+// independent of the wrapper's own enforcement (see `prepareFunctionRun`).
+import {contractMetaOf} from '../../src/Functional/contract';
 
 /**
  * The oracle in force for a run.
@@ -126,6 +132,12 @@ export interface FuzzResult {
     readonly target: string;
     readonly method: string;
     readonly isStatic: boolean;
+    /**
+     * True when the subject is a free function fuzzed by {@link fuzzFunction}, not a class method — so a
+     * report names it `target()` rather than `target.method` and skips the field-invariant line a class
+     * would print (voice-agent L19). Absent/false for a method.
+     */
+    readonly free?: boolean;
     readonly oracle: OracleMode;
     /** True when the method could not be fuzzed at all — see {@link reason}. */
     readonly declined: boolean;
@@ -176,6 +188,24 @@ export interface FuzzOptions {
     readonly oracle?: OracleMode;
 }
 
+/**
+ * Options for {@link fuzzFunction} — {@link FuzzOptions} minus the class-only fields. A free function
+ * has no `target`/`method` to name (the function IS the target) and no `subject` (nothing to construct
+ * a receiver for), so those are gone; everything else — run count, seed, gap-fill, oracle override —
+ * carries over unchanged (voice-agent L19).
+ */
+export interface FuzzFunctionOptions {
+    /** Cases to run. Defaults to 100. Not a nanny cap — raise it freely (foundation §7.3). */
+    readonly numRuns?: number;
+    /** Fix the seed to reproduce a run exactly. Omitted, fast-check picks one and it is reported. */
+    readonly seed?: number;
+    /** The arbitrary for unconstrained (`null`-hole) positions. Defaults to `fc.anything()` (§8). */
+    readonly gapFill?: Arbitrary<unknown>;
+    /** Override the oracle. Default is auto: `'postcondition'` when the spec has a `returns` or any
+     *  `ensures`, else the `'weak-invariant'` floor (doesn't-throw). */
+    readonly oracle?: OracleMode;
+}
+
 /** The standing disclaimers every run carries — the warn-vs-trust line drawn in plain words (§7). */
 const STANDING_WARNINGS: ReadonlyArray<string> = [
     'Fuzzing runs the REAL method with generated inputs, many times. If it sends email, charges a ' +
@@ -201,51 +231,8 @@ const STANDING_WARNINGS: ReadonlyArray<string> = [
 export function fuzzMethod(options: FuzzOptions): FuzzResult {
     const p = prepareRun(options);
     if (p.declined) return p.declined;
-
-    let details: fc.RunDetails<[unknown[]]>;
-    try {
-        details = withPostconditionProbe(p.mode, () =>
-            fc.check(
-                fc.property(p.argsArbitrary, (args: unknown[]) => oracleOutcomeSync(args, p.ctx) === null),
-                p.seed === undefined ? {numRuns: p.numRuns} : {numRuns: p.numRuns, seed: p.seed},
-            ),
-        );
-    } catch (error) {
-        // fast-check can throw during generation (an internal generator error, or an `fc.pre()` retry cap).
-        // NOTE: a `.filter()` does NOT throw on starvation — it loops unboundedly — so filter starvation is
-        // caught up-front by the 0%-acceptance decline (per-position in `arbitraries.ts`, whole-tuple in
-        // `preconditionGate`), not here. This catch is the honest fallback for any *other* generation failure
-        // (the DEC-057 review, finding C). Report it as a decline rather than letting the tool crash (§7.2).
-        return declinedResult(
-            p.className,
-            p.methodName,
-            p.isStatic,
-            p.coverage,
-            `generation starved: ${error instanceof Error ? error.message : String(error)}`,
-            p.oraclesChecked,
-            p.mode,
-        );
-    }
-
-    if (p.ctx.sawThenable) {
-        return declinedResult(
-            p.className,
-            p.methodName,
-            p.isStatic,
-            p.coverage,
-            'method returns a thenable — it is async; use fuzzMethodAsync() to await and check the settled value',
-            p.oraclesChecked,
-            p.mode,
-        );
-    }
-
-    if (!details.failed) return assemblePassed(p, details);
-
-    // Re-run the oracle once on the shrunk counterexample to classify the finding deterministically,
-    // under the same suppression so a postcondition break yields its value rather than a wrapper throw.
-    const counterexampleArgs = (details.counterexample ? details.counterexample[0] : []) as unknown[];
-    const outcome = withPostconditionProbe(p.mode, () => oracleOutcomeSync(counterexampleArgs, p.ctx));
-    return assembleFinding(p, details, outcome, counterexampleArgs);
+    // A method runs its INSTALLED weave, so the assert gate is probed (post-checks suppressed for the run).
+    return runSyncCheck(p, true);
 }
 
 /**
@@ -260,37 +247,7 @@ export function fuzzMethod(options: FuzzOptions): FuzzResult {
 export async function fuzzMethodAsync(options: FuzzOptions): Promise<FuzzResult> {
     const p = prepareRun(options);
     if (p.declined) return p.declined;
-
-    let details: fc.RunDetails<[unknown[]]>;
-    try {
-        details = await withPostconditionProbeAsync(p.mode, () =>
-            fc.check(
-                fc.asyncProperty(
-                    p.argsArbitrary,
-                    async (args: unknown[]) => (await oracleOutcomeAsync(args, p.ctx)) === null,
-                ),
-                p.seed === undefined ? {numRuns: p.numRuns} : {numRuns: p.numRuns, seed: p.seed},
-            ),
-        );
-    } catch (error) {
-        return declinedResult(
-            p.className,
-            p.methodName,
-            p.isStatic,
-            p.coverage,
-            `generation starved: ${error instanceof Error ? error.message : String(error)}`,
-            p.oraclesChecked,
-            p.mode,
-        );
-    }
-
-    if (!details.failed) return assemblePassed(p, details);
-
-    const counterexampleArgs = (details.counterexample ? details.counterexample[0] : []) as unknown[];
-    const outcome = await withPostconditionProbeAsync(p.mode, () =>
-        oracleOutcomeAsync(counterexampleArgs, p.ctx),
-    );
-    return assembleFinding(p, details, outcome, counterexampleArgs);
+    return runAsyncCheck(p, true);
 }
 
 /**
@@ -321,6 +278,41 @@ export async function fuzzClassAsync(
     return results;
 }
 
+/**
+ * Fuzz a {@link contract}-wrapped **free function** with the same contract oracle {@link fuzzMethod} runs
+ * on a class method — the entry point a zero-class consumer needs (voice-agent L19). Everything the oracle
+ * wants already lives in the `ContractSpec` the wrapper now exposes (`contractSpecOf`): `params` →
+ * per-position generators, `returns` → the reified band, `ensures` → the closure band, `requires` → the
+ * whole-tuple precondition gate. A free function has no fields, so the weak-invariant floor is
+ * doesn't-throw alone (the field-invariant clause simply has nothing to check).
+ *
+ * The RAW underlying function is run and both postcondition bands are checked independently — not the
+ * wrapper, whose own enforcement would throw on the first violation and defeat the independent oracle
+ * (DEC-034). So no assert-gate suppression is needed: there is no installed weave to suppress.
+ *
+ * Synchronous. A thenable return is **declined** with a "use fuzzFunctionAsync" message rather than
+ * checking the Promise object as if it were the answer. A function not produced by `contract()` is
+ * declined (its spec cannot be read), never silently skipped — "declined" and "clean" stay distinct (§3).
+ */
+export function fuzzFunction(fn: Function, options: FuzzFunctionOptions = {}): FuzzResult {
+    const p = prepareFunctionRun(fn, options);
+    if (p.declined) return p.declined;
+    // The raw target carries no enforcement, so nothing to probe/suppress.
+    return runSyncCheck(p, false);
+}
+
+/**
+ * The async twin of {@link fuzzFunction} — for a `contract()` function that returns a Promise (or any
+ * thenable). Awaits the settled value before the oracle; a rejected Promise is a robustness finding (the
+ * async twin of a sync throw), never a false postcondition pass. Also handles a synchronous return, so it
+ * is a safe superset; `fuzzFunction` stays the sync entry that declines an async function loudly.
+ */
+export async function fuzzFunctionAsync(fn: Function, options: FuzzFunctionOptions = {}): Promise<FuzzResult> {
+    const p = prepareFunctionRun(fn, options);
+    if (p.declined) return p.declined;
+    return runAsyncCheck(p, false);
+}
+
 // ---------------------------------------------------------------------------
 // Run preparation (shared by the sync and async entry points)
 // ---------------------------------------------------------------------------
@@ -344,6 +336,8 @@ interface RunPlan {
     readonly className: string;
     readonly methodName: string;
     readonly isStatic: boolean;
+    /** True for a free-function run ({@link fuzzFunction}); shapes the result's naming (voice-agent L19). */
+    readonly free?: boolean;
     readonly invariantsChecked: string[];
     readonly seed?: number;
     readonly numRuns: number;
@@ -438,10 +432,13 @@ function prepareRun(options: FuzzOptions): PreparedRun {
     const invariantsChecked = fieldContracts.map(f => String(f.key));
 
     const ctx: OracleContext = {
-        isStatic,
-        target,
-        method,
-        subject,
+        // Instance method: a fresh receiver per case (state never leaks); static: the class itself. The
+        // installed weave is what runs — precondition guards stay live, post-checks are suppressed for
+        // the run (see the module header) so the driver reads the settled value and checks both bands.
+        makeCall: (args: unknown[]): CallResult => {
+            const receiver: object = isStatic ? target : subject!();
+            return {receiver, result: invoke(receiver, method, args)};
+        },
         fieldContracts,
         mode,
         posts,
@@ -465,11 +462,199 @@ function prepareRun(options: FuzzOptions): PreparedRun {
     };
 }
 
+/**
+ * The free-function twin of {@link prepareRun} — sources the run from a `contract()` wrapper's exposed
+ * `ContractSpec` instead of the class registry (voice-agent L19). It produces the SAME {@link RunPlan}
+ * the method path does, so the shared run-core drives both identically; the only differences are where
+ * the pieces come from and that there is no receiver, no field invariant, and no assert-gate probe.
+ */
+function prepareFunctionRun(fn: Function, options: FuzzFunctionOptions): PreparedRun {
+    const {numRuns = 100, seed, gapFill = fc.anything(), oracle} = options;
+    const name = (typeof fn === 'function' && fn.name) || '(anonymous function)';
+
+    const meta = contractMetaOf(fn);
+    if (!meta) {
+        // Not a `contract()` function: its spec cannot be read, so there is nothing to fuzz against. Decline
+        // accurately (the honest floor) rather than fuzzing a bare function against no contract at all.
+        const reason =
+            typeof fn === 'function'
+                ? `${name} is not a contract() function — wrap it with contract({...}, fn) so its spec can ` +
+                  'be read and fuzzed (voice-agent L19)'
+                : 'fuzzFunction expects a function produced by contract()';
+        return {declined: declinedResult(name, '', false, [], reason, [], 'weak-invariant', true)};
+    }
+
+    const spec = meta.spec;
+
+    // Per-position generators from `spec.params` — one descriptor (or a `null` hole) per position. A hole
+    // becomes a gap-fill (broad arbitrary); a recognised descriptor its sound generator, exactly as a
+    // decorated position resolves (`buildCoverage`).
+    const params = spec.params || [];
+    const coverage: ParameterArbitrary[] = params.map((descriptor, index) =>
+        arbitraryForParameter(descriptor ? [descriptor] : [], index),
+    );
+
+    const declinedPosition = coverage.find(plan => plan.declined);
+    if (declinedPosition) {
+        return {
+            declined: declinedResult(
+                name,
+                '',
+                false,
+                coverage,
+                `parameter ${declinedPosition.index}` +
+                    `${declinedPosition.name ? ` ('${declinedPosition.name}')` : ''} could not be generated: ` +
+                    (declinedPosition.note || 'no sound generator'),
+                [],
+                'weak-invariant',
+                true,
+            ),
+        };
+    }
+
+    // Both postcondition bands, exactly as the wrapper enforces them: the reified `returns` descriptor and
+    // the normalised `ensures` closures the meta already carries (no re-derivation, no drift).
+    const returns = spec.returns ? [spec.returns] : [];
+    const posts = meta.posts;
+    const mode: OracleMode =
+        oracle ?? (posts.length > 0 || returns.length > 0 ? 'postcondition' : 'weak-invariant');
+    const oraclesChecked = describeOracles(posts, returns);
+
+    // Cross-parameter `requires`, gated whole-tuple exactly as the method path gates `@Requires` (DEC-057).
+    const baseArgs = buildArgsArbitrary(coverage, gapFill);
+    const gate = preconditionGate(baseArgs, meta.pres);
+    if (gate.declined) {
+        return {declined: declinedResult(name, '', false, coverage, gate.reason!, oraclesChecked, mode, true)};
+    }
+    const argsArbitrary = gate.arbitrary!;
+
+    const target = meta.target;
+    const ctx: OracleContext = {
+        // Run the RAW function — no receiver, no field invariants, no enforcement to suppress.
+        makeCall: (args: unknown[]): CallResult => ({receiver: null, result: target(...args)}),
+        fieldContracts: [],
+        mode,
+        posts,
+        returns,
+        sawThenable: false,
+    };
+
+    return {
+        ctx,
+        coverage,
+        argsArbitrary,
+        mode,
+        oraclesChecked,
+        className: name,
+        methodName: '',
+        isStatic: false,
+        free: true,
+        invariantsChecked: [],
+        seed,
+        numRuns,
+        preconditionWarnings: gate.warnings,
+    };
+}
+
+/**
+ * Drive fast-check over the prepared run, synchronously, and assemble the result. Shared by
+ * {@link fuzzMethod} (a class method — `probe` on, so its installed weave's post-checks are suppressed
+ * for the run and the driver reads the settled value) and {@link fuzzFunction} (a free function — `probe`
+ * off, the raw target has no enforcement to suppress). Everything else — generation, the oracle, shrink,
+ * classification — is identical, which is the whole point of the target-agnostic {@link OracleContext}
+ * (voice-agent L19).
+ */
+function runSyncCheck(p: RunPlan, probe: boolean): FuzzResult {
+    const active = probe && p.mode === 'postcondition';
+    let details: fc.RunDetails<[unknown[]]>;
+    try {
+        details = withPostconditionProbe(active, () =>
+            fc.check(
+                fc.property(p.argsArbitrary, (args: unknown[]) => oracleOutcomeSync(args, p.ctx) === null),
+                p.seed === undefined ? {numRuns: p.numRuns} : {numRuns: p.numRuns, seed: p.seed},
+            ),
+        );
+    } catch (error) {
+        // fast-check can throw during generation (an internal generator error, or an `fc.pre()` retry cap).
+        // NOTE: a `.filter()` does NOT throw on starvation — it loops unboundedly — so filter starvation is
+        // caught up-front by the 0%-acceptance decline (per-position in `arbitraries.ts`, whole-tuple in
+        // `preconditionGate`), not here. This catch is the honest fallback for any *other* generation failure.
+        return generationStarvedResult(p, error);
+    }
+
+    if (p.ctx.sawThenable) return asyncDeclineResult(p);
+    if (!details.failed) return assemblePassed(p, details);
+
+    // Re-run the oracle once on the shrunk counterexample to classify the finding deterministically,
+    // under the same suppression so a postcondition break yields its value rather than a wrapper throw.
+    const counterexampleArgs = (details.counterexample ? details.counterexample[0] : []) as unknown[];
+    const outcome = withPostconditionProbe(active, () => oracleOutcomeSync(counterexampleArgs, p.ctx));
+    return assembleFinding(p, details, outcome, counterexampleArgs);
+}
+
+/** The async twin of {@link runSyncCheck} — `fc.asyncProperty`, awaiting the settled value before the oracle. */
+async function runAsyncCheck(p: RunPlan, probe: boolean): Promise<FuzzResult> {
+    const active = probe && p.mode === 'postcondition';
+    let details: fc.RunDetails<[unknown[]]>;
+    try {
+        details = await withPostconditionProbeAsync(active, () =>
+            fc.check(
+                fc.asyncProperty(
+                    p.argsArbitrary,
+                    async (args: unknown[]) => (await oracleOutcomeAsync(args, p.ctx)) === null,
+                ),
+                p.seed === undefined ? {numRuns: p.numRuns} : {numRuns: p.numRuns, seed: p.seed},
+            ),
+        );
+    } catch (error) {
+        return generationStarvedResult(p, error);
+    }
+
+    if (!details.failed) return assemblePassed(p, details);
+
+    const counterexampleArgs = (details.counterexample ? details.counterexample[0] : []) as unknown[];
+    const outcome = await withPostconditionProbeAsync(active, () =>
+        oracleOutcomeAsync(counterexampleArgs, p.ctx),
+    );
+    return assembleFinding(p, details, outcome, counterexampleArgs);
+}
+
+/** fast-check threw during generation (not filter starvation — that is a measured up-front decline). §7.2. */
+function generationStarvedResult(p: RunPlan, error: unknown): FuzzResult {
+    return declinedResult(
+        p.className,
+        p.methodName,
+        p.isStatic,
+        p.coverage,
+        `generation starved: ${error instanceof Error ? error.message : String(error)}`,
+        p.oraclesChecked,
+        p.mode,
+        p.free,
+    );
+}
+
+/** A sync run saw a thenable return — decline, pointing at the matching async twin. */
+function asyncDeclineResult(p: RunPlan): FuzzResult {
+    const noun = p.free ? 'function' : 'method';
+    const twin = p.free ? 'fuzzFunctionAsync()' : 'fuzzMethodAsync()';
+    return declinedResult(
+        p.className,
+        p.methodName,
+        p.isStatic,
+        p.coverage,
+        `${noun} returns a thenable — it is async; use ${twin} to await and check the settled value`,
+        p.oraclesChecked,
+        p.mode,
+        p.free,
+    );
+}
+
 function assemblePassed(p: RunPlan, details: fc.RunDetails<[unknown[]]>): FuzzResult {
     return {
         target: p.className,
         method: p.methodName,
         isStatic: p.isStatic,
+        free: p.free,
         oracle: p.mode,
         declined: false,
         numRuns: details.numRuns,
@@ -492,6 +677,7 @@ function assembleFinding(
         target: p.className,
         method: p.methodName,
         isStatic: p.isStatic,
+        free: p.free,
         oracle: p.mode,
         declined: false,
         numRuns: details.numRuns,
@@ -509,12 +695,23 @@ function assembleFinding(
 // The oracle body
 // ---------------------------------------------------------------------------
 
-/** The immutable facts of a run, plus the one mutable async-detection flag (`sawThenable`). */
+/** What one call produced: the settled `result`, and the `receiver` whose field invariants to re-check
+ *  (the fresh instance for an instance method; `null` for a static method or a free function). */
+interface CallResult {
+    readonly receiver: object | null;
+    readonly result: unknown;
+}
+
+/**
+ * The immutable facts of a run, plus the one mutable async-detection flag (`sawThenable`). `makeCall`
+ * is the single point that knows HOW to call the thing under test — `receiver[method](...args)` for a
+ * class method, `fn(...args)` for a free function (voice-agent L19) — so the oracle body below is
+ * target-agnostic: everything past the call (field invariants, both postcondition bands, throw
+ * classification) is identical whether a method or a function produced the value.
+ */
 interface OracleContext {
-    readonly isStatic: boolean;
-    readonly target: Function;
-    readonly method: string | symbol;
-    readonly subject?: () => object;
+    /** Invoke the thing under test once. May throw (a method/function crash) — the caller classifies it. */
+    readonly makeCall: (args: unknown[]) => CallResult;
     readonly fieldContracts: ReadonlyArray<ClassFieldContract>;
     readonly mode: OracleMode;
     readonly posts: ReadonlyArray<Postcondition>;
@@ -538,21 +735,19 @@ interface OracleOutcome {
  * than checking the Promise object as if it were the value.
  */
 function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOutcome | null {
-    const receiver: object = ctx.isStatic ? ctx.target : ctx.subject!();
-
-    let result: unknown;
+    let call: CallResult;
     try {
-        result = invoke(receiver, ctx.method, args);
+        call = ctx.makeCall(args);
     } catch (error) {
         return classifyThrow(error);
     }
 
-    if (isThenable(result)) {
+    if (isThenable(call.result)) {
         ctx.sawThenable = true;
         return null;
     }
 
-    return checkSettled(receiver, result, args, ctx);
+    return checkSettled(call.receiver, call.result, args, ctx);
 }
 
 /**
@@ -561,26 +756,24 @@ function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOutcome |
  * a robustness finding (the async twin of a sync throw). A synchronous return is checked directly.
  */
 async function oracleOutcomeAsync(args: unknown[], ctx: OracleContext): Promise<OracleOutcome | null> {
-    const receiver: object = ctx.isStatic ? ctx.target : ctx.subject!();
-
-    let result: unknown;
+    let call: CallResult;
     try {
-        result = invoke(receiver, ctx.method, args);
+        call = ctx.makeCall(args);
     } catch (error) {
         return classifyThrow(error);
     }
 
-    if (isThenable(result)) {
+    if (isThenable(call.result)) {
         let settled: unknown;
         try {
-            settled = await Promise.resolve(result);
+            settled = await Promise.resolve(call.result);
         } catch (error) {
             return classifyThrow(error);
         }
-        return checkSettled(receiver, settled, args, ctx);
+        return checkSettled(call.receiver, settled, args, ctx);
     }
 
-    return checkSettled(receiver, result, args, ctx);
+    return checkSettled(call.receiver, call.result, args, ctx);
 }
 
 /**
@@ -590,12 +783,15 @@ async function oracleOutcomeAsync(args: unknown[], ctx: OracleContext): Promise<
  * exactly as enforcement checks postconditions only after a clean `proceed()`.
  */
 function checkSettled(
-    receiver: object,
+    receiver: object | null,
     result: unknown,
     args: unknown[],
     ctx: OracleContext,
 ): OracleOutcome | null {
-    if (!ctx.isStatic) {
+    // Field invariants apply only to an instance method — the sole case with a receiver AND field
+    // contracts (a static method and a free function both have none). Gating on `fieldContracts` rather
+    // than an `isStatic` flag keeps this correct for all three, function included (voice-agent L19).
+    if (receiver && ctx.fieldContracts.length > 0) {
         const invariant = checkFieldInvariants(receiver, ctx.fieldContracts);
         if (invariant) return invariant;
     }
@@ -726,8 +922,8 @@ function describeFinding(
  * installed wrapper hand back the raw settled value un-post-checked, letting the driver evaluate both
  * bands itself. Precondition **guard** enforcement is untouched. A weak-invariant run suppresses nothing.
  */
-function withPostconditionProbe<T>(mode: OracleMode, run: () => T): T {
-    if (mode !== 'postcondition') return run();
+function withPostconditionProbe<T>(active: boolean, run: () => T): T {
+    if (!active) return run();
     const previous = getAssertEnforcement();
     setAssertEnforcement(false);
     try {
@@ -738,8 +934,8 @@ function withPostconditionProbe<T>(mode: OracleMode, run: () => T): T {
 }
 
 /** The async twin of {@link withPostconditionProbe}, holding the gate off across the awaited run. */
-async function withPostconditionProbeAsync<T>(mode: OracleMode, run: () => Promise<T>): Promise<T> {
-    if (mode !== 'postcondition') return run();
+async function withPostconditionProbeAsync<T>(active: boolean, run: () => Promise<T>): Promise<T> {
+    if (!active) return run();
     const previous = getAssertEnforcement();
     setAssertEnforcement(false);
     try {
@@ -997,11 +1193,13 @@ function declinedResult(
     reason: string,
     oraclesChecked: ReadonlyArray<string>,
     oracle: OracleMode,
+    free = false,
 ): FuzzResult {
     return {
         target,
         method,
         isStatic,
+        free,
         oracle,
         declined: true,
         reason,

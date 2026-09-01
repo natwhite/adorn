@@ -84,6 +84,48 @@ export interface ContractSpec {
     readonly observe?: {readonly kind?: SpanKind; readonly name?: string};
 }
 
+/**
+ * The metadata a {@link contract} wrapper carries about itself, hung off the returned function under
+ * {@link CONTRACT_META} so the spec is no longer closure-captured and unreadable (voice-agent L19). It
+ * makes a functional contract introspectable by exactly the parties the decorator path exposes a class
+ * to: `contractSpecOf(fn)` recovers what a function *promises*, and the fuzzer (`@adorn/test`) reads the
+ * raw target plus the normalised precondition/postcondition bands so it can fuzz a `contract()` function
+ * the way `fuzzMethod` fuzzes a decorated one — checking the bands as an independent oracle (DEC-034).
+ */
+export interface ContractMeta {
+    /** The declaration as written — what {@link contractSpecOf} hands back for introspection. */
+    readonly spec: ContractSpec;
+    /** The unwrapped function, so a driver can invoke it without the wrapper's own enforcement in the way. */
+    readonly target: AnyFn;
+    /** The `requires` band, normalised to {@link Precondition}s (the same the wrapper enforces). */
+    readonly pres: ReadonlyArray<Precondition>;
+    /** The `ensures` band, normalised to {@link Postcondition}s (the same the wrapper enforces). */
+    readonly posts: ReadonlyArray<Postcondition>;
+}
+
+/** Where {@link ContractMeta} is hung on a wrapper — a non-enumerable symbol, so it never shows up as data. */
+const CONTRACT_META = Symbol('adorn.contract.meta');
+
+/**
+ * Recover the full {@link ContractMeta} of a {@link contract} wrapper, or `undefined` for any other value.
+ * Package-internal (the raw `target` is not something a downstream consumer needs); the fuzzer reads it.
+ */
+export function contractMetaOf(fn: unknown): ContractMeta | undefined {
+    return typeof fn === 'function'
+        ? ((fn as unknown as Record<symbol, unknown>)[CONTRACT_META] as ContractMeta | undefined)
+        : undefined;
+}
+
+/**
+ * Recover the {@link ContractSpec} a {@link contract} wrapper enforces — what the function *promises* —
+ * or `undefined` if `fn` was not produced by `contract()`. The public half of {@link contractMetaOf}: it
+ * closes voice-agent L19's "the spec is closure-captured and unreadable by anyone, adorn's own fuzzer
+ * included" — a consumer holding only the wrapped function can now read its contract back.
+ */
+export function contractSpecOf(fn: unknown): ContractSpec | undefined {
+    return contractMetaOf(fn)?.spec;
+}
+
 const toPrecondition = (entry: ((...args: any[]) => boolean) | Precondition): Precondition =>
     typeof entry === 'function' ? {predicate: entry} : entry;
 
@@ -231,6 +273,18 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
         }
         return invoke();
     };
+
+    // Make the wrapper introspectable (voice-agent L19): preserve the wrapped function's own name (a bare
+    // `const wrapped = function () {}` would report `"wrapped"`, so a fuzz report could not say what it
+    // fuzzed), and hang the spec + raw target + normalised bands off it so the spec is no longer
+    // closure-captured and unreadable. The symbol is non-enumerable, so no serialiser or key-walk sees it.
+    Object.defineProperty(wrapped, 'name', {value: fn.name, configurable: true});
+    Object.defineProperty(wrapped, CONTRACT_META, {
+        value: {spec, target: fn, pres, posts} satisfies ContractMeta,
+        enumerable: false,
+        writable: false,
+        configurable: true,
+    });
 
     return wrapped as F;
 }

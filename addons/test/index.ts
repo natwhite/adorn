@@ -45,7 +45,11 @@ export type {Arbitrary, ConstraintArbitrary, ParameterArbitrary, GenerationStrat
 // are the async twins (fc.asyncProperty) that await the settled value before checking. These live ONLY
 // here — Phase B adds ZERO symbols to the root `index.ts` (fast-check isolation, DEC-019).
 export {fuzzMethod, fuzzClass, fuzzMethodAsync, fuzzClassAsync} from './oracle';
-export type {FuzzOptions, FuzzResult, FuzzFinding, FindingType, OracleMode} from './oracle';
+// The free-function entry points (voice-agent L19): fuzz a `contract()`-wrapped function — the shape a
+// zero-class codebase actually has — with the same oracle `fuzzMethod` runs, reading the spec the wrapper
+// now exposes (`contractSpecOf`). `fuzzFunctionAsync` is the async twin.
+export {fuzzFunction, fuzzFunctionAsync} from './oracle';
+export type {FuzzOptions, FuzzFunctionOptions, FuzzResult, FuzzFinding, FindingType, OracleMode} from './oracle';
 
 // The boundary report — a condition of shipping, not a nicety (§3).
 export {formatFuzzReport} from './report';

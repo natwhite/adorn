@@ -51,6 +51,16 @@ describe('parametric numeric generators are sound by construction', () => {
         const values = fc.sample(result.arbitrary!, {numRuns: SAMPLES, seed: 1}) as number[];
         expect(values.some(v => Number.isNaN(v) || !Number.isFinite(v))).toBe(false);
     });
+
+    it('a bare bound carries a float-domain note so an integer domain knows to stack Integer() (L21)', () => {
+        // `Between(0, 1439)` (minutes) is a *float* contract: `fc.double` samples denormals and fractions,
+        // sound but almost never the integers the author likely meant. The note is the honest signal — the
+        // one thing that told the consumer nothing before. Integer() itself carries no such note.
+        for (const bound of [Numbers.Between(0, 1439), Numbers.GreaterThanEqual(0), Numbers.LessThan(100)]) {
+            expect(arbitraryForConstraint(bound).note).toMatch(/float domain/);
+        }
+        expect(arbitraryForConstraint(Numbers.Integer()).note).toBeUndefined();
+    });
 });
 
 describe('parametric string generators are sound by construction', () => {
@@ -226,6 +236,52 @@ describe('composition — stacked constraints are a conjunction (foundation §4.
 
     it('a contradictory stack (number ∧ string) declines rather than pretending', () => {
         const constraints = [Numbers.GreaterThanEqual(0), Strings.NotEmpty()];
+        const plan = arbitraryForParameter(constraints, 0);
+        expect(plan.declined).toBe(true);
+        expect(plan.arbitrary).toBeNull();
+    });
+});
+
+describe('a stacked pattern filters from its own targeted base, not a broad one (voice-agent L20)', () => {
+    // "HH:MM", 24-hour — anchored, so `fc.stringMatching` produces exactly a five-char time string.
+    const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+    // Each case pairs a pattern with a second constraint the merged bounds base *could* express. Before
+    // the fix, `mergedBase` built a broad `fc.string` base (the pattern demoted to a filter), the
+    // conjunction accepted ~none of it, and the position starved into a decline. The targeted
+    // `stringMatching(TIME)` base the pattern already carries is the right thing to filter from.
+    const cases: Array<[string, ConstraintDescriptor[]]> = [
+        ['NotEmpty ∧ Matches(TIME)', [Strings.NotEmpty(), Strings.Matches(TIME)]],
+        ['Matches(TIME) ∧ NotEmpty  (order-independent)', [Strings.Matches(TIME), Strings.NotEmpty()]],
+        ['MaxLength(5) ∧ Matches(TIME)', [Strings.MaxLength(5), Strings.Matches(TIME)]],
+        ['Matches(TIME) ∧ Matches(/:/)  (narrower pattern wins)', [Strings.Matches(TIME), Strings.Matches(/:/)]],
+    ];
+
+    for (const [label, constraints] of cases) {
+        it(`${label} generates times instead of declining`, () => {
+            const plan = arbitraryForParameter(constraints, 0, 'at');
+            expect(plan.declined).toBe(false);
+            expect(plan.starved).toBe(false);
+            expect(plan.arbitrary).not.toBeNull();
+
+            const predicate = (v: unknown) => constraints.every(c => c.predicate(v));
+            assertAllAccepted(plan.arbitrary!, predicate);
+
+            // The values are real times, not merely "sound" — the base is the pattern, not a filter.
+            const values = fc.sample(plan.arbitrary!, {numRuns: 50, seed: 3}) as string[];
+            expect(values.every(v => TIME.test(v))).toBe(true);
+        });
+    }
+
+    it('reports the pattern base honestly — delegation with no effective filter (acceptance 1)', () => {
+        const plan = arbitraryForParameter([Strings.NotEmpty(), Strings.Matches(TIME)], 0);
+        expect(plan.strategy).toBe('delegation');
+        expect(plan.filtered).toBe(false);
+    });
+
+    it('a genuinely contradictory pattern stack still declines (soundness before coverage)', () => {
+        // A four-digit string can never be at most two characters — no base can generate the intersection.
+        const constraints = [Strings.Matches(/^\d{4}$/), Strings.MaxLength(2)];
         const plan = arbitraryForParameter(constraints, 0);
         expect(plan.declined).toBe(true);
         expect(plan.arbitrary).toBeNull();

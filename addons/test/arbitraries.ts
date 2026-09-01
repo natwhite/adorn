@@ -132,23 +132,26 @@ export function arbitraryForConstraint(descriptor: ConstraintDescriptor): Constr
     switch (constraint) {
         // --- numeric, parametric ------------------------------------------------
         case 'min':
-            return parametric(constraint, fc.double(finiteBounds({min: num(params.min)})));
+            return parametric(constraint, fc.double(finiteBounds({min: num(params.min)})), FLOAT_DOMAIN_NOTE);
         case 'max':
-            return parametric(constraint, fc.double(finiteBounds({max: num(params.max)})));
+            return parametric(constraint, fc.double(finiteBounds({max: num(params.max)})), FLOAT_DOMAIN_NOTE);
         case 'greaterThan':
             return parametric(
                 constraint,
                 fc.double(finiteBounds({min: num(params.exclusiveMin), minExcluded: true})),
+                FLOAT_DOMAIN_NOTE,
             );
         case 'lessThan':
             return parametric(
                 constraint,
                 fc.double(finiteBounds({max: num(params.exclusiveMax), maxExcluded: true})),
+                FLOAT_DOMAIN_NOTE,
             );
         case 'between':
             return parametric(
                 constraint,
                 fc.double(finiteBounds({min: num(params.min), max: num(params.max)})),
+                FLOAT_DOMAIN_NOTE,
             );
         case 'integer':
             return parametric(constraint, fc.integer());
@@ -398,8 +401,15 @@ export function arbitraryForParameter(
         };
     }
 
-    const acceptanceRate = measureAcceptance(base.arbitrary, predicate);
-    if (acceptanceRate === 0) {
+    // A residual constraint needs a filter — but the base to filter FROM must be the narrowest sound
+    // generator available, not merely the merged bounds base. A residual carries its own targeted base
+    // (a `matches` `stringMatching`, an `email`/`url` curated set, a `multipleOf` multiples stream),
+    // which is strictly more informative than a broad bounded one; discarding it for the broad base is
+    // exactly what silently starved a stacked pattern like `[NotEmpty(), Matches(TIME)]` (voice-agent
+    // L20). Weigh every residual's own base against the merged base and pick whichever base the full
+    // conjunction accepts the most of.
+    const chosen = chooseFilterBase(constraints, base, predicate);
+    if (!chosen || chosen.acceptance === 0) {
         return {
             index,
             name,
@@ -407,25 +417,82 @@ export function arbitraryForParameter(
             arbitrary: null,
             constraints: identities,
             filtered: true,
-            acceptanceRate,
+            acceptanceRate: chosen ? chosen.acceptance : 0,
             starved: true,
             declined: true,
-            note: 'generate-and-filter accepted none of its samples — the intersection is too narrow',
+            note: 'no available base generates the intersection — the stacked constraints are too narrow',
         };
     }
 
+    // A conjunction filter still guards soundness even when the chosen base is already exact (near-free
+    // — it rejects nothing). Report the base's own strategy when the filter does no work, and `filter`
+    // only when it actually narrows — the honest label the coverage report reads.
+    const exact = chosen.acceptance === 1;
     return {
         index,
         name,
-        strategy: 'filter',
-        arbitrary: base.arbitrary.filter(predicate),
+        strategy: exact ? chosen.strategy : 'filter',
+        arbitrary: chosen.arbitrary.filter(predicate),
         constraints: identities,
-        filtered: true,
-        acceptanceRate,
-        starved: acceptanceRate < STARVATION_THRESHOLD,
+        filtered: !exact,
+        acceptanceRate: exact ? undefined : chosen.acceptance,
+        starved: chosen.acceptance < STARVATION_THRESHOLD,
         declined: false,
-        note: base.note,
+        note: chosen.note,
     };
+}
+
+interface ChosenBase {
+    readonly arbitrary: Arbitrary<unknown>;
+    readonly acceptance: number;
+    readonly strategy: GenerationStrategy;
+    readonly note?: string;
+}
+
+/**
+ * Choose the base to filter for a multi-constraint position: the narrowest sound generator among the
+ * merged parametric bounds base and each *residual* constraint's own targeted base (a `matches`
+ * delegation, an `email`/`url` curated set, a `multipleOf` multiples stream, a `oneOf` membership).
+ *
+ * "Narrowest" is measured, not guessed — the base the full conjunction accepts the largest fraction of
+ * wins. That is what keeps a targeted base from being discarded for a broad bounded one just because a
+ * second constraint stacked on the position (voice-agent L20): `[NotEmpty(), Matches(TIME)]` picks the
+ * `stringMatching(TIME)` base (which the conjunction accepts wholly) instead of the broad
+ * `fc.string({minLength:1})` base (which it accepts ~none of, starving the pattern into a decline).
+ * Order-independent for the common case (one residual carries a targeted base), and correct even when
+ * two do — `[Matches(TIME), Matches(/:/)]` measures both and the narrower TIME base wins.
+ *
+ * Every candidate is a sound generator, so filtering any of them by the conjunction is sound; the
+ * choice is purely about which starves least. Declined residual identities (an unknown constraint)
+ * contribute no base and fall back to the merged base, exactly as before. Short-circuits on the first
+ * base the conjunction accepts wholly.
+ */
+function chooseFilterBase(
+    constraints: ReadonlyArray<ConstraintDescriptor>,
+    mergedBase: MergedBase,
+    predicate: (value: unknown) => boolean,
+): ChosenBase | null {
+    const candidates: Array<{arbitrary: Arbitrary<unknown>; strategy: GenerationStrategy; note?: string}> = [];
+    // Each residual constraint's own targeted base, when it has one.
+    for (const c of constraints) {
+        if (!isResidualConstraint(c.constraint)) continue;
+        const single = arbitraryForConstraint(c);
+        if (single.arbitrary && single.strategy !== 'declined') {
+            candidates.push({arbitrary: single.arbitrary, strategy: single.strategy, note: single.note});
+        }
+    }
+    // The merged parametric bounds base — the broad fallback, always a candidate.
+    candidates.push({arbitrary: mergedBase.arbitrary, strategy: 'filter', note: mergedBase.note});
+
+    let best: ChosenBase | null = null;
+    for (const candidate of candidates) {
+        const acceptance = measureAcceptance(candidate.arbitrary, predicate);
+        if (best === null || acceptance > best.acceptance) {
+            best = {arbitrary: candidate.arbitrary, acceptance, strategy: candidate.strategy, note: candidate.note};
+        }
+        if (acceptance === 1) break; // nothing can beat a base the conjunction accepts wholly
+    }
+    return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -549,25 +616,49 @@ function mergeStringLengths(constraints: ReadonlyArray<ConstraintDescriptor>): S
     return lengths;
 }
 
+/** The bound/length/integer identities the merged parametric base can express exactly. */
+const CAPTURABLE_BY_BASE: ReadonlySet<string> = new Set([
+    'min', 'max', 'greaterThan', 'lessThan', 'between', 'integer', 'minLength', 'maxLength', 'notEmpty',
+]);
+
 /**
- * True when every constraint's contribution is fully captured by the merged parametric base, so no
- * `.filter` is needed. Only bound/length/integer constraints are "capturable"; `multipleOf`, any
- * pattern, and any unknown identity leave a residual the base cannot express, and therefore need the
- * conjunction filter. Returns `true` when a residual exists.
+ * A constraint the merged parametric base cannot express — `multipleOf`, any pattern, `email`/`url`,
+ * `oneOf`, or an unknown identity. Such a constraint leaves a residual the base does not enforce, so
+ * the position needs the conjunction filter; and, crucially, it carries its *own* targeted base (a
+ * `stringMatching`, a curated set, a multiples stream) that is a better place to filter from than a
+ * broad bounded one — see `chooseFilterBase`.
+ */
+function isResidualConstraint(constraint: string): boolean {
+    return !CAPTURABLE_BY_BASE.has(constraint);
+}
+
+/**
+ * True when any constraint's contribution is beyond the merged parametric base, so a `.filter` is
+ * needed. Only bound/length/integer constraints are "capturable"; every residual leaves the base an
+ * incomplete generator for the conjunction.
  */
 function residualBeyondBounds(constraints: ReadonlyArray<ConstraintDescriptor>): boolean {
-    const capturable = new Set(['min', 'max', 'greaterThan', 'lessThan', 'between', 'integer']);
-    const capturableString = new Set(['minLength', 'maxLength', 'notEmpty']);
-    return constraints.some(c => !capturable.has(c.constraint) && !capturableString.has(c.constraint));
+    return constraints.some(c => isResidualConstraint(c.constraint));
 }
 
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
 
-function parametric(constraint: string, arbitrary: Arbitrary<unknown>): ConstraintArbitrary {
-    return {strategy: 'parametric', arbitrary, constraint};
+function parametric(constraint: string, arbitrary: Arbitrary<unknown>, note?: string): ConstraintArbitrary {
+    return note
+        ? {strategy: 'parametric', arbitrary, constraint, note}
+        : {strategy: 'parametric', arbitrary, constraint};
 }
+
+/**
+ * The honest label on a bare numeric bound (voice-agent L21). `fc.double` samples the whole float domain
+ * inside the bounds — including denormals — so `Between(0, 1439)` meaning "minutes" spends almost every
+ * sample in a degenerate sub-integer class while every signal reads green (sound, un-filtered, un-starved).
+ * Generation IS sound; the note is the one-line "say what you did" that tells a consumer whose domain is
+ * integers to stack `Integer()` (a clean parametric merge, no filter — see `mergedBase`'s integer branch).
+ */
+const FLOAT_DOMAIN_NOTE = 'float domain — stack Integer() to sample integers, not sub-integer floats';
 
 /**
  * A curated `constantFrom`, guarded by the descriptor's predicate so an unsound sample cannot leak
