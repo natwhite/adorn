@@ -226,6 +226,37 @@ union of every declaration on its prototype chain, and may only *strengthen*, ne
   cross-parameter precondition (`start < end`) checked before the call, blaming the caller. Like `@Ensures`,
   enforced-but-unprojectable.
 
+All four stack on one signature — parameter constraints, a cross-parameter precondition, and both
+postcondition bands:
+
+```ts
+import {Contract, Requires, Returns, Ensures, GreaterThanEqual, NumberContracts} from 'adorn';
+
+@Contract()
+class Bank {
+    @Requires((amount: number, balance: number) => amount <= balance, 'cannot overdraw')
+    @Returns(NumberContracts.GreaterThanEqual(0))   // reified postcondition: the new balance is never negative
+    @Ensures(                                        // closure postcondition (`result` is typed `unknown`, so narrow it)
+        (result: unknown, amount: number, balance: number) => (result as number) === balance - amount,
+        'balance drops by exactly the amount',
+    )
+    withdraw(@GreaterThanEqual(1) amount: number, @GreaterThanEqual(0) balance: number): number {
+        return balance - amount;
+    }
+}
+
+const bank = new Bank();
+bank.withdraw(30, 100);    // → 70
+bank.withdraw(150, 100);   // throws @Requires — the CALLER overdrew (checked before the body runs)
+bank.withdraw(0, 100);     // throws @GreaterThanEqual(1) on `amount` (a parameter constraint)
+// A body that returned a negative balance would throw @Returns — blaming the CALLEE, on the settled result.
+```
+
+`@Requires` runs before the call (caller-blamed); `@Returns`/`@Ensures` run on the settled result
+(callee-blamed). Only `@Returns` is reified, so only it projects into the generated docs and schema (as the
+return type). Runnable as [`examples/05-pre-post-conditions.ts`](examples/05-pre-post-conditions.ts), which
+also shows `@Returns` catching a buggy return value.
+
 `evaluatePostconditions` / `evaluatePreconditions` are exported because they are the *same* oracles the runtime
 wrapper runs — a fuzzer checking them checks exactly what enforcement enforces, with no drift.
 
