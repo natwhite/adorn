@@ -1,8 +1,9 @@
 # adorn
 
-> Decorators **adorn** a function with its contract. One declaration on the signature becomes the JSON Schema
-> an LLM reads, the runtime validation its arguments face, JSON Schema, documentation, and observability —
-> all descended from a single source, so they **don't drift by construction**, not by discipline.
+> Decorators **adorn** a function with its contract. One declaration on the signature becomes the tool schema
+> an LLM reads, the runtime validation its arguments face, the JSON Schema, the documentation, and the
+> observability — all **derived from that one declaration**, so those artifacts can't drift from each other by
+> construction, not by discipline.
 
 **Status: released — `0.1.0`, MIT.** `npm i adorn`. The public surface is pinned by a test (`index.ts`
 exports **101 values** plus the projection and observation model types); the suite is **1303 tests
@@ -32,6 +33,14 @@ signature where you can *see* it, enforced at the boundary of **every** function
 contract-driven development, and decorators are what make it ergonomic enough to be a paradigm rather than a
 chore. A contracted method *is* a tool definition, *is* a schema, *is* its own documentation — because all of
 them are read from the one thing you wrote on the signature.
+
+The decorator is the *ergonomic* form, not the foundation. What every projection reads is the **reified
+contract descriptor** — plain data — and decorators are simply the preferred TypeScript *adapter* that
+produces it. The same descriptors drive a fully decorator-free path (`contract()`, `toolSchemaFrom`,
+`Verify.check`, `defineConstraint` — DEC-074), so a codebase that can't or won't use legacy decorators adopts
+the identical enforcement and projections without them. Parameter decorators in particular are a
+legacy-TypeScript feature — the newer TC39 standard decorators don't cover parameters at all — so keeping the
+descriptor model constitutional is what makes decorator syntax a choice rather than a lock-in.
 
 ```ts
 import {
@@ -78,6 +87,15 @@ is exactly the object a function-calling API wants:
 
 Change `@LessThanEqual(7)` to `@LessThanEqual(14)` and *both* the schema the model reads and the check its
 reply faces move together, because there is only one of them, and it lives on the signature.
+
+> **What "no drift" does and doesn't cover.** The artifacts adorn *derives* — schema, validation, docs,
+> telemetry — cannot drift from each other, because they all read the one descriptor. The descriptor itself
+> still has to be authored to match the two channels adorn cannot see at runtime: the parameter's
+> **TypeScript type** (`@GreaterThan(0) x: string` compiles, and adorn then enforces `number` while the type
+> says `string`) and any **TypeScript default** (`@Default(10) x = 20` publishes `10` to the schema but runs
+> with `20` — see the gotcha box below). adorn removes drift *between the projections*; it does not reconcile
+> the descriptor with TypeScript's own view. A build-time linter that cross-checks the two is a plausible
+> future, but is not shipped.
 
 This is the strongest case for the paradigm, because the consumer of the schema is a machine that produces
 malformed input the moment the schema is wrong — a drifted *doc* misleads a human who can compensate; a drifted
@@ -137,10 +155,13 @@ work in two:
 >   mark it `@Optional()`/`@Default()` explicitly if you must write it. `@Default(x)` is still worth reaching
 >   for — after this, its job is publishing the default into the generated **schema** (a TS default is
 >   invisible to projections), not enforcement, which a plain TS default now handles on its own.
-> - **Constructor parameters can't carry decorators** (TS1239 — a constructor's `propertyKey` is `undefined`,
->   which the decorator signature rejects). Validate at construction with a **static factory**: a
->   `static of(...)` decorated with `@Validate()` that returns `new`; a private constructor then makes the
->   validated path the only path.
+> - **adorn's parameter decorators don't apply to constructor parameters yet** — an adorn limitation, not a
+>   TypeScript one. Legacy TypeScript *does* allow constructor-parameter decorators (dependency-injection
+>   frameworks rely on them); a constructor parameter's `propertyKey` is simply `undefined`. adorn's decorator
+>   signature types that key as `string | symbol` (and its registry keys off it), so applying one to a
+>   constructor parameter is a TS1239. Widening the signature and the registry key is a deferred feature; for
+>   now, validate at construction with a **static factory**: a `static of(...)` decorated with `@Validate()`
+>   that returns `new`; a private constructor then makes the validated path the only path.
 > - **A `static #private` member blocks a class decorator** (TS18036 — TypeScript's own limitation, though the
 >   error blames the decorator). Move the static private to module scope, or use `@Validate()` per method.
 >   Instance `#private` members are fine.
