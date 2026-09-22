@@ -14,6 +14,8 @@ import * as Numbers from '../../src/Contracts/number';
 import * as Strings from '../../src/Contracts/string';
 import * as Enums from '../../src/Contracts/enum';
 import * as Arrays from '../../src/Contracts/array';
+import {Nullable} from '../../src/Contracts/nullable';
+import {Dictionary, Fields, shapeConstraint} from '../../src/Contracts/object';
 import {arbitraryForConstraint, arbitraryForParameter} from './arbitraries';
 
 const SAMPLES = 500;
@@ -303,5 +305,178 @@ describe('zero constraints is a gap-fill position, not a decline', () => {
         expect(plan.strategy).toBe('gap-fill');
         expect(plan.arbitrary).toBeNull();
         expect(plan.declined).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Object / composite generation — completing arbitraryForConstraint's `default`
+// ---------------------------------------------------------------------------
+
+/** A descriptor whose only accepted value is a bigint — nothing this bridge generates, so it declines. */
+const bigintOnly = (id: string): ConstraintDescriptor =>
+    defineConstraint({
+        kind: 'generic',
+        constraint: id,
+        derive: () => (v: unknown) => typeof v === 'bigint',
+        describe: () => 'a bigint',
+    })({});
+
+describe('const generates exactly the single literal (DEC-056)', () => {
+    it('is parametric via fc.constant and produces only that value', () => {
+        const descriptor = Enums.Const(42);
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.strategy).toBe('parametric');
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: 20, seed: 1});
+        expect(values.every(v => v === 42)).toBe(true);
+    });
+});
+
+describe('string-format delegations are sound (uuid, date-time, ipv4)', () => {
+    const cases: Array<[string, ConstraintDescriptor]> = [
+        ['uuid', Strings.Uuid()],
+        ['date-time', Strings.DateTime()],
+        ['ipv4', Strings.Ipv4()],
+    ];
+    for (const [label, descriptor] of cases) {
+        it(`${label} delegates to fast-check and generates only accepted values`, () => {
+            const result = arbitraryForConstraint(descriptor);
+            expect(result.strategy).toBe('delegation');
+            expect(result.arbitrary).not.toBeNull();
+            assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        });
+    }
+});
+
+describe('nullable widens the item generator to also emit null (DEC-056)', () => {
+    it('generates both null and valid item values, all accepted', () => {
+        const descriptor = Nullable(Numbers.GreaterThanEqual(0));
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.arbitrary).not.toBeNull();
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: SAMPLES, seed: 4});
+        expect(values.some(v => v === null)).toBe(true);
+        expect(values.some(v => typeof v === 'number')).toBe(true);
+    });
+
+    it('falls back to only null when the item declines', () => {
+        const descriptor = Nullable(bigintOnly('addon-test-og-nullable-item'));
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.note).toMatch(/only null/);
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: 20, seed: 1});
+        expect(values.every(v => v === null)).toBe(true);
+    });
+});
+
+describe('dictionary recurses through the value generator (open Record<string, V>)', () => {
+    it('generates only valid maps of the value constraint', () => {
+        const descriptor = Dictionary(Strings.NotEmpty());
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.arbitrary).not.toBeNull();
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+    });
+
+    it('falls back to the empty map when the value declines', () => {
+        const descriptor = Dictionary(bigintOnly('addon-test-og-dict-value'));
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.note).toMatch(/empty map/);
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+    });
+});
+
+describe('shape generates a closed object over its fields (DEC-055)', () => {
+    it('generates objects with every contracted field present and valid', () => {
+        const descriptor = shapeConstraint({
+            fields: {
+                name: [Strings.NotEmpty().toJSON()],
+                age: [Numbers.GreaterThanEqual(0).toJSON(), Numbers.Integer().toJSON()],
+            },
+        });
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.strategy).toBe('parametric');
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: 50, seed: 2}) as Array<Record<string, unknown>>;
+        expect(values.every(o => typeof o.name === 'string' && typeof o.age === 'number')).toBe(true);
+    });
+
+    it('routes a stacked field through the parameter composer — no DEC-082 starvation inside a shape', () => {
+        const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+        const descriptor = shapeConstraint({
+            fields: {at: [Strings.NotEmpty().toJSON(), Strings.Matches(TIME).toJSON()]},
+        });
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.arbitrary).not.toBeNull();
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: 30, seed: 6}) as Array<{at: string}>;
+        expect(values.every(o => TIME.test(o.at))).toBe(true);
+    });
+
+    it('declines the whole shape when a required field cannot be generated', () => {
+        const descriptor = shapeConstraint({
+            fields: {ok: [Strings.NotEmpty().toJSON()], bad: [bigintOnly('addon-test-og-shape-field').toJSON()]},
+        });
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.strategy).toBe('declined');
+        expect(result.arbitrary).toBeNull();
+        expect(result.note).toMatch(/'bad'/);
+    });
+});
+
+describe('fields generates an optional-aware object literal (DEC-065)', () => {
+    it('always includes required fields, valid throughout', () => {
+        const descriptor = Fields({id: Numbers.GreaterThanEqual(1), label: Strings.NotEmpty()});
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.strategy).toBe('parametric');
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: 50, seed: 2}) as Array<Record<string, unknown>>;
+        expect(values.every(o => typeof o.id === 'number' && typeof o.label === 'string')).toBe(true);
+    });
+
+    it('sometimes omits an optional field; required fields are always present; all accepted', () => {
+        const descriptor = Fields({
+            id: Numbers.GreaterThanEqual(1),
+            note: {descriptor: Strings.NotEmpty(), optional: true},
+        });
+        const result = arbitraryForConstraint(descriptor);
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: SAMPLES, seed: 8}) as Array<Record<string, unknown>>;
+        expect(values.every(o => 'id' in o)).toBe(true);
+        expect(values.some(o => !('note' in o))).toBe(true);
+    });
+
+    it('declines on an ungeneratable REQUIRED field, but drops an ungeneratable OPTIONAL one', () => {
+        expect(arbitraryForConstraint(Fields({bad: bigintOnly('addon-test-og-fields-req')})).strategy).toBe('declined');
+
+        const descriptor = Fields({
+            ok: Strings.NotEmpty(),
+            bad: {descriptor: bigintOnly('addon-test-og-fields-opt'), optional: true},
+        });
+        const result = arbitraryForConstraint(descriptor);
+        expect(result.strategy).toBe('parametric');
+        assertAllAccepted(result.arbitrary!, descriptor.predicate);
+        const values = fc.sample(result.arbitrary!, {numRuns: 30, seed: 3}) as Array<Record<string, unknown>>;
+        expect(values.every(o => !('bad' in o))).toBe(true);
+    });
+});
+
+describe('composite nesting is bounded — deep nesting declines, never hangs', () => {
+    it('a shape nested past the depth bound declines cleanly instead of recursing without end', () => {
+        let d: ConstraintDescriptor = shapeConstraint({fields: {leaf: [Numbers.GreaterThanEqual(0).toJSON()]}});
+        for (let i = 0; i < 10; i++) {
+            d = shapeConstraint({fields: {nested: [d.toJSON()]}});
+        }
+        const result = arbitraryForConstraint(d);
+        expect(result.strategy).toBe('declined');
+        expect(result.arbitrary).toBeNull();
+    });
+
+    it('a shape within the depth bound still generates soundly', () => {
+        const inner = shapeConstraint({fields: {v: [Numbers.Integer().toJSON()]}});
+        const middle = shapeConstraint({fields: {inner: [inner.toJSON()]}});
+        const outer = shapeConstraint({fields: {middle: [middle.toJSON()]}});
+        const result = arbitraryForConstraint(outer);
+        expect(result.arbitrary).not.toBeNull();
+        assertAllAccepted(result.arbitrary!, outer.predicate);
     });
 });

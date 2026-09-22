@@ -95,6 +95,15 @@ const ACCEPTANCE_SAMPLE_SIZE = 200;
 /** Bound on the pre-image of `multipleOf`'s `map`, so `n * divisor` cannot overflow to Infinity. */
 const MULTIPLE_OF_RANGE = 1_000_000;
 
+/**
+ * Maximum nesting depth for composite generation (`shape`/`fields`/`dictionary`/`nullable`/`arrayOf`).
+ * A validly constructed descriptor is a finite tree — `Shape` reads and *serialises* another class's
+ * fields eagerly, so a self-referential cycle cannot be built — but a hand-crafted or pathologically
+ * deep `params` graph could recurse without bound. Past this depth the composite declines rather than
+ * hang (the "bounded instance or decline" discipline). Real DTOs nest far shallower.
+ */
+const MAX_COMPOSITE_DEPTH = 8;
+
 // ---------------------------------------------------------------------------
 // Curated sample sets (foundation §4.2 — "honest but partial", never general)
 // ---------------------------------------------------------------------------
@@ -125,7 +134,7 @@ const EMAIL_SAMPLES: ReadonlyArray<string> = [
  * `descriptor.predicate`. That is asserted directly in `arbitraries.test.ts`, the mirror of
  * `schema.test.ts`'s under-claim tests.
  */
-export function arbitraryForConstraint(descriptor: ConstraintDescriptor): ConstraintArbitrary {
+export function arbitraryForConstraint(descriptor: ConstraintDescriptor, depth = 0): ConstraintArbitrary {
     const constraint = descriptor.constraint;
     const params = descriptor.params as Record<string, unknown>;
 
@@ -212,8 +221,9 @@ export function arbitraryForConstraint(descriptor: ConstraintDescriptor): Constr
             // bridge, so an array of a generatable kind is sound (only valid arrays) and an array of a
             // declining kind declines. This recursion is the generation twin of `array.ts`'s
             // `derive`/`schema` recursion (DEC-031's ideal).
+            if (depth >= MAX_COMPOSITE_DEPTH) return declinedDepth(constraint);
             const p = params as {item: SerializedConstraint; minItems?: number; maxItems?: number};
-            const item = arbitraryForConstraint(constraintFromJSON(p.item));
+            const item = arbitraryForConstraint(constraintFromJSON(p.item), depth + 1);
             const opts: {minLength?: number; maxLength?: number} = {};
             if (p.minItems !== undefined) opts.minLength = p.minItems;
             if (p.maxItems !== undefined) opts.maxLength = p.maxItems;
@@ -244,6 +254,101 @@ export function arbitraryForConstraint(descriptor: ConstraintDescriptor): Constr
                 arbitrary: fc.array(item.arbitrary, opts).filter(descriptor.predicate),
                 constraint,
                 note: `fc.array over ${item.strategy} item arbitrary`,
+            };
+        }
+
+        // --- string formats, delegation (foundation §4.4) ----------------------
+        case 'uuid':
+            return delegation(constraint, fc.uuid(), descriptor.predicate);
+        case 'dateTime':
+            return delegation(
+                constraint,
+                // Bound to 4-digit years so `toISOString()` stays RFC-3339 (the strict predicate rejects the
+                // ±YYYYYY extended form); 1000–9999 also dodges the `Date.UTC` 0–99 → 1900s legacy remap.
+                fc
+                    .date({min: new Date(Date.UTC(1000, 0, 1)), max: new Date(Date.UTC(9999, 11, 31, 23, 59, 59))})
+                    .map(d => d.toISOString()),
+                descriptor.predicate,
+            );
+        case 'ipv4':
+            return delegation(constraint, fc.ipV4(), descriptor.predicate);
+
+        // --- the single literal (DEC-056) --------------------------------------
+        case 'const':
+            // Exactly the one value — sound by construction, the generation twin of `{const: v}`.
+            return parametric(constraint, fc.constant((params as {value: unknown}).value), 'the single literal');
+
+        // --- composition, recursive: null and objects (DEC-050/055/056) --------
+        case 'nullable': {
+            if (depth >= MAX_COMPOSITE_DEPTH) return declinedDepth(constraint);
+            const inner = arbitraryForConstraint(constraintFromJSON((params as {item: SerializedConstraint}).item), depth + 1);
+            if (inner.strategy === 'declined' || !inner.arbitrary) {
+                // The item cannot be generated; `null` is always admissible (the nullable predicate accepts it).
+                return {strategy: 'parametric', arbitrary: fc.constant(null), constraint, note: 'item declined; only null generated'};
+            }
+            return {
+                strategy: inner.strategy,
+                arbitrary: fc.option(inner.arbitrary, {nil: null}).filter(descriptor.predicate),
+                constraint,
+                note: `null | ${inner.strategy} item`,
+            };
+        }
+        case 'dictionary': {
+            if (depth >= MAX_COMPOSITE_DEPTH) return declinedDepth(constraint);
+            const value = arbitraryForConstraint(constraintFromJSON((params as {value: SerializedConstraint}).value), depth + 1);
+            if (value.strategy === 'declined' || !value.arbitrary) {
+                // No sound value generator — the empty map is always a valid Record<string, V> (no value violates it).
+                return {strategy: 'parametric', arbitrary: fc.constant({}), constraint, note: 'value declined; only the empty map generated'};
+            }
+            return {
+                strategy: value.strategy,
+                arbitrary: fc.dictionary(fc.string(), value.arbitrary).filter(descriptor.predicate),
+                constraint,
+                note: `Record<string, ${value.strategy} value>`,
+            };
+        }
+        case 'shape': {
+            if (depth >= MAX_COMPOSITE_DEPTH) return declinedDepth(constraint);
+            const shapeFields = (params as {fields: {[name: string]: SerializedConstraint[]}}).fields;
+            const model: {[name: string]: Arbitrary<unknown>} = {};
+            for (const name of Object.keys(shapeFields)) {
+                // Route each field's stack through the PARAMETER composer, not `arbitraryForConstraint`, so a
+                // stacked field like `[NotEmpty(), Matches(TIME)]` inherits DEC-082's narrowest-base choice.
+                const field = arbitraryForParameter(shapeFields[name].map(constraintFromJSON), 0, name, depth + 1);
+                if (field.declined || !field.arbitrary) {
+                    // Every contracted field is required (`isShape` rejects a missing/invalid field), so a field
+                    // with no sound generator makes the whole shape ungeneratable.
+                    return {strategy: 'declined', arbitrary: null, constraint, note: `field '${name}': ${field.note ?? 'declined'}`};
+                }
+                model[name] = field.arbitrary;
+            }
+            return {
+                strategy: 'parametric',
+                arbitrary: fc.record(model).filter(descriptor.predicate),
+                constraint,
+                note: `closed object, ${Object.keys(model).length} field(s)`,
+            };
+        }
+        case 'fields': {
+            if (depth >= MAX_COMPOSITE_DEPTH) return declinedDepth(constraint);
+            const litFields = (params as {fields: {[name: string]: {stack: SerializedConstraint[]; optional?: boolean}}}).fields;
+            const model: {[name: string]: Arbitrary<unknown>} = {};
+            const requiredKeys: string[] = [];
+            for (const name of Object.keys(litFields)) {
+                const spec = litFields[name];
+                const field = arbitraryForParameter(spec.stack.map(constraintFromJSON), 0, name, depth + 1);
+                if (field.declined || !field.arbitrary) {
+                    if (spec.optional === true) continue; // an ungeneratable OPTIONAL field is simply omitted
+                    return {strategy: 'declined', arbitrary: null, constraint, note: `required field '${name}': ${field.note ?? 'declined'}`};
+                }
+                model[name] = field.arbitrary;
+                if (spec.optional !== true) requiredKeys.push(name);
+            }
+            return {
+                strategy: 'parametric',
+                arbitrary: fc.record(model, {requiredKeys}).filter(descriptor.predicate),
+                constraint,
+                note: `object literal, ${requiredKeys.length} required / ${Object.keys(model).length - requiredKeys.length} optional`,
             };
         }
 
@@ -328,6 +433,7 @@ export function arbitraryForParameter(
     constraints: ReadonlyArray<ConstraintDescriptor>,
     index: number,
     name?: string,
+    depth = 0,
 ): ParameterArbitrary {
     const identities = constraints.map(c => c.constraint);
 
@@ -345,7 +451,7 @@ export function arbitraryForParameter(
     }
 
     if (constraints.length === 1) {
-        const single = arbitraryForConstraint(constraints[0]);
+        const single = arbitraryForConstraint(constraints[0], depth);
         if (single.strategy !== 'declined' && single.arbitrary) {
             return {
                 index,
@@ -408,7 +514,7 @@ export function arbitraryForParameter(
     // exactly what silently starved a stacked pattern like `[NotEmpty(), Matches(TIME)]` (voice-agent
     // L20). Weigh every residual's own base against the merged base and pick whichever base the full
     // conjunction accepts the most of.
-    const chosen = chooseFilterBase(constraints, base, predicate);
+    const chosen = chooseFilterBase(constraints, base, predicate, depth);
     if (!chosen || chosen.acceptance === 0) {
         return {
             index,
@@ -471,12 +577,13 @@ function chooseFilterBase(
     constraints: ReadonlyArray<ConstraintDescriptor>,
     mergedBase: MergedBase,
     predicate: (value: unknown) => boolean,
+    depth: number,
 ): ChosenBase | null {
     const candidates: Array<{arbitrary: Arbitrary<unknown>; strategy: GenerationStrategy; note?: string}> = [];
     // Each residual constraint's own targeted base, when it has one.
     for (const c of constraints) {
         if (!isResidualConstraint(c.constraint)) continue;
-        const single = arbitraryForConstraint(c);
+        const single = arbitraryForConstraint(c, depth);
         if (single.arbitrary && single.strategy !== 'declined') {
             candidates.push({arbitrary: single.arbitrary, strategy: single.strategy, note: single.note});
         }
@@ -684,6 +791,26 @@ function curatedFrom(
         arbitrary: fc.constantFrom(...valid),
         constraint,
         note: `curated sample set of ${valid.length} (partial by design, not general)`,
+    };
+}
+
+/** A delegated fast-check generator for a string format, guarded by the descriptor's own predicate. */
+function delegation(constraint: string, base: Arbitrary<unknown>, predicate: (v: unknown) => boolean): ConstraintArbitrary {
+    return {
+        strategy: 'delegation',
+        arbitrary: base.filter(predicate),
+        constraint,
+        note: 'fast-check delegation, guarded by the predicate',
+    };
+}
+
+/** Declined because composite nesting hit {@link MAX_COMPOSITE_DEPTH} — bounded generation, never a hang. */
+function declinedDepth(constraint: string): ConstraintArbitrary {
+    return {
+        strategy: 'declined',
+        arbitrary: null,
+        constraint,
+        note: `nested past the composite-generation depth bound (${MAX_COMPOSITE_DEPTH}); declined to stay bounded`,
     };
 }
 
