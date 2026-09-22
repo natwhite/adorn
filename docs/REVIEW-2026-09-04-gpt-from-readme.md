@@ -156,3 +156,22 @@ No code or README change is made by this document. A1/A2 await go; B/C are the o
   DEC-086/087 — the reviewer rediscovered it from the README alone, independent corroboration.
 - §2/§9 (reified core, decorators as adapter) is the direction DEC-074 already set with
   `contract()`; the finding is that the README under-sells it.
+
+---
+
+## Owner disposition — 2026-09-05
+
+**A1/A2 applied** (commit `5ef08a0`): the drift claim is scoped to the derived artifacts with an
+honest TS-type/TS-default caveat, the constructor-parameter bullet is re-attributed to adorn (a
+deferred feature, not a TypeScript prohibition), and a framing note now names the reified
+descriptor model as the core with decorators as the preferred adapter.
+
+**B1/B2/B3/C1 reviewed and deprioritized.** An adversarial pass found the review's *diagnoses*
+sharper than its *prescriptions*: the subpath restructure (B1) imports the add-ons' optional-dep
+rationale into a `tslib`-only core that doesn't have that constraint, and the export pin *aids*
+deletion rather than blocking it (only the narrow DEC-039 read surface is actually promised); a
+runtime object (B2) buys test/component isolation but *not* the per-request divergence it was
+pitched as fixing, absent AsyncLocalStorage the review rules out; the provider axis (B3) is
+speculative generality on one data point — the honest cheap fix would be a rename, deferred; and
+benchmarks (C1) are hygiene for a hot-path use adorn de-emphasizes, not a feature. As a
+README-only review it surfaced no load-bearing concern. Parked; not tracked as work.
