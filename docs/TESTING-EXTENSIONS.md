@@ -3,9 +3,10 @@
 **Status:** plan of record set 2026-09-21, after a four-angle planning pass and a consolidated
 adversarial review. The objective is **completing adorn's design-by-contract model for stateful
 objects**, with stateful-sequence and seam testing as the payoff. **Object/composite generation has
-shipped (DEC-088).** The state precondition is named **`@EnabledWhen`** (not `@Guard` — the latter
-collides with the `ContractTrust='guard'` term). The sections below are the vision and rationale; the
-**Plan of record** at the end is the current sequenced decisions and the adversary-driven scope changes.
+shipped (DEC-088), and the `@EnabledWhen` enforcement/reification band has shipped (DEC-089); the
+stateful-sequence driver that consumes it is next.** The state precondition is named **`@EnabledWhen`**
+(not `@Guard` — the latter collides with the `ContractTrust='guard'` term). The sections below are the
+vision and rationale; the **Plan of record** at the end is the sequenced decisions and scope changes.
 
 ## The reframe
 
@@ -154,9 +155,13 @@ revised** by what survived scrutiny.
 
 **Sequence:**
 1. **Object/composite generation — DONE (DEC-088).** The cheapest, consumer-requested, dependency-free win.
-2. **`@EnabledWhen` + stateful-sequence testing** — the novel, adorn-specific capability, built
-   *together* (the state precondition is inert without the sequence driver that consumes it). Start-state
-   from the **existing `subject` factory** first; enabledness derived from `@EnabledWhen`.
+2. **`@EnabledWhen` + stateful-sequence testing** — the novel, adorn-specific capability. The
+   **`@EnabledWhen` enforcement + reification band has SHIPPED (DEC-089)**: a receiver-reading state
+   precondition, a separate registry band so downstream tells enabledness (expected skip) from a
+   precondition (starvation), enforced last in the pre-call gate, with `evaluateEnabledness` exported as
+   the one oracle the driver will reuse. **Next: the stateful-sequence driver** that consumes it —
+   start-state from the **existing `subject` factory** first; enabledness read via
+   `getEffectiveEnablednessGuards` + `evaluateEnabledness` against a live receiver (no drift).
 3. **`old()` / pre-state** — only if the sequence driver shows the invariant-preservation floor needs a
    transition oracle, and then **sound by construction** (below).
 4. **Contract-diff projection + its `fragmentImplies` engine** — deferred; the seam static-checker's

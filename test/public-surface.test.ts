@@ -35,6 +35,7 @@ const PUBLIC_REGISTRY_READS = [
     'getEffectiveParameterConstraints',
     'getEffectivePostconditions',
     'getEffectivePreconditions',
+    'getEffectiveEnablednessGuards',
 ] as const;
 
 // The registry WRITERS. Every one is `export function` in ContractRegistry.ts and every one is
@@ -54,6 +55,7 @@ const INTERNAL_REGISTRY_WRITERS = [
     // Pre/postcondition + reified-return bands
     'recordPostcondition',
     'recordPrecondition',
+    'recordEnablednessGuard',
     'recordReturnConstraint',
     // Sensitivity band (DEC-PII-1/2)
     'recordFieldSensitivity',
@@ -83,6 +85,8 @@ const INTERNAL_KEY_HELPERS = [
     'getEffectivePostconditionKeys',
     'getPreconditionKeys',
     'getEffectivePreconditionKeys',
+    'getEnablednessKeys',
+    'getEffectiveEnablednessKeys',
     'getEffectiveReturnConstraints',
 ] as const;
 
@@ -185,7 +189,14 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // the wrapper and fuzz it as `fuzzMethod` fuzzes a class method. `contractMetaOf` (the richer read that
     // also exposes the raw target) stays package-internal. (The owner has waived the pre-publish surface
     // freeze; this pin now tracks the surface rather than fencing it — DEC-079 note, Round 5.)
-    const PINNED_VALUE_EXPORT_COUNT = 101;
+    //
+    // 101 → 104: `@EnabledWhen` state-reading enabledness guards (DEC-089) add THREE value exports — the
+    // `@EnabledWhen` method decorator, the public inheritance-aware read `getEffectiveEnablednessGuards`,
+    // and the `evaluateEnabledness` oracle (the same function enforcement runs against a live receiver, the
+    // future stateful-sequence driver's enabledness check). Its writer (`recordEnablednessGuard`) and the
+    // `*EnablednessKeys` helpers stay internal, exactly like the `@Requires` band.
+    // `EnablednessResult`/`EnablednessGuard`/`EnablednessPredicate` are type-only and do not count.
+    const PINNED_VALUE_EXPORT_COUNT = 104;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -382,6 +393,30 @@ describe('@Requires cross-parameter preconditions add exactly their intended pub
         expect(adorn).not.toHaveProperty('getPreconditionKeys');
         expect(adorn).not.toHaveProperty('getEffectivePreconditionKeys');
         expect(adorn).not.toHaveProperty('getPreconditions');
+    });
+});
+
+describe('@EnabledWhen enabledness guards add exactly their intended public exports (DEC-089)', () => {
+    // The +3 (101→104): the @EnabledWhen decorator, the getEffectiveEnablednessGuards read, the
+    // evaluateEnabledness oracle. The write surface (recordEnablednessGuard) and *EnablednessKeys helpers
+    // stay internal (Q-6), exactly as the @Requires band.
+    it('exports the @EnabledWhen method decorator', () => {
+        expect(typeof (adorn as Record<string, unknown>).EnabledWhen).toBe('function');
+    });
+
+    it('exports the evaluateEnabledness oracle (the sequence driver enabledness check)', () => {
+        expect(typeof (adorn as Record<string, unknown>).evaluateEnabledness).toBe('function');
+    });
+
+    it('exports the getEffectiveEnablednessGuards inheritance-aware read', () => {
+        expect(typeof (adorn as Record<string, unknown>).getEffectiveEnablednessGuards).toBe('function');
+    });
+
+    it('keeps the enabledness writer and key helpers OFF the root surface (Q-6)', () => {
+        expect(adorn).not.toHaveProperty('recordEnablednessGuard');
+        expect(adorn).not.toHaveProperty('getEnablednessKeys');
+        expect(adorn).not.toHaveProperty('getEffectiveEnablednessKeys');
+        expect(adorn).not.toHaveProperty('getEnablednessGuards');
     });
 });
 

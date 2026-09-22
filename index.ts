@@ -72,6 +72,7 @@ import {Log} from './src/MethodDecorators/Log';
 import {Time, setTimingSink} from './src/MethodDecorators/Time';
 import {Ensures} from './src/MethodDecorators/Ensures';
 import {Requires} from './src/MethodDecorators/Requires';
+import {EnabledWhen} from './src/MethodDecorators/EnabledWhen';
 import {Returns} from './src/MethodDecorators/Returns';
 import {Observe} from './src/MethodDecorators/Observe';
 export type {ObserveOptions} from './src/MethodDecorators/Observe';
@@ -131,8 +132,9 @@ import {
     getFieldContract, getFieldContracts, getFieldContractsForClass,
     getEffectiveFieldConstraints, getEffectiveFieldContract,
     getEffectiveContract, getEffectiveParameterConstraints,
-    getEffectivePostconditions, getEffectivePreconditions,
+    getEffectivePostconditions, getEffectivePreconditions, getEffectiveEnablednessGuards,
 } from './src/Core/ContractRegistry';
+export type {EnablednessGuard, EnablednessPredicate} from './src/Core/ContractRegistry';
 
 // --- Postcondition evaluation (DEC-032) -----------------------------------
 // `evaluatePostconditions` is the SAME function the runtime wrapper calls, so a fuzzer
@@ -143,6 +145,11 @@ export type {PostconditionResult} from './src/Core/Postconditions';
 // runtime wrapper calls, so a fuzzer that filters generated args by it checks exactly what enforcement runs.
 import {evaluatePreconditions} from './src/Core/Preconditions';
 export type {PreconditionResult} from './src/Core/Preconditions';
+// `@EnabledWhen` state-reading enabledness guards (DEC-089). `evaluateEnabledness` is the SAME function
+// the runtime wrapper calls against a live receiver, so the future stateful-sequence driver checks exactly
+// what enforcement runs — no drift.
+import {evaluateEnabledness} from './src/Core/Enabledness';
+export type {EnablednessResult} from './src/Core/Enabledness';
 
 // --- Projections ----------------------------------------------------------
 import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
@@ -318,6 +325,12 @@ export {
     // first writer. Enforced before the call (caller-blamed), consumed by a fuzzer as an argument filter;
     // like `@Ensures` it is a closure, so it is enforced-but-UNPROJECTABLE (emits nothing to docs/schema).
     Requires,
+    // `@EnabledWhen((self,...args)=>bool)` (DEC-089) — state-reading enabledness guards, the receiver-aware
+    // sibling of @Requires. Enforced before the call (caller-blamed when the guard returns false; a guard
+    // that THROWS surfaces as an author defect, unchanged). A band SEPARATE from @Requires so downstream
+    // tells enabledness (an expected "not enabled here" skip) from a precondition (a starvation signal);
+    // like @Requires it is a closure, so it is enforced-but-UNPROJECTABLE.
+    EnabledWhen,
 
     /**
      * BREAKING (P1.3) — required on any class using parameter constraints.
@@ -377,12 +390,14 @@ export {
     // and Q-6 makes every registry export semver-relevant.
     getEffectiveFieldConstraints, getEffectiveFieldContract,
     getEffectiveContract, getEffectiveParameterConstraints,
-    getEffectivePostconditions, getEffectivePreconditions,
+    getEffectivePostconditions, getEffectivePreconditions, getEffectiveEnablednessGuards,
 
     // The postcondition oracle — the same evaluator the runtime wrapper runs, exposed so a
     // fuzzer (Phase B) checks exactly what enforcement enforces. `evaluatePreconditions` is its
     // input-side twin (DEC-057): a fuzzer filters generated args through the same function enforcement runs.
-    evaluatePostconditions, evaluatePreconditions,
+    // `evaluateEnabledness` (DEC-089) is the state-reading twin: the sequence driver reads it off the same
+    // effective band and evaluates it against a live receiver, matching enforcement byte-for-byte.
+    evaluatePostconditions, evaluatePreconditions, evaluateEnabledness,
 
     // Projections: documentation generated from recorded contracts
     documentClass, documentContracts, renderMarkdown, generateMarkdown,

@@ -57,15 +57,19 @@
  */
 
 import {
+    EnablednessGuard,
     getContract,
     getContracts,
     getEffectiveContract,
     getEffectiveContractKeys,
+    getEffectiveEnablednessGuards,
+    getEffectiveEnablednessKeys,
     getEffectivePostconditionKeys,
     getEffectivePostconditions,
     getEffectivePreconditionKeys,
     getEffectivePreconditions,
     getEffectiveReturnConstraints,
+    getEnablednessKeys,
     getPostconditionKeys,
     getPreconditionKeys,
     markInstalled,
@@ -79,6 +83,7 @@ import {detectUnsatisfiableStack} from '../../Core/unsatisfiable';
 import {shouldDiscloseValue} from '../../Core/redaction';
 import {evaluatePostconditions, postconditionMessage} from '../../Core/Postconditions';
 import {evaluatePreconditions, preconditionMessage} from '../../Core/Preconditions';
+import {evaluateEnabledness, enablednessMessage} from '../../Core/Enabledness';
 import {
     applyViolationPolicy,
     ContractTrust,
@@ -203,11 +208,12 @@ export function Validate(options?: TrustOptions): MethodDecorator {
         // i.e. `@Ensures`/`@Returns` must sit *below* `@Validate()` in source. Class-level `@Contract()`
         // runs last and has no such caveat (see the `@Ensures`/`@Returns` docs).
         const pres = getEffectivePreconditions(target, propertyKey);
+        const guards = getEffectiveEnablednessGuards(target, propertyKey);
         const posts = getEffectivePostconditions(target, propertyKey);
         const returns = getEffectiveReturnConstraints(target, propertyKey);
-        if (!enforce && pres.length === 0 && posts.length === 0 && returns.length === 0) {
+        if (!enforce && pres.length === 0 && guards.length === 0 && posts.length === 0 && returns.length === 0) {
             // Nothing recorded. Returning the descriptor untouched keeps `@Validate()` harmless on
-            // a method that has neither parameter constraints nor pre/postconditions (yet).
+            // a method that has neither parameter constraints nor pre/postconditions/guards (yet).
             return descriptor;
         }
 
@@ -215,7 +221,7 @@ export function Validate(options?: TrustOptions): MethodDecorator {
         // second one (plan §5). Detected here off the method being wrapped — zero per-call cost.
         const observed = ownsCompletion(original);
         const decorate = CreateMethodDecorator(
-            enforcementBehavior(enforce, pres, posts, returns, target, propertyKey, trust, observed),
+            enforcementBehavior(enforce, pres, guards, posts, returns, target, propertyKey, trust, observed),
         );
         const result = decorate(target, propertyKey, descriptor as any) || descriptor;
 
@@ -282,6 +288,7 @@ function installOn(host: object, trust: ContractTrust): void {
     getStagedMethodKeys(host).forEach(key => own.add(key));
     getPostconditionKeys(host).forEach(key => own.add(key));
     getPreconditionKeys(host).forEach(key => own.add(key));
+    getEnablednessKeys(host).forEach(key => own.add(key));
 
     const keys = new Set<MethodKey>(own);
 
@@ -290,6 +297,7 @@ function installOn(host: object, trust: ContractTrust): void {
     getEffectiveStagedMethodKeys(host).forEach(key => inherited.add(key));
     getEffectivePostconditionKeys(host).forEach(key => inherited.add(key));
     getEffectivePreconditionKeys(host).forEach(key => inherited.add(key));
+    getEffectiveEnablednessKeys(host).forEach(key => inherited.add(key));
 
     inherited.forEach(key => {
         if (own.has(key)) return;
@@ -322,9 +330,10 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
 
     const enforce = buildParameterEnforcement(host, key, original);
     const pres = getEffectivePreconditions(host, key);
+    const guards = getEffectiveEnablednessGuards(host, key);
     const posts = getEffectivePostconditions(host, key);
     const returns = getEffectiveReturnConstraints(host, key);
-    if (!enforce && pres.length === 0 && posts.length === 0 && returns.length === 0) return;
+    if (!enforce && pres.length === 0 && guards.length === 0 && posts.length === 0 && returns.length === 0) return;
 
     // GAP-20 (round-3 §3): warn at install if a parameter stacks a container constraint with an
     // `@OneOf`/`@Const` — an always-false, unsatisfiable conjunction that projects a plausible schema.
@@ -336,7 +345,7 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
     installMethodWrapper(
         host,
         key,
-        enforcementBehavior(enforce, pres, posts, returns, host, key, trust, observed),
+        enforcementBehavior(enforce, pres, guards, posts, returns, host, key, trust, observed),
     );
     noteInstalled(host, key);
 }
@@ -431,6 +440,7 @@ const POSTCONDITION_TRUST: ContractTrust = 'assert';
 function enforcementBehavior(
     enforce: ((context: InvocationContext) => void) | undefined,
     pres: ReadonlyArray<Precondition>,
+    guards: ReadonlyArray<EnablednessGuard>,
     posts: ReadonlyArray<Postcondition>,
     returns: ReadonlyArray<ConstraintDescriptor>,
     host: object,
@@ -462,6 +472,8 @@ function enforcementBehavior(
 
     // The `@Requires` closure band makes the before-call cross-parameter stage live.
     const hasPreChecks = pres.length > 0;
+    // The `@EnabledWhen` state-guard band makes the before-call enabledness stage live (DEC-089).
+    const hasEnablednessChecks = guards.length > 0;
     // Either postcondition band makes the after-call stage live.
     const hasPostChecks = posts.length > 0 || returns.length > 0;
 
@@ -491,7 +503,7 @@ function enforcementBehavior(
         // --- preconditions ---------------------------------------------------
         // Reified per-position constraints AND cross-parameter `@Requires` both run here, before the
         // call, under the same caller-blaming `trust` gate (a precondition guards untrusted input).
-        if ((enforce || hasPreChecks) && shouldEnforce(trust)) {
+        if ((enforce || hasPreChecks || hasEnablednessChecks) && shouldEnforce(trust)) {
             if (enforce) {
                 try {
                     enforce(context);
@@ -518,6 +530,13 @@ function enforcementBehavior(
             // parameter violation is reported first. Same caller blame; low-fidelity facts (a closure
             // carries no identity, SMELL-14), so it degrades to `_OTHER` exactly as `@Ensures` does.
             if (hasPreChecks) checkPreconditions(pres, context.args, callerSite, observeViolation);
+            // `@EnabledWhen` state guards (DEC-089) — run LAST in the pre-call gate, on already-validated
+            // args, so a guard only ever sees well-formed input (fewer spurious guard throws) and the
+            // ordering matches the driver model "generate arg-valid inputs, THEN check enabledness against
+            // state". Reads the receiver (`context.thisArg`), the one thing a `@Requires` cannot.
+            if (hasEnablednessChecks) {
+                checkEnabledness(guards, context.thisArg, context.args, callerSite, observeViolation);
+            }
         }
 
         // Nothing to check after the call, or postconditions are stripped in this build.
@@ -632,6 +651,60 @@ function checkPreconditions(
     const error = new Error(message);
     // Low-fidelity by nature: a `@Requires` closure carries no identity or params (Q-3, SMELL-14), so it
     // degrades to the `_OTHER` fallback — no `constraint` dimension. Stated, not hidden.
+    if (observe) {
+        observe(
+            {
+                constraint: OTHER_CONSTRAINT,
+                kind: 'generic',
+                params: {},
+                expectation: outcome.failed.description || '',
+                parameterIndex: RETURN_INDEX,
+                trust: site.trust,
+                blame: site.blame,
+            },
+            error,
+        );
+    }
+    applyViolationPolicy(error, site);
+}
+
+/**
+ * Evaluate the `@EnabledWhen` state guards against the LIVE receiver and the call's arguments, and route
+ * the outcome (DEC-089). Calls the exact {@link evaluateEnabledness} the future stateful-sequence driver
+ * calls to decide which commands are enabled — one oracle, checked and enforced through the same function
+ * (no drift, DEC-006). Two outcomes, deliberately distinct:
+ *
+ * - **A guard cleanly returns `false`** → the call is legitimately *not enabled* in this state → a
+ *   caller-blamed "Not enabled" error, routed through the same violation policy `@Requires` uses (so
+ *   `'warn'`/handler can suppress and let the call proceed). Emits a low-fidelity `_OTHER` observation,
+ *   exactly as a `@Requires`/`@Ensures` closure degrades.
+ * - **A guard THROWS** → the guard itself is defective (guards must be total over reachable state, so a
+ *   throw is an author bug, not the caller's fault). The original error propagates **unchanged** — not
+ *   rewritten to caller-blame "not enabled", and NOT routed through the violation policy (a guard defect
+ *   is not a contract violation to be suppressed). This diverges from `@Requires`, which caught-and-blamed
+ *   a throwing predicate; the divergence keeps the throw-vs-false signal the driver classifies as a
+ *   finding, and stops a broken guard from silently blaming callers.
+ */
+function checkEnabledness(
+    guards: ReadonlyArray<EnablednessGuard>,
+    self: unknown,
+    args: ReadonlyArray<unknown>,
+    site: ViolationSite,
+    observe?: (facts: ViolationFacts, error: unknown) => void,
+): void {
+    const outcome = evaluateEnabledness(guards, self, args);
+    if (outcome.ok) return;
+
+    if (outcome.error !== undefined) {
+        // The guard threw — an author defect. Surface it as-is (a callee/author fault, like a bug in the
+        // method body); do NOT rewrite blame or suppress it via the violation policy.
+        throw outcome.error;
+    }
+
+    const message = enablednessMessage(site.owner, site.member, outcome.failed);
+    const error = new Error(message);
+    // Low-fidelity by nature: an `@EnabledWhen` closure carries no identity or params, so it degrades to
+    // the `_OTHER` fallback — no `constraint` dimension. Stated, not hidden (SMELL-14, like `@Requires`).
     if (observe) {
         observe(
             {

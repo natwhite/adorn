@@ -175,6 +175,32 @@ export interface Precondition {
 }
 
 /**
+ * The predicate an **enabledness guard** (`@EnabledWhen`) evaluates: the RECEIVER first (so it can read
+ * `this`/object state), then the call's arguments in order. `(self, ...args) => boolean`. The
+ * receiver-first shape is the whole difference from {@link PreconditionPredicate} — a guard reads state,
+ * a `@Requires` precondition never can (it is evaluated with no receiver).
+ */
+export type EnablednessPredicate = (self: any, ...args: any[]) => boolean;
+
+/**
+ * One recorded state-reading precondition (`@EnabledWhen`, DEC-089) — the "guard" band. A closure, like
+ * {@link Precondition}, for the same two reasons: it relates state+args, and it carries no
+ * identity/serialisable params — so it is enforceable and fuzzable but **not** projectable. It is kept
+ * in a band **separate** from `@Requires` because the two carry opposite operational meaning downstream
+ * code must tell apart: a failed `@Requires` is a generation/STARVATION signal and constrains an input
+ * schema; a failed `@EnabledWhen` is an EXPECTED SKIP ("correctly not enabled in this state now") and is
+ * never schema-projected. `band` is the self-describing tag on the record (contracts-as-data), named
+ * `band` — not `kind` — to avoid colliding with {@link ConstraintKind}.
+ */
+export interface EnablednessGuard {
+    readonly predicate: EnablednessPredicate;
+    /** Optional human phrase for the "not enabled" message, e.g. "balance covers the amount". */
+    readonly description?: string;
+    /** Self-describing discriminant: this record is the enabledness band, not `@Requires`. */
+    readonly band: 'enabledness';
+}
+
+/**
  * Everything recorded about one contracted **field** (GAP-9).
  *
  * ## Why the registry needs a field band at all
@@ -929,6 +955,144 @@ function preconditionEntry(target: ContractTarget, key: MethodKey): Precondition
     if (!byKey) {
         byKey = new Map<MethodKey, Precondition[]>();
         preconditionsByTarget.set(target, byKey);
+    }
+    let list = byKey.get(key);
+    if (!list) {
+        list = [];
+        byKey.set(key, list);
+    }
+    return list;
+}
+
+// --- enabledness band (`@EnabledWhen`, DEC-089) — the state-reading, receiver-aware guard band --------
+
+/**
+ * State-reading enabledness guards (`@EnabledWhen`), keyed by target then method. A **separate** closure
+ * band from {@link preconditionsByTarget} — structurally distinct so downstream reads a *different
+ * function* ({@link getEffectiveEnablednessGuards} vs {@link getEffectivePreconditions}) and the
+ * type system, not a field test, keeps enabledness tellable-apart from an arg-only precondition. The
+ * separation is also forced by the signature: a guard is `(self, ...args) => boolean` and cannot share
+ * {@link Precondition}'s `(...args) => boolean` storage.
+ */
+let enablednessByTarget = new WeakMap<ContractTarget, Map<MethodKey, EnablednessGuard[]>>();
+
+const NO_ENABLEDNESS: ReadonlyArray<EnablednessGuard> = Object.freeze([]);
+
+/**
+ * Enabledness guards declared **directly** on `target[key]`. Own-scoped, the twin of
+ * {@link getPreconditions}. For what is enforced, use {@link getEffectiveEnablednessGuards}.
+ */
+export function getEnablednessGuards(target: ContractTarget, key: MethodKey): ReadonlyArray<EnablednessGuard> {
+    if (!isRegisterableTarget(target)) return NO_ENABLEDNESS;
+    const list = enablednessByTarget.get(target)?.get(key);
+    return list ? list : NO_ENABLEDNESS;
+}
+
+/**
+ * Every enabledness guard in force on `target[key]`, base-most class first — the read the installer plans
+ * from AND the read the future stateful-sequence driver consumes to decide which commands are enabled.
+ * Mechanism identical to {@link getEffectivePreconditions}: own-scoped storage unioned down the prototype
+ * chain (DEC-022), so a subclass can only add conjuncts (strengthen the guard).
+ */
+export function getEffectiveEnablednessGuards(
+    target: ContractTarget,
+    key: MethodKey,
+): ReadonlyArray<EnablednessGuard> {
+    if (!isRegisterableTarget(target)) return NO_ENABLEDNESS;
+
+    let nearest: EnablednessGuard[] | undefined;
+    let bands: EnablednessGuard[][] | undefined;
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const list = enablednessByTarget.get(cursor)?.get(key);
+        if (!list || list.length === 0) continue;
+
+        if (!nearest) {
+            nearest = list;
+        } else {
+            if (!bands) bands = [nearest];
+            bands.push(list);
+        }
+    }
+
+    if (!nearest) return NO_ENABLEDNESS;
+    if (!bands) return nearest;
+
+    const merged: EnablednessGuard[] = [];
+    for (let level = bands.length - 1; level >= 0; level--) {
+        const band = bands[level];
+        for (let i = 0; i < band.length; i++) merged.push(band[i]);
+    }
+    return merged;
+}
+
+/** Method keys carrying enabledness guards on `target` (own) — the twin of {@link getPreconditionKeys}. */
+export function getEnablednessKeys(target: ContractTarget): MethodKey[] {
+    if (!isRegisterableTarget(target)) return [];
+    const byKey = enablednessByTarget.get(target);
+    if (!byKey) return [];
+    const keys: MethodKey[] = [];
+    byKey.forEach((_list, key) => keys.push(key));
+    return keys;
+}
+
+/**
+ * Method keys carrying enabledness guards anywhere on `target`'s prototype chain — the twin of
+ * {@link getEffectivePreconditionKeys}, needed by the installer so a subclass override of a method whose
+ * guard only an ancestor declared does not escape the check.
+ */
+export function getEffectiveEnablednessKeys(target: ContractTarget): MethodKey[] {
+    if (!isRegisterableTarget(target)) return [];
+
+    const keys: MethodKey[] = [];
+    const seen = new Set<MethodKey>();
+
+    for (let cursor: object | null = target; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+        const byKey = enablednessByTarget.get(cursor);
+        if (!byKey) continue;
+        byKey.forEach((_list, key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            keys.push(key);
+        });
+    }
+
+    return keys;
+}
+
+/**
+ * Record an enabledness guard against `target[key]`. A method may carry several, recorded in declaration
+ * order (the `@EnabledWhen` decorator passes `'prepend'` to normalise `__decorate`'s reversal, exactly as
+ * `@Requires`/`recordPrecondition`). The twin of {@link recordPrecondition}.
+ */
+export function recordEnablednessGuard(
+    target: ContractTarget,
+    key: MethodKey,
+    guard: EnablednessGuard,
+    position: ConstraintPosition = 'append',
+): void {
+    if (!guard || typeof guard.predicate !== 'function') {
+        throw new TypeError('recordEnablednessGuard: expected a { predicate } object with a function predicate');
+    }
+    if (position !== 'append' && position !== 'prepend') {
+        throw new TypeError(
+            `recordEnablednessGuard: position must be 'append' or 'prepend', received ${String(position)}`,
+        );
+    }
+
+    const list = enablednessEntry(target, key);
+    if (position === 'prepend') list.unshift(guard);
+    else list.push(guard);
+}
+
+function enablednessEntry(target: ContractTarget, key: MethodKey): EnablednessGuard[] {
+    if (!isRegisterableTarget(target)) {
+        throw new TypeError('ContractRegistry: target must be an object (a prototype or constructor)');
+    }
+    let byKey = enablednessByTarget.get(target);
+    if (!byKey) {
+        byKey = new Map<MethodKey, EnablednessGuard[]>();
+        enablednessByTarget.set(target, byKey);
     }
     let list = byKey.get(key);
     if (!list) {
@@ -2053,6 +2217,7 @@ export function resetRegistry(): void {
     fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
     postconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Postcondition[]>>();
     preconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Precondition[]>>();
+    enablednessByTarget = new WeakMap<ContractTarget, Map<MethodKey, EnablednessGuard[]>>();
     contractedClasses = new Set<Function>();
     fieldSensitivityByTarget = new WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>();
     parameterSensitivityByTarget = new WeakMap<
