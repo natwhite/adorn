@@ -71,7 +71,11 @@ describe('the runtime export surface is unchanged by the add-on', () => {
             // Phase B's async twins (DEC-034) live ONLY in addons/test — the root surface is unchanged.
             'fuzzMethodAsync',
             'fuzzClassAsync',
+            // The stateful call-sequence tester (DEC-090) — also add-on-only, never on the root surface.
+            'fuzzSequence',
+            'fuzzSequenceAsync',
             'formatFuzzReport',
+            'formatSequenceReport',
             'arbitraryForConstraint',
             'arbitraryForParameter',
         ];

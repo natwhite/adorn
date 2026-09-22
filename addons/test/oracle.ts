@@ -105,7 +105,13 @@ import {contractMetaOf} from '../../src/Functional/contract';
 export type OracleMode = 'weak-invariant' | 'postcondition';
 
 export type FindingType =
-    'unexpected-throw' | 'contract-violation' | 'invariant-violation' | 'postcondition-violation';
+    | 'unexpected-throw'
+    | 'contract-violation'
+    | 'invariant-violation'
+    | 'postcondition-violation'
+    // A `@EnabledWhen` guard that THREW while being evaluated during a sequence run (DEC-090) — a defect
+    // in the guard (guards must be total over reachable state), distinct from a clean not-enabled skip.
+    | 'enabledness-guard-throw';
 
 /** A reproducible counterexample. The seed is the whole point — a finding you cannot replay is noise. */
 export interface FuzzFinding {
@@ -314,7 +320,10 @@ export function fuzzFunction(fn: Function, options: FuzzFunctionOptions = {}): F
  * async twin of a sync throw), never a false postcondition pass. Also handles a synchronous return, so it
  * is a safe superset; `fuzzFunction` stays the sync entry that declines an async function loudly.
  */
-export async function fuzzFunctionAsync(fn: Function, options: FuzzFunctionOptions = {}): Promise<FuzzResult> {
+export async function fuzzFunctionAsync(
+    fn: Function,
+    options: FuzzFunctionOptions = {},
+): Promise<FuzzResult> {
     const p = prepareFunctionRun(fn, options);
     if (p.declined) return p.declined;
     return runAsyncCheck(p, false);
@@ -430,7 +439,15 @@ function prepareRun(options: FuzzOptions): PreparedRun {
     const gate = preconditionGate(baseArgs, pres);
     if (gate.declined) {
         return {
-            declined: declinedResult(className, methodName, isStatic, coverage, gate.reason!, oraclesChecked, mode),
+            declined: declinedResult(
+                className,
+                methodName,
+                isStatic,
+                coverage,
+                gate.reason!,
+                oraclesChecked,
+                mode,
+            ),
         };
     }
     const argsArbitrary = gate.arbitrary!;
@@ -540,7 +557,9 @@ function prepareFunctionRun(fn: Function, options: FuzzFunctionOptions): Prepare
     const baseArgs = buildArgsArbitrary(coverage, gapFill);
     const gate = preconditionGate(baseArgs, meta.pres);
     if (gate.declined) {
-        return {declined: declinedResult(name, '', false, coverage, gate.reason!, oraclesChecked, mode, true)};
+        return {
+            declined: declinedResult(name, '', false, coverage, gate.reason!, oraclesChecked, mode, true),
+        };
     }
     const argsArbitrary = gate.arbitrary!;
 
@@ -713,7 +732,7 @@ function assembleFinding(
 
 /** What one call produced: the settled `result`, and the `receiver` whose field invariants to re-check
  *  (the fresh instance for an instance method; `null` for a static method or a free function). */
-interface CallResult {
+export interface CallResult {
     readonly receiver: object | null;
     readonly result: unknown;
 }
@@ -725,7 +744,7 @@ interface CallResult {
  * target-agnostic: everything past the call (field invariants, both postcondition bands, throw
  * classification) is identical whether a method or a function produced the value.
  */
-interface OracleContext {
+export interface OracleContext {
     /** Invoke the thing under test once. May throw (a method/function crash) — the caller classifies it. */
     readonly makeCall: (args: unknown[]) => CallResult;
     readonly fieldContracts: ReadonlyArray<ClassFieldContract>;
@@ -736,7 +755,7 @@ interface OracleContext {
     sawThenable: boolean;
 }
 
-interface OracleOutcome {
+export interface OracleOutcome {
     readonly type: FindingType;
     readonly message: string;
     readonly field?: string;
@@ -750,7 +769,7 @@ interface OracleOutcome {
  * synchronously, so it flags the context (the run declines with a "use fuzzMethodAsync" message) rather
  * than checking the Promise object as if it were the value.
  */
-function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOutcome | null {
+export function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOutcome | null {
     let call: CallResult;
     try {
         call = ctx.makeCall(args);
@@ -771,7 +790,7 @@ function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOutcome |
  * installer's `isThenable` branch. A rejected Promise skips both postcondition bands and is reported as
  * a robustness finding (the async twin of a sync throw). A synchronous return is checked directly.
  */
-async function oracleOutcomeAsync(args: unknown[], ctx: OracleContext): Promise<OracleOutcome | null> {
+export async function oracleOutcomeAsync(args: unknown[], ctx: OracleContext): Promise<OracleOutcome | null> {
     let call: CallResult;
     try {
         call = ctx.makeCall(args);
@@ -938,7 +957,7 @@ function describeFinding(
  * installed wrapper hand back the raw settled value un-post-checked, letting the driver evaluate both
  * bands itself. Precondition **guard** enforcement is untouched. A weak-invariant run suppresses nothing.
  */
-function withPostconditionProbe<T>(active: boolean, run: () => T): T {
+export function withPostconditionProbe<T>(active: boolean, run: () => T): T {
     if (!active) return run();
     const previous = getAssertEnforcement();
     setAssertEnforcement(false);
@@ -950,7 +969,7 @@ function withPostconditionProbe<T>(active: boolean, run: () => T): T {
 }
 
 /** The async twin of {@link withPostconditionProbe}, holding the gate off across the awaited run. */
-async function withPostconditionProbeAsync<T>(active: boolean, run: () => Promise<T>): Promise<T> {
+export async function withPostconditionProbeAsync<T>(active: boolean, run: () => Promise<T>): Promise<T> {
     if (!active) return run();
     const previous = getAssertEnforcement();
     setAssertEnforcement(false);
@@ -970,7 +989,7 @@ async function withPostconditionProbeAsync<T>(active: boolean, run: () => Promis
  * the registry knows — including undecorated ones the adapter named (BUG-14/Q-10) — so a position with
  * no constraints becomes a `gap-fill`, and one the registry never saw at all is filled positionally.
  */
-function buildCoverage(entry: ClassMethodContract): ParameterArbitrary[] {
+export function buildCoverage(entry: ClassMethodContract): ParameterArbitrary[] {
     const params = entry.contract.params;
     let highest = -1;
     params.forEach(p => {
@@ -1030,7 +1049,7 @@ function makeOptional(plan: ParameterArbitrary): ParameterArbitrary {
 }
 
 /** Compose the per-position arbitraries into the argument tuple, gap-filling positions with no generator. */
-function buildArgsArbitrary(
+export function buildArgsArbitrary(
     coverage: ReadonlyArray<ParameterArbitrary>,
     gapFill: Arbitrary<unknown>,
 ): Arbitrary<unknown[]> {
@@ -1040,7 +1059,7 @@ function buildArgsArbitrary(
 }
 
 /** The verdict of {@link preconditionGate}: a usable (possibly filtered) tuple arbitrary, or a decline. */
-interface PreconditionGate {
+export interface PreconditionGate {
     declined?: boolean;
     reason?: string;
     arbitrary?: Arbitrary<unknown[]>;
@@ -1069,7 +1088,7 @@ interface PreconditionGate {
  * The predicate is `evaluatePreconditions(pres, args)` — the EXACT function enforcement runs — so
  * filter-admits(x) ⟺ enforcement-accepts(x): a passing tuple can never trip the installed guard.
  */
-function preconditionGate(
+export function preconditionGate(
     baseArgs: Arbitrary<unknown[]>,
     pres: ReadonlyArray<Precondition>,
 ): PreconditionGate {
@@ -1090,7 +1109,10 @@ function preconditionGate(
 
     return {
         arbitrary: baseArgs.filter(predicate),
-        warnings: acceptanceRate < STARVATION_THRESHOLD ? [preconditionStarvationWarning(acceptanceRate, pres)] : [],
+        warnings:
+            acceptanceRate < STARVATION_THRESHOLD
+                ? [preconditionStarvationWarning(acceptanceRate, pres)]
+                : [],
     };
 }
 
@@ -1104,7 +1126,7 @@ function preconditionStarvationWarning(rate: number, pres: ReadonlyArray<Precond
 }
 
 /** Name each postcondition guarantee this run will exercise — the honest `oraclesChecked` (§5.2 pt 3). */
-function describeOracles(
+export function describeOracles(
     posts: ReadonlyArray<Postcondition>,
     returns: ReadonlyArray<ConstraintDescriptor>,
 ): string[] {
@@ -1136,7 +1158,7 @@ function methodHasPreconditions(target: Function, method: string | symbol): bool
     );
 }
 
-function instanceFieldContracts(target: Function): ClassFieldContract[] {
+export function instanceFieldContracts(target: Function): ClassFieldContract[] {
     return getFieldContractsForClass(target).filter(f => !f.isStatic);
 }
 
@@ -1145,7 +1167,7 @@ function instanceFieldContracts(target: Function): ClassFieldContract[] {
 // ---------------------------------------------------------------------------
 
 /** Invoke the method, returning its result so the postcondition oracle can check it (Phase B). */
-function invoke(receiver: object, method: string | symbol, args: unknown[]): unknown {
+export function invoke(receiver: object, method: string | symbol, args: unknown[]): unknown {
     return (receiver as Record<string | symbol, (...a: unknown[]) => unknown>)[method](...args);
 }
 
@@ -1163,7 +1185,7 @@ function isThenable(value: unknown): boolean {
 }
 
 /** fast-check's shrink path for the failing case, when present — the value-free replay coordinate. */
-function counterexamplePathOf(details: fc.RunDetails<[unknown[]]>): string | undefined {
+export function counterexamplePathOf(details: fc.RunDetails<[unknown[]]>): string | undefined {
     const path = (details as {counterexamplePath?: string | null}).counterexamplePath;
     return path ? String(path) : undefined;
 }
@@ -1183,7 +1205,7 @@ function isAdornViolation(error: unknown): boolean {
     );
 }
 
-function collectWarnings(
+export function collectWarnings(
     coverage: ReadonlyArray<ParameterArbitrary>,
     extra: ReadonlyArray<string> = [],
 ): string[] {

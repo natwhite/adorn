@@ -3,10 +3,11 @@
 **Status:** plan of record set 2026-09-21, after a four-angle planning pass and a consolidated
 adversarial review. The objective is **completing adorn's design-by-contract model for stateful
 objects**, with stateful-sequence and seam testing as the payoff. **Object/composite generation has
-shipped (DEC-088), and the `@EnabledWhen` enforcement/reification band has shipped (DEC-089); the
-stateful-sequence driver that consumes it is next.** The state precondition is named **`@EnabledWhen`**
-(not `@Guard` — the latter collides with the `ContractTrust='guard'` term). The sections below are the
-vision and rationale; the **Plan of record** at the end is the sequenced decisions and scope changes.
+shipped (DEC-088), the `@EnabledWhen` enforcement/reification band has shipped (DEC-089), and the
+stateful-sequence tester `fuzzSequence` that consumes it has shipped (DEC-090) — completing sequence #1
+of the payoff.** The state precondition is named **`@EnabledWhen`** (not `@Guard` — the latter collides
+with the `ContractTrust='guard'` term). The sections below are the vision and rationale; the **Plan of
+record** at the end is the sequenced decisions and scope changes.
 
 ## The reframe
 
@@ -155,13 +156,15 @@ revised** by what survived scrutiny.
 
 **Sequence:**
 1. **Object/composite generation — DONE (DEC-088).** The cheapest, consumer-requested, dependency-free win.
-2. **`@EnabledWhen` + stateful-sequence testing** — the novel, adorn-specific capability. The
-   **`@EnabledWhen` enforcement + reification band has SHIPPED (DEC-089)**: a receiver-reading state
-   precondition, a separate registry band so downstream tells enabledness (expected skip) from a
-   precondition (starvation), enforced last in the pre-call gate, with `evaluateEnabledness` exported as
-   the one oracle the driver will reuse. **Next: the stateful-sequence driver** that consumes it —
-   start-state from the **existing `subject` factory** first; enabledness read via
-   `getEffectiveEnablednessGuards` + `evaluateEnabledness` against a live receiver (no drift).
+2. **`@EnabledWhen` + stateful-sequence testing — SHIPPED (DEC-089 + DEC-090).** The `@EnabledWhen`
+   enforcement/reification band (DEC-089): a receiver-reading state precondition, a separate registry
+   band so downstream tells enabledness (expected skip) from a precondition (starvation), enforced last
+   in the pre-call gate, with `evaluateEnabledness` exported as the one oracle. The `fuzzSequence` driver
+   (DEC-090): generates sequences of enabled calls against one evolving instance (`fc.array(fc.oneof(...))`,
+   hand-rolled — not `fc.commands`), pre-checks enabledness against the live instance (clean-false = skip,
+   throw = finding), runs enabled steps through the reused oracle body, and checks invariants survive every
+   transition. Start-state from the existing `subject` factory; enumerates enabledness-only nullary methods
+   (`pop()`) via `getEffectiveEnablednessKeys`. No drift (DEC-006/DEC-034).
 3. **`old()` / pre-state** — only if the sequence driver shows the invariant-preservation floor needs a
    transition oracle, and then **sound by construction** (below).
 4. **Contract-diff projection + its `fragmentImplies` engine** — deferred; the seam static-checker's

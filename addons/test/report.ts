@@ -18,6 +18,7 @@
  */
 
 import {FuzzResult} from './oracle';
+import {SequenceResult} from './sequence';
 import {GenerationStrategy, ParameterArbitrary} from './arbitraries';
 // The same disclosure discipline core uses (DEC-030). A fuzz report is an adorn emission, so the
 // counterexample redacts by default and the value-free seed/path carries replay instead — the raw
@@ -76,6 +77,81 @@ export function formatFuzzReport(
         for (const warning of warnings) lines.push(`  ! ${warning}`);
     }
 
+    return lines.join('\n');
+}
+
+/**
+ * Render a stateful call-sequence result (DEC-090) as a boundary report. Same discipline as
+ * {@link formatFuzzReport}: it always prints the command set and their coverage (the signal the driver
+ * ran and how far to trust a clean result), and on a finding prints the **shrunk sequence of enabled
+ * calls** plus the value-free `reproduce` line — counterexample values redacted by default (DEC-030).
+ */
+export function formatSequenceReport(result: SequenceResult, options: FuzzReportOptions = {}): string {
+    const lines: string[] = [];
+    lines.push('adorn stateful-sequence report (contract oracle over call sequences)');
+    lines.push('==================================================================');
+    if (options.basis) lines.push(`Scope: ${options.basis}`);
+    lines.push('');
+
+    if (result.declined) {
+        lines.push(`- ${result.target}: DECLINED — ${result.reason}`);
+        return finishSequenceReport(lines, result);
+    }
+
+    const commandNames = result.commands.map(c => `${c.method}${c.enabledness ? ' (@EnabledWhen)' : ''}`);
+    lines.push(
+        `- ${result.target}: commands [${commandNames.join(', ')}]; up to ${result.maxSteps} steps/sequence`,
+    );
+
+    if (result.passed) {
+        const seed = result.seed !== undefined ? ` (seed ${result.seed})` : '';
+        lines.push(
+            `  clean — ${result.numRuns} sequences; every enabled call preserved the invariants` +
+                ` (samples, NOT a proof)${seed}`,
+        );
+    } else {
+        const f = result.finding!;
+        lines.push(`  FOUND (${f.type}) — ${f.message}`);
+        if (f.postconditionDescription) lines.push(`    broke postcondition: ${f.postconditionDescription}`);
+        if (f.field) lines.push(`    broke invariant on field: ${f.field}`);
+        lines.push('    shrunk sequence (enabled calls):');
+        if (f.steps.length === 0) {
+            lines.push('      (none executed — the first generated step was not enabled or its guard threw)');
+        } else {
+            f.steps.forEach((step, i) => {
+                lines.push(
+                    `      ${i + 1}. ${step.method}(${step.counterexample.map(renderArg).join(', ')})`,
+                );
+            });
+        }
+        lines.push(
+            `    reproduce: seed ${f.seed}` +
+                (f.path ? `, path ${f.path}` : '') +
+                (f.numShrinks ? `, shrunk ${f.numShrinks}×` : ''),
+        );
+    }
+
+    // The per-command coverage boundary — which arguments were meaningfully generated for each command.
+    for (const command of result.commands) {
+        lines.push(`    ${command.method}:`);
+        lines.push(...renderCoverage(command.coverage, '      '));
+    }
+    if (result.invariantsChecked.length > 0) {
+        lines.push(`    invariants re-checked each step: ${result.invariantsChecked.join(', ')}`);
+    } else {
+        lines.push('    invariants re-checked each step: none (class declares no field contracts)');
+    }
+
+    return finishSequenceReport(lines, result);
+}
+
+function finishSequenceReport(lines: string[], result: SequenceResult): string {
+    const warnings = dedupe(result.warnings);
+    if (warnings.length > 0) {
+        lines.push('');
+        lines.push('Warnings:');
+        for (const warning of warnings) lines.push(`  ! ${warning}`);
+    }
     return lines.join('\n');
 }
 

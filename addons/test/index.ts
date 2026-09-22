@@ -49,8 +49,29 @@ export {fuzzMethod, fuzzClass, fuzzMethodAsync, fuzzClassAsync} from './oracle';
 // zero-class codebase actually has — with the same oracle `fuzzMethod` runs, reading the spec the wrapper
 // now exposes (`contractSpecOf`). `fuzzFunctionAsync` is the async twin.
 export {fuzzFunction, fuzzFunctionAsync} from './oracle';
-export type {FuzzOptions, FuzzFunctionOptions, FuzzResult, FuzzFinding, FindingType, OracleMode} from './oracle';
+export type {
+    FuzzOptions,
+    FuzzFunctionOptions,
+    FuzzResult,
+    FuzzFinding,
+    FindingType,
+    OracleMode,
+} from './oracle';
 
-// The boundary report — a condition of shipping, not a nicety (§3).
-export {formatFuzzReport} from './report';
+// The stateful call-sequence tester (DEC-090) — the payoff of `@EnabledWhen` (DEC-089). Drives sequences
+// of ENABLED method calls against one evolving instance and checks invariants survive every transition;
+// a not-enabled call is skipped (not a false positive), a throwing guard is a finding. `fuzzSequenceAsync`
+// is the async twin. Add-on-only, fast-check-gated — ZERO new root exports (DEC-019).
+export {fuzzSequence, fuzzSequenceAsync} from './sequence';
+export type {
+    SequenceOptions,
+    SequenceResult,
+    SequenceFinding,
+    SequenceStep,
+    SequenceCommandReport,
+} from './sequence';
+
+// The boundary report — a condition of shipping, not a nicety (§3). `formatSequenceReport` renders a
+// sequence result (its command set + coverage, and on a finding the shrunk enabled sequence).
+export {formatFuzzReport, formatSequenceReport} from './report';
 export type {FuzzReportOptions} from './report';
