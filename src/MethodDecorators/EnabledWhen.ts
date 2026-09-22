@@ -49,7 +49,9 @@ export function EnabledWhen(predicate: EnablednessPredicate, description?: strin
 
     return function (target: object, propertyKey: MethodKey, descriptor: PropertyDescriptor) {
         if (!descriptor || typeof descriptor.value !== 'function') {
-            throw new TypeError(`@EnabledWhen must be applied to a method; ${String(propertyKey)} is not one.`);
+            throw new TypeError(
+                `@EnabledWhen must be applied to a method; ${String(propertyKey)} is not one.`,
+            );
         }
 
         // 'prepend' — method decorators stack bottom-up under __decorate, so prepending lands multiple

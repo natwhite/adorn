@@ -116,7 +116,10 @@ import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 import {setObservationSink, getObservationSink, RETURN_INDEX, nextCallId} from './src/Core/Observation';
 import {settle} from './src/Core/settle';
 // O1c: a ready-made zero-dependency JSON-to-console sink (opt-in; never installed automatically).
-import {consoleObservationSink, createConsoleObservationSink} from './src/Adapters/legacy/ObservationBehavior';
+import {
+    consoleObservationSink,
+    createConsoleObservationSink,
+} from './src/Adapters/legacy/ObservationBehavior';
 
 // --- Registry introspection (Q-6: this surface is now semver-relevant) -----
 // Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,

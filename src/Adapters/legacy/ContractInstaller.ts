@@ -211,7 +211,13 @@ export function Validate(options?: TrustOptions): MethodDecorator {
         const guards = getEffectiveEnablednessGuards(target, propertyKey);
         const posts = getEffectivePostconditions(target, propertyKey);
         const returns = getEffectiveReturnConstraints(target, propertyKey);
-        if (!enforce && pres.length === 0 && guards.length === 0 && posts.length === 0 && returns.length === 0) {
+        if (
+            !enforce &&
+            pres.length === 0 &&
+            guards.length === 0 &&
+            posts.length === 0 &&
+            returns.length === 0
+        ) {
             // Nothing recorded. Returning the descriptor untouched keeps `@Validate()` harmless on
             // a method that has neither parameter constraints nor pre/postconditions/guards (yet).
             return descriptor;
@@ -333,7 +339,8 @@ function installMethod(host: object, key: MethodKey, trust: ContractTrust): void
     const guards = getEffectiveEnablednessGuards(host, key);
     const posts = getEffectivePostconditions(host, key);
     const returns = getEffectiveReturnConstraints(host, key);
-    if (!enforce && pres.length === 0 && guards.length === 0 && posts.length === 0 && returns.length === 0) return;
+    if (!enforce && pres.length === 0 && guards.length === 0 && posts.length === 0 && returns.length === 0)
+        return;
 
     // GAP-20 (round-3 §3): warn at install if a parameter stacks a container constraint with an
     // `@OneOf`/`@Const` — an always-false, unsatisfiable conjunction that projects a plausible schema.

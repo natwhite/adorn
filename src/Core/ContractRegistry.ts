@@ -982,7 +982,10 @@ const NO_ENABLEDNESS: ReadonlyArray<EnablednessGuard> = Object.freeze([]);
  * Enabledness guards declared **directly** on `target[key]`. Own-scoped, the twin of
  * {@link getPreconditions}. For what is enforced, use {@link getEffectiveEnablednessGuards}.
  */
-export function getEnablednessGuards(target: ContractTarget, key: MethodKey): ReadonlyArray<EnablednessGuard> {
+export function getEnablednessGuards(
+    target: ContractTarget,
+    key: MethodKey,
+): ReadonlyArray<EnablednessGuard> {
     if (!isRegisterableTarget(target)) return NO_ENABLEDNESS;
     const list = enablednessByTarget.get(target)?.get(key);
     return list ? list : NO_ENABLEDNESS;
@@ -1072,7 +1075,9 @@ export function recordEnablednessGuard(
     position: ConstraintPosition = 'append',
 ): void {
     if (!guard || typeof guard.predicate !== 'function') {
-        throw new TypeError('recordEnablednessGuard: expected a { predicate } object with a function predicate');
+        throw new TypeError(
+            'recordEnablednessGuard: expected a { predicate } object with a function predicate',
+        );
     }
     if (position !== 'append' && position !== 'prepend') {
         throw new TypeError(

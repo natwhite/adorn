@@ -365,7 +365,10 @@ describe('Wave-2 polish adds exactly its intended public exports (DEC-056)', () 
     });
 
     it('exports the NullableContracts descriptor namespace, carrying the nullable factory', () => {
-        const nullableContracts = (adorn as Record<string, unknown>).NullableContracts as Record<string, unknown>;
+        const nullableContracts = (adorn as Record<string, unknown>).NullableContracts as Record<
+            string,
+            unknown
+        >;
         expect(typeof nullableContracts).toBe('object');
         expect(typeof nullableContracts.Nullable).toBe('function');
     });
