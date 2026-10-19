@@ -1,0 +1,56 @@
+# Publish adorn to npm via Trusted Publishing (OIDC) — no NPM_TOKEN secret exists or is needed.
+#
+# One-time setup on npmjs.com: package `adorn` → Settings → Trusted Publisher → GitHub Actions, with
+# owner `natwhite`, repository `adorn`, workflow filename `publish.yml` (environment left blank).
+#
+# Release flow: bump `version` in package.json + CHANGELOG, commit, then push a matching tag
+# (`git tag v0.1.0 && git push origin v0.1.0`). The tag is the trigger and must equal the version, so a
+# stray tag can't publish something other than what package.json says. Provenance is attached
+# automatically under trusted publishing.
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token npm exchanges for a short-lived publish credential
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Trusted publishing needs npm >= 11.5.1; Node 24 plus an explicit npm upgrade guarantees it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Tag must match package.json version
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+
+      # The same gate CI runs, so a tag on a red commit can't ship.
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - run: npm run demo
+
+      # `prepublishOnly` does the clean build into dist/.
+      - name: Publish
+        run: npm publish --access public

@@ -6,8 +6,8 @@
 > construction, not by discipline.
 
 **Status: released — `0.1.0`, MIT.** `npm i adorn`. The public surface is pinned by a test (`index.ts`
-exports **101 values** plus the projection and observation model types); the suite is **1303 tests
-across 76 suites**, all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
+exports **104 values** plus the projection and observation model types); the suite is **1355 tests
+across 78 suites**, all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
 and field inheritance, closure and reified pre-/postconditions, five in-core projections (docs, JSON Schema,
 prescriptive LLM tool schema, observability, privacy review), a safe-by-default redaction runtime, a
 build-time sensitive-flow detector, and a CLI. Two opt-in add-ons ship as **subpath exports** — `adorn/otel`
@@ -246,6 +246,10 @@ union of every declaration on its prototype chain, and may only *strengthen*, ne
 - **`@Requires((...args) => boolean, description?)`** — the input-side twin (DEC-057): a **closure**
   cross-parameter precondition (`start < end`) checked before the call, blaming the caller. Like `@Ensures`,
   enforced-but-unprojectable.
+- **`@EnabledWhen((self, ...args) => boolean, description?)`** — a **state-reading** precondition (DEC-089):
+  the receiver-aware sibling of `@Requires`, for "`withdraw` is enabled only while `balance >= amount`".
+  Caller-blamed ("not enabled in this state"), never projected into a schema (no argument choice satisfies
+  it), and the hook `fuzzSequence` uses to skip calls that are legitimately not enabled yet.
 
 All four stack on one signature — parameter constraints, a cross-parameter precondition, and both
 postcondition bands:
@@ -504,7 +508,7 @@ that metadata (DEC-004).
 ```bash
 npm install
 npm run build      # tsc -> ./dist, then the CLI build (tsconfig.cli.json)
-npm test           # jest — 72 suites, 1223 tests
+npm test           # jest — 78 suites, 1355 tests
 npm run typecheck  # tsc --noEmit over src, tests, addons, tools (tsconfig.test.json)
 npm run demo       # ts-node examples/demo.ts — a genuine install smoke test
 ```
@@ -532,7 +536,9 @@ dependency stays `tslib` alone, asserted by the isolation tests. Each declares i
   generators from constraint descriptors. Its rule is **sound generation**: produce only inputs the contract
   accepts, or *decline* and say so (DEC-031). Phase B consumes the *same* functions enforcement runs, so the
   oracle flags an input exactly when the enforced wrapper throws — an executably-pinned no-drift property.
-  Optional peer: `fast-check`.
+  `fuzzSequence` (DEC-090) extends this to **stateful** objects: it drives generated call sequences against
+  one evolving instance, skips calls whose `@EnabledWhen` guard says "not enabled here", and checks that
+  field invariants and postconditions survive every transition. Optional peer: `fast-check`.
 - **`adorn/otel`** — `import { createOtelSink } from 'adorn/otel'`. An OpenTelemetry `ObservationSink`
   (DEC-046): `createOtelSink()` maps `scope` → an active span, `completed` → a duration histogram, `violation`
   → `recordException` + a value-free span event; install it with `setObservationSink(createOtelSink({...}))`.
@@ -592,14 +598,12 @@ fields, and strict mode. Method and offline evidence: [`docs/q31-results.md`](do
 - **Closures can't be projected.** `@Ensures` / `@Requires` are enforced but invisible to docs, schema, and
   fuzzing (a `@Requires`-only method emits an empty tool schema). `@Ensures` types its `result` as `unknown`,
   so under `strict` the author must annotate.
-- **`strict: false` is still set** in the *library's own* build; the zero-cost sub-flags are on. This does
-  **not** affect consumers — the shipped `.d.ts` compile under `strict: true` (DEC-070).
 - **The `@Sensitive` primitive-parameter gap is permanent.** `transfer(ssn: string)` must be marked on the
   parameter; JavaScript's value semantics destroy the link to a `@Sensitive` field (DEC-PII-5). A method
   *return* likewise can't be directly `@Sensitive`; `@Telemetry.result()` gives the opt-in half, the veto half
   needs class-level `@Sensitive`.
 
-For the full picture, [`docs/DECISIONS.md`](docs/DECISIONS.md) is the decision log (DEC-001…DEC-070) and
+For the full picture, [`docs/DECISIONS.md`](docs/DECISIONS.md) is the decision log (DEC-001…DEC-090) and
 [`CHANGELOG.md`](CHANGELOG.md) tracks releases.
 
 ---

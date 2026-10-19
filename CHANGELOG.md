@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and adorn follows
 [Semantic Versioning](https://semver.org/). Pre-1.0, minor releases may include breaking changes.
 
-## [0.1.0] — 2026-08-08
+## [0.1.0] — 2026-10-18
 
 First public release — contracts as data for TypeScript. One declaration is the single source for
 runtime validation, JSON Schema, an LLM tool schema, documentation, and observability, so they don't
@@ -27,8 +27,18 @@ drift by construction.
   declaration). The output was round-tripped end-to-end through OpenAI `gpt-4o-mini`.
 - **Imperative validation** — `Verify.that` (throws) and `Verify.check` (non-throwing; narrows
   `unknown` to the constraint's output type, with the failing `path` and `expected` on a violation).
-- **Pre / postconditions** — `@Requires` (cross-parameter precondition), `@Ensures` (closure
-  postcondition), and `@Returns` (reified, projectable postcondition).
+- **Pre / postconditions** — `@Requires` (cross-parameter precondition), `@EnabledWhen` (state-reading
+  enabledness guard that receives the instance), `@Ensures` (closure postcondition), and `@Returns`
+  (reified, projectable postcondition).
+- **Functional surface** — `contract(spec, fn)` enforces params / requires / ensures / returns (sync and
+  async) on a plain function with no class or decorator; `violationFromCheck` feeds a functional refusal
+  into the same observation stream.
+- **`adorn/test`** (subpath export, optional `fast-check` peer) — property-based testing derived from
+  the contract: `fuzzMethod` / `fuzzClass` / `fuzzFunction` (and async variants) with sound generation
+  (generate only inputs the contract accepts, or decline and say so), including object / composite
+  generation, plus `fuzzSequence`, a stateful call-sequence tester that respects `@EnabledWhen`.
+- **`adorn/otel`** (subpath export, optional `@opentelemetry/api` peer) — `createOtelSink()` maps the
+  observation seam onto OpenTelemetry spans, a duration histogram, and value-free violation events.
 - **Projections & CLI** — Markdown documentation, descriptive JSON Schema (draft 2020-12), the
   prescriptive tool schema, and a telemetry / privacy-review report; the `adorn` CLI
   (`docs` / `schema` / `check`).
@@ -43,7 +53,10 @@ drift by construction.
   with no signature to decorate — a raw `unknown` off the wire, a per-session schema — the same
   constraints are usable directly (`Verify.check`, the `*Contracts` namespaces, `toolSchemaFrom`) with
   those flags off; the escape hatch, not the front door.
-- The `@adorn/test` (property-based testing) and `@adorn/otel` (OpenTelemetry) add-ons live in the
-  repository but are not yet published to npm.
+- The add-ons ship inside the package as subpath exports (`adorn/test`, `adorn/otel`); importing the
+  package root never loads them or their peers.
+- Shipped `.d.ts` files compile under a consumer's `strict: true`; the library itself builds with
+  `strict: true`.
+- Published from GitHub Actions via npm Trusted Publishing, with provenance.
 
 [0.1.0]: https://github.com/natwhite/adorn/releases/tag/v0.1.0

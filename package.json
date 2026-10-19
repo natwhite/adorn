@@ -15,7 +15,7 @@
     "function-calling",
     "openai"
   ],
-  "homepage": "https://github.com/natwhite/adorn#readme",
+  "homepage": "https://adorn-ts.dev",
   "bugs": "https://github.com/natwhite/adorn/issues",
   "repository": {
     "type": "git",
