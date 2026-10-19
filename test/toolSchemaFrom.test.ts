@@ -82,7 +82,9 @@ describe('toolSchemaFrom — descriptor-first tool schema (DEC-061)', () => {
 
     it('accepts a bare descriptor OR a spec, and a stacked-descriptor array (inside a spec)', () => {
         const schema = toolSchemaFrom({
-            params: {n: {descriptor: [NumberContracts.GreaterThanEqual(1), NumberContracts.LessThanEqual(10)]}},
+            params: {
+                n: {descriptor: [NumberContracts.GreaterThanEqual(1), NumberContracts.LessThanEqual(10)]},
+            },
         });
         const n = (schema.properties as Record<string, Record<string, unknown>>).n;
         expect(n.minimum).toBe(1);
@@ -124,7 +126,9 @@ describe('toolSchemaFrom runs the unsatisfiable-stack detector (round-4 §2.3 / 
         const messages: string[] = [];
         setContractDiagnosticsSink(m => messages.push(m));
         try {
-            toolSchemaFrom({params: {subjects: ArrayContracts.ArrayOf(EnumContracts.OneOf(['alice', 'bob']))}});
+            toolSchemaFrom({
+                params: {subjects: ArrayContracts.ArrayOf(EnumContracts.OneOf(['alice', 'bob']))},
+            });
         } finally {
             setContractDiagnosticsSink(null);
         }
@@ -153,7 +157,10 @@ describe('toolSchemaFrom providerStrict — OpenAI-strict-compatible optional en
 
     it('accepts a nullable-enum optional under strict (Nullable(OneOf) → anyOf-with-null)', () => {
         const spec = {
-            subject: {descriptor: NullableContracts.Nullable(EnumContracts.OneOf(['a', 'b'])), optional: true},
+            subject: {
+                descriptor: NullableContracts.Nullable(EnumContracts.OneOf(['a', 'b'])),
+                optional: true,
+            },
         };
         const strict = toolSchemaFrom({params: spec}, {providerStrict: true});
         expect(strict.required).toEqual(['subject']);
@@ -165,7 +172,14 @@ describe('toolSchemaFrom providerStrict — OpenAI-strict-compatible optional en
             @Enforce.greaterThanEqual(0) y!: number;
         }
         const schema = toolSchemaFrom(
-            {params: {at: {descriptor: NullableContracts.Nullable(ObjectContracts.Shape(Point)), optional: true}}},
+            {
+                params: {
+                    at: {
+                        descriptor: NullableContracts.Nullable(ObjectContracts.Shape(Point)),
+                        optional: true,
+                    },
+                },
+            },
             {providerStrict: true},
         );
         const at = (schema.properties as Record<string, Record<string, unknown>>).at;
@@ -196,7 +210,10 @@ describe('toolSchemaFrom providerStrict RECURSES into nested objects (DEC-069)',
         expect((slot.required as string[]).slice().sort()).toEqual(['label', 'when']); // `label` promoted
         expect(slot.additionalProperties).toBe(false);
         // `label` keeps its null-union, so the model may send null and Verify.check(Nullable(...)) accepts it
-        expect((slot.properties as Record<string, Record<string, unknown>>).label.type).toEqual(['string', 'null']);
+        expect((slot.properties as Record<string, Record<string, unknown>>).label.type).toEqual([
+            'string',
+            'null',
+        ]);
     });
 
     it('REFUSES a BARE optional field inside a nested Fields, naming the field', () => {
@@ -259,7 +276,11 @@ describe('toolSchemaFrom providerStrict RECURSES into nested objects (DEC-069)',
                 params: {
                     slot: Fields({
                         when: StringContracts.DateTime(),
-                        label: {descriptor: Nullable(StringContracts.NotEmpty()), optional: true, default: 'untitled'},
+                        label: {
+                            descriptor: Nullable(StringContracts.NotEmpty()),
+                            optional: true,
+                            default: 'untitled',
+                        },
                     }),
                 },
             },

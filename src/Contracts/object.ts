@@ -85,8 +85,7 @@ export const dictionaryConstraint = defineConstraint<DictionaryParams>({
             return undefined;
         };
     },
-    describe: params =>
-        `an object mapping string keys to ${constraintFromJSON(params.value).describe()}`,
+    describe: params => `an object mapping string keys to ${constraintFromJSON(params.value).describe()}`,
     schema: params => {
         const inner = constraintFromJSON(params.value);
         // The value's own under-claim is inherited; `{}` (accept-any value) is the floor when it has no
@@ -181,7 +180,10 @@ export const shapeConstraint = defineConstraint<ShapeParams>({
                     if (!descriptor.predicate(value[name])) {
                         const sub = descriptor.locate ? descriptor.locate(value[name]) : undefined;
                         return sub
-                            ? {path: [name, ...(sub.path ?? [])], expected: sub.expected ?? descriptor.describe()}
+                            ? {
+                                  path: [name, ...(sub.path ?? [])],
+                                  expected: sub.expected ?? descriptor.describe(),
+                              }
                             : {path: [name], expected: descriptor.describe()};
                     }
                 }
@@ -270,17 +272,18 @@ export type FieldSpec =
 // object type, optional keys included. A multi-descriptor stack's output is the UNION of the members' outputs
 // (not their intersection) — an accepted type-level imprecision; runtime validation is exact.
 type OutOf<D> = D extends ConstraintDescriptor<ConstraintParams, infer O> ? O : unknown;
-type SpecOut<S> = S extends ConstraintDescriptor<ConstraintParams, infer O>
-    ? O
-    : S extends ReadonlyArray<ConstraintDescriptor>
-      ? OutOf<S[number]>
-      : S extends {descriptor: infer D}
-        ? D extends ConstraintDescriptor<ConstraintParams, infer O>
-            ? O
-            : D extends ReadonlyArray<ConstraintDescriptor>
-              ? OutOf<D[number]>
-              : unknown
-        : unknown;
+type SpecOut<S> =
+    S extends ConstraintDescriptor<ConstraintParams, infer O>
+        ? O
+        : S extends ReadonlyArray<ConstraintDescriptor>
+          ? OutOf<S[number]>
+          : S extends {descriptor: infer D}
+            ? D extends ConstraintDescriptor<ConstraintParams, infer O>
+                ? O
+                : D extends ReadonlyArray<ConstraintDescriptor>
+                  ? OutOf<D[number]>
+                  : unknown
+            : unknown;
 type IsOptionalSpec<S> = S extends {optional: true} ? true : false;
 type RequiredFieldKeys<T> = {[K in keyof T]-?: IsOptionalSpec<T[K]> extends true ? never : K}[keyof T];
 type OptionalFieldKeys<T> = {[K in keyof T]-?: IsOptionalSpec<T[K]> extends true ? K : never}[keyof T];
@@ -331,7 +334,8 @@ export const fieldsConstraint = defineConstraint<FieldsParams>({
         return (value: unknown) => {
             if (!isPlainObjectValue(value)) return undefined;
             for (const {name, optional, descriptors, fieldExpected} of compiled) {
-                const present = Object.prototype.hasOwnProperty.call(value, name) && value[name] !== undefined;
+                const present =
+                    Object.prototype.hasOwnProperty.call(value, name) && value[name] !== undefined;
                 if (!present) {
                     if (optional) continue;
                     return {path: [name], expected: fieldExpected};
@@ -340,7 +344,10 @@ export const fieldsConstraint = defineConstraint<FieldsParams>({
                     if (!descriptor.predicate(value[name])) {
                         const sub = descriptor.locate ? descriptor.locate(value[name]) : undefined;
                         return sub
-                            ? {path: [name, ...(sub.path ?? [])], expected: sub.expected ?? descriptor.describe()}
+                            ? {
+                                  path: [name, ...(sub.path ?? [])],
+                                  expected: sub.expected ?? descriptor.describe(),
+                              }
                             : {path: [name], expected: descriptor.describe()};
                     }
                 }
@@ -387,7 +394,9 @@ export function Fields<const T extends Record<string, FieldSpec>>(
     fields: T,
 ): ConstraintDescriptor<FieldsParams, FieldsOut<T>> {
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
-        throw new TypeError('Fields: expected an object mapping field names to a descriptor, a stack, or a spec');
+        throw new TypeError(
+            'Fields: expected an object mapping field names to a descriptor, a stack, or a spec',
+        );
     }
     const serialized: {[name: string]: SerializedField} = {};
     Object.keys(fields).forEach(name => {
@@ -425,7 +434,11 @@ function normalizeFieldSpec(name: string, spec: FieldSpec): SerializedField {
         throw new TypeError(`Fields: field '${name}' has an empty descriptor stack`);
     }
     for (const descriptor of descriptors) {
-        if (!descriptor || typeof descriptor.toJSON !== 'function' || typeof descriptor.predicate !== 'function') {
+        if (
+            !descriptor ||
+            typeof descriptor.toJSON !== 'function' ||
+            typeof descriptor.predicate !== 'function'
+        ) {
             throw new TypeError(
                 `Fields: field '${name}' must be a ConstraintDescriptor (e.g. StringContracts.NotEmpty()). A ` +
                     'hand-written closure carries no identity or params and cannot be composed (DEC-050).',

@@ -89,7 +89,8 @@ interface Case {
 const CASES: ReadonlyArray<Case> = [
     {
         name: 'reminder — providerStrict + Nullable optional (the Slice-D headline)',
-        expectation: 'accepted under strict; model sends note:null; the Nullable validator ACCEPTS null → no drift',
+        expectation:
+            'accepted under strict; model sends note:null; the Nullable validator ACCEPTS null → no drift',
         schema: toolSchemaFrom(
             {
                 name: 'scheduleReminder',
@@ -117,7 +118,11 @@ const CASES: ReadonlyArray<Case> = [
         name: 'bookStrict — a Fields param, ALL fields required (providerStrict)',
         expectation: 'accepted under strict (the nested object is fully closed); validator accepts',
         schema: toolSchemaFrom(
-            {name: 'bookStrict', description: 'Book a slot with a duration in minutes.', params: {slot: SLOT_STRICT_ALL}},
+            {
+                name: 'bookStrict',
+                description: 'Book a slot with a duration in minutes.',
+                params: {slot: SLOT_STRICT_ALL},
+            },
             {providerStrict: true},
         ),
         strict: true,
@@ -132,7 +137,11 @@ const CASES: ReadonlyArray<Case> = [
             'it; the model sends `label` as null or a string, and the Fields validator (whose label is Nullable) ' +
             'accepts either — closing the nested boundary DEC-068 had left open.',
         schema: toolSchemaFrom(
-            {name: 'bookStrictOpt', description: 'Book a slot, with an optional label.', params: {slot: SLOT_STRICT_OPT}},
+            {
+                name: 'bookStrictOpt',
+                description: 'Book a slot, with an optional label.',
+                params: {slot: SLOT_STRICT_OPT},
+            },
             {providerStrict: true},
         ),
         strict: true,
@@ -169,7 +178,10 @@ async function runCase(c: Case): Promise<Result> {
                 model: MODEL,
                 temperature: 0,
                 messages: [
-                    {role: 'system', content: 'Call the provided tool with correct arguments. Do not ask questions.'},
+                    {
+                        role: 'system',
+                        content: 'Call the provided tool with correct arguments. Do not ask questions.',
+                    },
                     {role: 'user', content: c.prompt},
                 ],
                 tools: [{type: 'function', function: fn}],
@@ -203,7 +215,8 @@ async function runCase(c: Case): Promise<Result> {
         const args = JSON.parse(argsRaw);
         const failures: string[] = [];
         for (const v of c.validators) {
-            const present = Object.prototype.hasOwnProperty.call(args, v.param) && args[v.param] !== undefined;
+            const present =
+                Object.prototype.hasOwnProperty.call(args, v.param) && args[v.param] !== undefined;
             if (!present) {
                 if (v.optional) continue;
                 failures.push(`${v.param}: missing`);
@@ -253,9 +266,13 @@ function localNegatives(): string[] {
             : '- UNEXPECTED: missing required field passed',
     );
     const nullNote = Verify.check(NOTE, 'note', null);
-    lines.push(`- Nullable(NotEmpty()) on \`null\` → ${nullNote.ok ? 'ACCEPTS (as designed — no drift)' : 'REJECTS (unexpected!)'}`);
+    lines.push(
+        `- Nullable(NotEmpty()) on \`null\` → ${nullNote.ok ? 'ACCEPTS (as designed — no drift)' : 'REJECTS (unexpected!)'}`,
+    );
     const emptyNote = failOf(Verify.check(NOTE, 'note', ''));
-    lines.push(`- Nullable(NotEmpty()) on \`""\` → ${emptyNote ? 'REJECTS (still enforces non-empty)' : 'UNEXPECTED: accepted'}`);
+    lines.push(
+        `- Nullable(NotEmpty()) on \`""\` → ${emptyNote ? 'REJECTS (still enforces non-empty)' : 'UNEXPECTED: accepted'}`,
+    );
     // DEC-069 refusal: a BARE (non-nullable) optional field under providerStrict throws at BUILD, not at the API.
     try {
         toolSchemaFrom(
@@ -264,7 +281,9 @@ function localNegatives(): string[] {
         );
         lines.push('- UNEXPECTED: a bare non-nullable optional under providerStrict did NOT refuse');
     } catch (e) {
-        lines.push(`- bare optional field under providerStrict → REFUSED at build (${String((e as Error).message).split(' — ')[0]})`);
+        lines.push(
+            `- bare optional field under providerStrict → REFUSED at build (${String((e as Error).message).split(' — ')[0]})`,
+        );
     }
     return lines;
 }
@@ -274,8 +293,12 @@ function report(results: Result[], negatives: string[]): void {
     const lines: string[] = [];
     lines.push('# Q-31 / Q-32 capstone — real generated schemas round-tripped through OpenAI');
     lines.push('');
-    lines.push(`**Provider:** OpenAI \`${MODEL}\` · **temperature:** 0. Schemas emitted by the REAL round-4 code`);
-    lines.push('(`Fields`, `Nullable`, `toolSchemaFrom({providerStrict})`) and validated by the SAME descriptors.');
+    lines.push(
+        `**Provider:** OpenAI \`${MODEL}\` · **temperature:** 0. Schemas emitted by the REAL round-4 code`,
+    );
+    lines.push(
+        '(`Fields`, `Nullable`, `toolSchemaFrom({providerStrict})`) and validated by the SAME descriptors.',
+    );
     lines.push('');
     if (results.length === 0) {
         lines.push('_No live calls (OPENAI_API_KEY absent). Local negatives only — see below._');
@@ -292,7 +315,9 @@ function report(results: Result[], negatives: string[]): void {
         for (let i = 0; i < results.length; i++) {
             lines.push(`- **${results[i].name}**`);
             lines.push(`  - expectation: ${CASES[i].expectation}`);
-            lines.push(`  - result: ${results[i].verdict} (HTTP ${results[i].httpStatus}) — ${results[i].detail}`);
+            lines.push(
+                `  - result: ${results[i].verdict} (HTTP ${results[i].httpStatus}) — ${results[i].detail}`,
+            );
         }
     }
     lines.push('');

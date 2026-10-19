@@ -624,8 +624,15 @@ function assertFieldValue(owner: object, key: FieldKey, value: unknown, boundary
         // Route through the policy (DEC-080): throws by default, or `'warn'`/a suppressing handler returns
         // here so the setter stores the value. Stop at the first failing constraint either way.
         const ownerName =
-            typeof owner === 'function' ? owner.name : ((owner as {constructor?: Function}).constructor?.name ?? '');
-        const site: ViolationSite = {owner: ownerName, member: String(key), trust: DEFAULT_TRUST, blame: 'caller'};
+            typeof owner === 'function'
+                ? owner.name
+                : ((owner as {constructor?: Function}).constructor?.name ?? '');
+        const site: ViolationSite = {
+            owner: ownerName,
+            member: String(key),
+            trust: DEFAULT_TRUST,
+            blame: 'caller',
+        };
         applyViolationPolicy(error, site);
         return;
     }

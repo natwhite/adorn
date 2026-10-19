@@ -74,7 +74,9 @@ describe('GAP-17 — the guidance actually ships in dist/*.d.ts (Layer 2, emit-l
         const distNumber = path.join(ROOT, 'dist/src/Contracts/number.d.ts');
         if (!fs.existsSync(distNumber)) {
             // No local friction: a bare `npm test` (adorn has no prebuild) skips this proof. CI builds first.
-            console.warn('[GAP-17 guard] dist/ not built — skipping the emit-level check (run `npm run build`).');
+            console.warn(
+                '[GAP-17 guard] dist/ not built — skipping the emit-level check (run `npm run build`).',
+            );
             return;
         }
         const dts = fs.readFileSync(distNumber, 'utf8');

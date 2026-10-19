@@ -159,9 +159,14 @@ function closureViolation(description: string | undefined, blame: 'caller' | 'ca
     };
 }
 
-const closureMessage = (band: 'Precondition' | 'Postcondition', description: string | undefined, error: unknown): string => {
+const closureMessage = (
+    band: 'Precondition' | 'Postcondition',
+    description: string | undefined,
+    error: unknown,
+): string => {
     const tail = description ? ` (${description})` : '';
-    if (error !== undefined) return `${band} threw${tail}: ${String((error as {message?: unknown})?.message ?? error)}`;
+    if (error !== undefined)
+        return `${band} threw${tail}: ${String((error as {message?: unknown})?.message ?? error)}`;
     return `${band} not met${tail}`;
 };
 
@@ -184,14 +189,25 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
     const siteDot = siteName.indexOf('.');
     const siteOwner = siteDot > 0 ? siteName.slice(0, siteDot) : '';
     const siteMember = siteDot > 0 ? siteName.slice(siteDot + 1) : siteName;
-    const callerSite: ViolationSite = {owner: siteOwner, member: siteMember, trust: DEFAULT_TRUST, blame: 'caller'};
-    const calleeSite: ViolationSite = {owner: siteOwner, member: siteMember, trust: DEFAULT_TRUST, blame: 'callee'};
+    const callerSite: ViolationSite = {
+        owner: siteOwner,
+        member: siteMember,
+        trust: DEFAULT_TRUST,
+        blame: 'caller',
+    };
+    const calleeSite: ViolationSite = {
+        owner: siteOwner,
+        member: siteMember,
+        trust: DEFAULT_TRUST,
+        blame: 'callee',
+    };
 
     const wrapped = function (this: unknown, ...args: any[]): any {
         const sink = observe ? getObservationSink() : undefined;
         const callId = observe ? nextCallId() : 0;
         const emitViolation = (facts: ViolationFacts): void => {
-            if (sink && observation) sink.record?.({kind: 'violation', observation, callId, violation: facts});
+            if (sink && observation)
+                sink.record?.({kind: 'violation', observation, callId, violation: facts});
         };
 
         // 1. Per-parameter descriptors, left to right (declaration order).
@@ -218,7 +234,9 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                 emitViolation(closureViolation(pre.failed && pre.failed.description, 'caller'));
                 // Policy-routed (DEC-080): `'warn'`/a handler falls through into the call below.
                 applyViolationPolicy(
-                    new Error(closureMessage('Precondition', pre.failed && pre.failed.description, pre.error)),
+                    new Error(
+                        closureMessage('Precondition', pre.failed && pre.failed.description, pre.error),
+                    ),
                     callerSite,
                 );
             }
@@ -245,7 +263,9 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                 const rr = Verify.check(spec.returns, 'return', result);
                 if (!rr.ok) {
                     // `strict` narrows `rr` to the failure arm here (DEC-079) — no cast.
-                    emitViolation(violationFromCheck(rr, {parameter: 'return', index: RETURN_INDEX, blame: 'callee'}));
+                    emitViolation(
+                        violationFromCheck(rr, {parameter: 'return', index: RETURN_INDEX, blame: 'callee'}),
+                    );
                     // Policy-routed (DEC-080): under `'warn'`/a suppressing handler, `onSettle` does not
                     // throw, so `settle` returns the (contract-violating) value — as the decorator does.
                     applyViolationPolicy(new Error(rr.message), calleeSite);
@@ -259,7 +279,13 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                     emitViolation(closureViolation(post.failed && post.failed.description, 'callee'));
                     // Policy-routed (DEC-080): `'warn'`/a suppressing handler returns the value.
                     applyViolationPolicy(
-                        new Error(closureMessage('Postcondition', post.failed && post.failed.description, post.error)),
+                        new Error(
+                            closureMessage(
+                                'Postcondition',
+                                post.failed && post.failed.description,
+                                post.error,
+                            ),
+                        ),
                         calleeSite,
                     );
                 }

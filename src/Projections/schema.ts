@@ -788,7 +788,9 @@ function fragmentAdmitsNull(fragment: JsonValue): boolean {
     if (Object.keys(fragment).length === 0) return true; // a hookless `{}` accepts anything, `null` included
     if (typeIncludes(fragment, 'null')) return true;
     const anyOf = fragment.anyOf;
-    return Array.isArray(anyOf) && anyOf.some(member => isObjectFragment(member) && typeIncludes(member, 'null'));
+    return (
+        Array.isArray(anyOf) && anyOf.some(member => isObjectFragment(member) && typeIncludes(member, 'null'))
+    );
 }
 
 /**
@@ -863,7 +865,9 @@ function strictifyForProvider(node: JsonValue, path: string, ctx: StrictifyConte
             // A fixed-property object with NO `required` array means all-required (raw `@Shape` semantics; an
             // `allOf` member never passes through `tightenObjects`, review Finding 1). Treat every field as
             // already-required, so we never demand nullability of a genuinely-required field.
-            const already = new Set<string>(Array.isArray(out.required) ? (out.required as string[]) : propKeys);
+            const already = new Set<string>(
+                Array.isArray(out.required) ? (out.required as string[]) : propKeys,
+            );
             const props: JsonObject = {};
             for (const key of propKeys) {
                 const prop = out.properties[key];

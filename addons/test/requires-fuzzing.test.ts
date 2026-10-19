@@ -112,7 +112,12 @@ describe('@Requires fuzzing — inheritance, layering, async', () => {
                 return lo - hi; // @Requires guarantees lo < hi, so lo - hi is NEGATIVE → breaks @Ensures
             }
         }
-        const result = fuzzMethod({target: Ledger, method: 'span', subject: () => new Ledger(), numRuns: 300});
+        const result = fuzzMethod({
+            target: Ledger,
+            method: 'span',
+            subject: () => new Ledger(),
+            numRuns: 300,
+        });
         // The filter admits only lo < hi tuples; on those the postcondition breaks — proving the filter did
         // not suppress the postcondition oracle (layering, not replacement).
         expect(result.passed).toBe(false);

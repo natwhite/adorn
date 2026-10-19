@@ -256,7 +256,10 @@ describe('a stacked pattern filters from its own targeted base, not a broad one 
         ['NotEmpty ∧ Matches(TIME)', [Strings.NotEmpty(), Strings.Matches(TIME)]],
         ['Matches(TIME) ∧ NotEmpty  (order-independent)', [Strings.Matches(TIME), Strings.NotEmpty()]],
         ['MaxLength(5) ∧ Matches(TIME)', [Strings.MaxLength(5), Strings.Matches(TIME)]],
-        ['Matches(TIME) ∧ Matches(/:/)  (narrower pattern wins)', [Strings.Matches(TIME), Strings.Matches(/:/)]],
+        [
+            'Matches(TIME) ∧ Matches(/:/)  (narrower pattern wins)',
+            [Strings.Matches(TIME), Strings.Matches(/:/)],
+        ],
     ];
 
     for (const [label, constraints] of cases) {
@@ -414,7 +417,10 @@ describe('shape generates a closed object over its fields (DEC-055)', () => {
 
     it('declines the whole shape when a required field cannot be generated', () => {
         const descriptor = shapeConstraint({
-            fields: {ok: [Strings.NotEmpty().toJSON()], bad: [bigintOnly('addon-test-og-shape-field').toJSON()]},
+            fields: {
+                ok: [Strings.NotEmpty().toJSON()],
+                bad: [bigintOnly('addon-test-og-shape-field').toJSON()],
+            },
         });
         const result = arbitraryForConstraint(descriptor);
         expect(result.strategy).toBe('declined');
@@ -440,13 +446,17 @@ describe('fields generates an optional-aware object literal (DEC-065)', () => {
         });
         const result = arbitraryForConstraint(descriptor);
         assertAllAccepted(result.arbitrary!, descriptor.predicate);
-        const values = fc.sample(result.arbitrary!, {numRuns: SAMPLES, seed: 8}) as Array<Record<string, unknown>>;
+        const values = fc.sample(result.arbitrary!, {numRuns: SAMPLES, seed: 8}) as Array<
+            Record<string, unknown>
+        >;
         expect(values.every(o => 'id' in o)).toBe(true);
         expect(values.some(o => !('note' in o))).toBe(true);
     });
 
     it('declines on an ungeneratable REQUIRED field, but drops an ungeneratable OPTIONAL one', () => {
-        expect(arbitraryForConstraint(Fields({bad: bigintOnly('addon-test-og-fields-req')})).strategy).toBe('declined');
+        expect(arbitraryForConstraint(Fields({bad: bigintOnly('addon-test-og-fields-req')})).strategy).toBe(
+            'declined',
+        );
 
         const descriptor = Fields({
             ok: Strings.NotEmpty(),
@@ -462,7 +472,9 @@ describe('fields generates an optional-aware object literal (DEC-065)', () => {
 
 describe('composite nesting is bounded — deep nesting declines, never hangs', () => {
     it('a shape nested past the depth bound declines cleanly instead of recursing without end', () => {
-        let d: ConstraintDescriptor = shapeConstraint({fields: {leaf: [Numbers.GreaterThanEqual(0).toJSON()]}});
+        let d: ConstraintDescriptor = shapeConstraint({
+            fields: {leaf: [Numbers.GreaterThanEqual(0).toJSON()]},
+        });
         for (let i = 0; i < 10; i++) {
             d = shapeConstraint({fields: {nested: [d.toJSON()]}});
         }

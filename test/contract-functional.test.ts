@@ -4,13 +4,7 @@
  * (completed + violation events, and their order), plus `this` preservation.
  */
 
-import {
-    contract,
-    setObservationSink,
-    setViolationPolicy,
-    NumberContracts,
-    StringContracts,
-} from '../index';
+import {contract, setObservationSink, setViolationPolicy, NumberContracts, StringContracts} from '../index';
 import type {ObservationEvent} from '../index';
 import {resetConfiguration, setConfigurationSink} from '../src/Core/Configuration';
 
@@ -81,12 +75,9 @@ describe('contract() — async (settles before the return/postcondition band)', 
 
     it('a body that rejects skips the postconditions and propagates its own error', async () => {
         let checked = false;
-        const f = contract(
-            {ensures: [() => ((checked = true), true)]},
-            async () => {
-                throw new Error('boom');
-            },
-        );
+        const f = contract({ensures: [() => ((checked = true), true)]}, async () => {
+            throw new Error('boom');
+        });
         await expect(f()).rejects.toThrow('boom');
         expect(checked).toBe(false);
     });
@@ -123,7 +114,10 @@ describe('contract() — observe emits into the installed ObservationSink', () =
     });
 
     it('a descriptor param failure emits value-free ViolationFacts (via violationFromCheck)', () => {
-        const f = contract({params: [NumberContracts.Between(1, 7)], observe: {name: 'svc.do'}}, (n: number) => n);
+        const f = contract(
+            {params: [NumberContracts.Between(1, 7)], observe: {name: 'svc.do'}},
+            (n: number) => n,
+        );
         expect(() => f(99)).toThrow();
         const v = events.find(e => e.kind === 'violation') as ViolationEvent | undefined;
         expect(v).toBeDefined();

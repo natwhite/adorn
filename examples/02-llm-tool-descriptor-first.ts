@@ -30,14 +30,36 @@ const bookingArgs = {
 
 // 1. The schema the model reads:
 console.log('=== toolSchemaFrom (per-session) ===');
-console.log(JSON.stringify(toolSchemaFrom({name: 'book', description: 'Book an available slot.', params: bookingArgs}), null, 2));
+console.log(
+    JSON.stringify(
+        toolSchemaFrom({name: 'book', description: 'Book an available slot.', params: bookingArgs}),
+        null,
+        2,
+    ),
+);
 
 // 2. Validate the model's reply against the SAME descriptors — one source, cannot drift:
 console.log('\n=== the model replies with a real slot ===');
-console.log(JSON.stringify(Verify.check(ObjectContracts.Fields(bookingArgs), 'args', {slotId: 'fri-1000', partySize: 2, name: 'Ada'})));
+console.log(
+    JSON.stringify(
+        Verify.check(ObjectContracts.Fields(bookingArgs), 'args', {
+            slotId: 'fri-1000',
+            partySize: 2,
+            name: 'Ada',
+        }),
+    ),
+);
 
 console.log('\n=== the model hallucinates a slot that was never offered ===');
-console.log(JSON.stringify(Verify.check(ObjectContracts.Fields(bookingArgs), 'args', {slotId: 'mon-0800', partySize: 2, name: 'Ada'})));
+console.log(
+    JSON.stringify(
+        Verify.check(ObjectContracts.Fields(bookingArgs), 'args', {
+            slotId: 'mon-0800',
+            partySize: 2,
+            name: 'Ada',
+        }),
+    ),
+);
 
 // 3. OpenAI strict mode: every property required + closed at every level. An "optional" field is
 // declared Nullable(...) (the model sends null), so schema and validator both accept it — no drift.

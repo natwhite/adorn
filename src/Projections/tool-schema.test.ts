@@ -137,7 +137,10 @@ describe('schemaForClass is untouched — descriptive under-claim beside the pre
         expect(classSchema.required).toBeUndefined();
         expect(classSchema.additionalProperties).toBeUndefined();
         // @OneOf flows into the descriptive tuple as {type, enum} too — one descriptor, both projections.
-        expect((method.prefixItems as JsonObject[])[1]).toEqual({type: 'string', enum: ['celsius', 'fahrenheit']});
+        expect((method.prefixItems as JsonObject[])[1]).toEqual({
+            type: 'string',
+            enum: ['celsius', 'fahrenheit'],
+        });
     });
 });
 

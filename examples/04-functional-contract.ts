@@ -17,7 +17,17 @@ interface Move {
 const reschedule = contract(
     {
         // Positional descriptors; `null` is a hole (an argument with nothing to constrain).
-        params: [null, ObjectContracts.Fields({moves: ArrayContracts.ArrayOf(ObjectContracts.Fields({from: StringContracts.NotEmpty(), to: StringContracts.NotEmpty()}))})],
+        params: [
+            null,
+            ObjectContracts.Fields({
+                moves: ArrayContracts.ArrayOf(
+                    ObjectContracts.Fields({
+                        from: StringContracts.NotEmpty(),
+                        to: StringContracts.NotEmpty(),
+                    }),
+                ),
+            }),
+        ],
         // Cross-parameter precondition (caller-blamed, runs before the body):
         requires: [(_store: unknown, args: {moves: Move[]}) => args.moves.length > 0],
         // Postcondition on the result (callee-blamed, runs after):

@@ -8,7 +8,14 @@
  *   Run:  npx ts-node examples/03-boundary-validation.ts
  *   (In your own project the import is `from 'adorn'`.)
  */
-import {Verify, ObjectContracts, ArrayContracts, StringContracts, NullableContracts, EnumContracts} from '../index';
+import {
+    Verify,
+    ObjectContracts,
+    ArrayContracts,
+    StringContracts,
+    NullableContracts,
+    EnumContracts,
+} from '../index';
 
 // A compositional descriptor: an object with a required non-empty name, a list of at-least-one
 // role (each from a fixed set), and an optional (nullable) note.

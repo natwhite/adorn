@@ -67,7 +67,10 @@ describe('fuzzFunction — a contract() function is fuzzed with the contract ora
             {
                 params: [NumberContracts.Between(-100, 100)],
                 ensures: [
-                    {predicate: (r: unknown, n: unknown) => r === Math.abs(n as number), description: 'result is abs(n)'},
+                    {
+                        predicate: (r: unknown, n: unknown) => r === Math.abs(n as number),
+                        description: 'result is abs(n)',
+                    },
                 ],
             },
             function identity(n: number): number {
@@ -229,12 +232,9 @@ describe('fuzzFunction infers arity, so a params-less spec is not a false positi
     });
 
     it('a genuinely nullary function runs with no arguments and is not declined', () => {
-        const nullary = contract(
-            {returns: NumberContracts.GreaterThanEqual(0)},
-            function nullary(): number {
-                return 42;
-            },
-        );
+        const nullary = contract({returns: NumberContracts.GreaterThanEqual(0)}, function nullary(): number {
+            return 42;
+        });
 
         const result = fuzzFunction(nullary, {numRuns: 10});
 

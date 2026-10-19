@@ -333,9 +333,13 @@ describe('message formatting', () => {
     });
 
     it('does not quote `undefined`/`null` even for a string constraint (they are absence, not a string)', () => {
-        expect(stringy({}).message({value: undefined, paramName: 'name'})).toContain('received undefined instead');
+        expect(stringy({}).message({value: undefined, paramName: 'name'})).toContain(
+            'received undefined instead',
+        );
         expect(stringy({}).message({value: null, paramName: 'name'})).toContain('received null instead');
         // A real string value is still redacted by default — the exemption is only for absence.
-        expect(stringy({}).message({value: 'hunter2', paramName: 'name'})).toContain('received [REDACTED] instead');
+        expect(stringy({}).message({value: 'hunter2', paramName: 'name'})).toContain(
+            'received [REDACTED] instead',
+        );
     });
 });

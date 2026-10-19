@@ -8,13 +8,7 @@
  * fields are read from the descriptor rather than hard-coded.
  */
 
-import {
-    Verify,
-    NumberContracts,
-    StringContracts,
-    setValueDisclosure,
-    getValueDisclosure,
-} from '../index';
+import {Verify, NumberContracts, StringContracts, setValueDisclosure, getValueDisclosure} from '../index';
 
 // Narrow a result to its failure branch in a `try`-free helper (TS control-flow narrowing is widened
 // across a `try` at the call site, so the guard lives here where the branch resolves cleanly).

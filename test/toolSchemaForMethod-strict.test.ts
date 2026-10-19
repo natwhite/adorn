@@ -127,6 +127,8 @@ describe('toolSchemaForMethod providerStrict — the port (DEC-071)', () => {
                 void note;
             }
         }
-        expect(toolSchemaForMethod(Plain, 'm', {providerStrict: false})).toEqual(toolSchemaForMethod(Plain, 'm'));
+        expect(toolSchemaForMethod(Plain, 'm', {providerStrict: false})).toEqual(
+            toolSchemaForMethod(Plain, 'm'),
+        );
     });
 });

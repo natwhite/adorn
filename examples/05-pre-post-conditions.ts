@@ -15,7 +15,10 @@ class Bank {
     @Requires((amount: number, balance: number) => amount <= balance, 'cannot overdraw the balance')
     @Returns(NumberContracts.GreaterThanEqual(0)) // the resulting balance must never be negative
     // @Ensures types `result` as `unknown` (a closure carries no return type), so annotate + narrow:
-    @Ensures((result: unknown, amount: number, balance: number) => (result as number) === balance - amount, 'balance decreases by exactly the amount')
+    @Ensures(
+        (result: unknown, amount: number, balance: number) => (result as number) === balance - amount,
+        'balance decreases by exactly the amount',
+    )
     withdraw(@GreaterThanEqual(1) amount: number, @GreaterThanEqual(0) balance: number): number {
         return balance - amount;
     }

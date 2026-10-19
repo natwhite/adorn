@@ -348,7 +348,10 @@ function finishPendingSpan(
 const RETAINED_SPAN_CAP = 2048;
 
 /** The parent context to create a span under, when a `completed` event names a still-retained `parentCallId`. */
-function parentContextFor(retained: Map<number, Span>, parentCallId: number | undefined): Context | undefined {
+function parentContextFor(
+    retained: Map<number, Span>,
+    parentCallId: number | undefined,
+): Context | undefined {
     if (parentCallId === undefined) return undefined;
     const parent = retained.get(parentCallId);
     return parent ? trace.setSpan(otelContext.active(), parent) : undefined;

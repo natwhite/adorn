@@ -46,8 +46,8 @@ describe('defineConstraint — a custom constraint behaves like a built-in', () 
     });
 
     it('rejects a hand-written definition with no derive (predicates come from params, DEC-010)', () => {
-        expect(() =>
-            defineConstraint({constraint: 'custom.broken', kind: 'generic'} as never),
-        ).toThrow(/derive/);
+        expect(() => defineConstraint({constraint: 'custom.broken', kind: 'generic'} as never)).toThrow(
+            /derive/,
+        );
     });
 });

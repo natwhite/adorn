@@ -562,7 +562,12 @@ describe('a thrown completion on the scope path lands its error on the span (voi
     it('a functional emitter that records its completion from inside proceed gets ERROR + the raw exception', () => {
         const sink = createOtelSink({tracer: provider.getTracer('m')});
         const callId = 700;
-        const call: ObservationCall = {observation: obs('Reasoning.answer'), thisArg: undefined, values: [], callId};
+        const call: ObservationCall = {
+            observation: obs('Reasoning.answer'),
+            thisArg: undefined,
+            values: [],
+            callId,
+        };
         class RateLimitError extends Error {
             constructor(message: string) {
                 super(message);
@@ -597,7 +602,12 @@ describe('a thrown completion on the scope path lands its error on the span (voi
     it('a returned completion on the same path gets an explicit OK (never falsely errored)', () => {
         const sink = createOtelSink({tracer: provider.getTracer('m')});
         const callId = 701;
-        const call: ObservationCall = {observation: obs('Reasoning.answer'), thisArg: undefined, values: [], callId};
+        const call: ObservationCall = {
+            observation: obs('Reasoning.answer'),
+            thisArg: undefined,
+            values: [],
+            callId,
+        };
         sink.scope!(call, () => {
             sink.record!({
                 kind: 'completed',
