@@ -52,17 +52,28 @@ export type PostconditionResult =
  *
  * `args` are the arguments the method actually received (`context.args`), spread after the result so a
  * predicate reads `(result, ...args)`.
+ *
+ * `olds` is the optional pre-state captured at call ENTRY (axiform §9, `Core/prestate`): index-aligned with
+ * `posts`, it supplies the `old` snapshot a postcondition with a `capture` declared. For such a clause the
+ * predicate is called `predicate(result, old, ...args)`; for a clause with no `capture` it is unchanged,
+ * `predicate(result, ...args)`. When `olds` is omitted (a caller that does not support pre-state, e.g. an
+ * older fuzz path), a capturing clause receives `undefined` for `old` — so a caller that has capturing
+ * clauses MUST pass `olds` to stay sound.
  */
 export function evaluatePostconditions(
     posts: ReadonlyArray<Postcondition>,
     result: unknown,
     args: ReadonlyArray<unknown>,
+    olds?: ReadonlyArray<unknown>,
 ): PostconditionResult {
-    for (const post of posts) {
+    for (let i = 0; i < posts.length; i++) {
+        const post = posts[i];
         let satisfied = false;
         let error: unknown;
         try {
-            satisfied = post.predicate(result, ...(args as unknown[]));
+            satisfied = post.capture
+                ? post.predicate(result, olds ? olds[i] : undefined, ...(args as unknown[]))
+                : post.predicate(result, ...(args as unknown[]));
         } catch (thrown) {
             satisfied = false;
             error = thrown;

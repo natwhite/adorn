@@ -38,18 +38,58 @@
  *   stream are rarely what you want; real settling is deferred (plan B §5).
  */
 
-import {MethodKey, PostconditionPredicate, recordPostcondition} from '../Core/ContractRegistry';
+import {MethodKey, recordPostcondition} from '../Core/ContractRegistry';
 import {notePendingContract} from '../Adapters/legacy/ContractDiagnostics';
 
 /**
- * Record a postcondition on the decorated method.
+ * The options form of {@link Ensures}, for a postcondition that needs more than a bare predicate:
  *
- * @param predicate   `(result, ...args) => boolean` — returns `true` when the method kept its promise.
- * @param description optional human phrase used in the violation message, e.g. "the id is positive".
+ * - `capture` (axiform feedback 2026-10-18 §9) — a function run against the arguments at call ENTRY whose
+ *   deep-cloned, frozen result is handed to the predicate as a leading `old`, so the postcondition compares
+ *   against pre-mutation state. With it, write the predicate as `(result, old, ...args) => boolean`. Without
+ *   it, the predicate reads the POST-call argument state, where a body that mutates an argument can mask its
+ *   own violation. See `Core/prestate` for the snapshot semantics (cloneable data only).
+ * - `id` — a stable clause identity (§5), carried onto a `contract.checked` verdict (the decorator path does
+ *   not surface it elsewhere).
  */
-export function Ensures(predicate: PostconditionPredicate, description?: string): MethodDecorator {
-    if (typeof predicate !== 'function') {
+export interface EnsuresOptions {
+    /**
+     * `(result, ...args) => boolean`, or `(result, old, ...args) => boolean` when `capture` is set. Typed
+     * with `result`/`old` as `any` (not the registry band's `unknown`, axiform §7) so the author may annotate
+     * them — `(r: Foo, old: Bar) => …` — without a cast; the stored predicate is unchanged.
+     */
+    readonly predicate: (result: any, ...rest: any[]) => boolean;
+    readonly description?: string;
+    readonly id?: string;
+    readonly capture?: (...args: any[]) => unknown;
+}
+
+/**
+ * Record a postcondition on the decorated method. Two forms:
+ *
+ * - `@Ensures((result, ...args) => boolean, description?)` — the common closure form.
+ * - `@Ensures({predicate, capture?, description?, id?})` — the options form, for a pre-state `capture` (§9)
+ *   or a stable `id` (§5). With `capture`, the predicate reads `(result, old, ...args)`.
+ */
+export function Ensures(
+    predicate: (result: any, ...args: any[]) => boolean,
+    description?: string,
+): MethodDecorator;
+export function Ensures(options: EnsuresOptions): MethodDecorator;
+export function Ensures(
+    predicateOrOptions: ((result: any, ...args: any[]) => boolean) | EnsuresOptions,
+    description?: string,
+): MethodDecorator {
+    const options: EnsuresOptions =
+        typeof predicateOrOptions === 'function'
+            ? {predicate: predicateOrOptions, description}
+            : predicateOrOptions;
+
+    if (typeof options.predicate !== 'function') {
         throw new TypeError('@Ensures: expected a (result, ...args) => boolean predicate');
+    }
+    if (options.capture !== undefined && typeof options.capture !== 'function') {
+        throw new TypeError('@Ensures: `capture` must be a (...args) => value function when provided');
     }
 
     return function (target: object, propertyKey: MethodKey, descriptor: PropertyDescriptor) {
@@ -59,7 +99,17 @@ export function Ensures(predicate: PostconditionPredicate, description?: string)
 
         // 'prepend' — method decorators stack bottom-up under __decorate, so prepending lands multiple
         // @Ensures on one method in declaration order (DEC-015/DEC-017), matching stageCheck's unshift.
-        recordPostcondition(target, propertyKey, {predicate, description}, 'prepend');
+        recordPostcondition(
+            target,
+            propertyKey,
+            {
+                predicate: options.predicate,
+                description: options.description,
+                id: options.id,
+                ...(options.capture ? {capture: options.capture} : {}),
+            },
+            'prepend',
+        );
         notePendingContract(target, propertyKey);
 
         return descriptor; // unchanged — recording only, no wrapper installed here

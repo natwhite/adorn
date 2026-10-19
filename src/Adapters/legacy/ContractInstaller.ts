@@ -82,6 +82,7 @@ import {ConstraintDescriptor} from '../../Core/Descriptor';
 import {detectUnsatisfiableStack} from '../../Core/unsatisfiable';
 import {shouldDiscloseValue} from '../../Core/redaction';
 import {evaluatePostconditions, postconditionMessage} from '../../Core/Postconditions';
+import {captureOldState} from '../../Core/prestate';
 import {evaluatePreconditions, preconditionMessage} from '../../Core/Preconditions';
 import {evaluateEnabledness, enablednessMessage} from '../../Core/Enabledness';
 import {
@@ -556,6 +557,11 @@ function enforcementBehavior(
             return observeCompletion(sink, siteObservation, started, result, callId);
         }
 
+        // Pre-state snapshot (axiform §9): capture BEFORE `proceed()` runs the body, so a postcondition's
+        // `old` reflects entry-state even when the body mutates an argument. Captured here, after the
+        // precondition gate (which does not mutate args) and before the call; threaded into both post paths.
+        const olds = captureOldState(posts, context.args);
+
         const started = observeCompletions ? now() : 0;
         // Outside the try — see the header. A method throw skips postconditions and propagates.
         const result = proceed();
@@ -568,7 +574,7 @@ function enforcementBehavior(
             const checked = Promise.resolve(result).then(value => {
                 // Reified band first (DEC-033), then the closure band — see the header.
                 checkReturnConstraints(returns, value, calleeSite, observeViolation);
-                checkPostconditions(posts, value, context.args, calleeSite, observeViolation);
+                checkPostconditions(posts, value, context.args, calleeSite, observeViolation, olds);
                 return value;
             });
             // Observe the settled outcome of the checked promise without changing what is returned.
@@ -579,7 +585,7 @@ function enforcementBehavior(
         // Observables and other non-thenable objects are checked as the raw value (rxjs is gone —
         // DEC-019; real settling is deferred, plan §5).
         checkReturnConstraints(returns, result, calleeSite, observeViolation);
-        checkPostconditions(posts, result, context.args, calleeSite, observeViolation);
+        checkPostconditions(posts, result, context.args, calleeSite, observeViolation, olds);
         if (observeCompletions)
             emitCompleted(sink, siteObservation, now() - started, 'returned', true, callId);
         return result;
@@ -743,8 +749,9 @@ function checkPostconditions(
     args: ReadonlyArray<unknown>,
     site: ViolationSite,
     observe?: (facts: ViolationFacts, error: unknown) => void,
+    olds?: ReadonlyArray<unknown>,
 ): void {
-    const outcome = evaluatePostconditions(posts, result, args);
+    const outcome = evaluatePostconditions(posts, result, args, olds);
     if (outcome.ok || !outcome.failed) return;
 
     const message = postconditionMessage(site.owner, site.member, outcome.failed, result);

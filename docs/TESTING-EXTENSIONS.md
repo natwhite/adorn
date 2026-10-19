@@ -165,8 +165,14 @@ revised** by what survived scrutiny.
    throw = finding), runs enabled steps through the reused oracle body, and checks invariants survive every
    transition. Start-state from the existing `subject` factory; enumerates enabledness-only nullary methods
    (`pop()`) via `getEffectiveEnablednessKeys`. No drift (DEC-006/DEC-034).
-3. **`old()` / pre-state** — only if the sequence driver shows the invariant-preservation floor needs a
-   transition oracle, and then **sound by construction** (below).
+3. **`old()` / pre-state — SHIPPED (DEC-092).** Un-gated not by the sequence driver but by a consumer's
+   adversarial review (axiform §9): postconditions read post-call argument state, so an arg-mutating body
+   masked its own violation (a silent false-pass). Built **sound by construction** as planned below:
+   per-clause opt-in `capture(...args)` run at entry, deep-cloned + frozen into `old`, passed as
+   `predicate(result, old, ...args)`; no shallow-alias default; non-cloneable captures fail loudly. Wired
+   through `@Ensures` (options form), `contract()`, `contract.checked`, AND the `@adorn/test` oracle (which
+   snapshots before `makeCall` — no capture drift). Reads arguments only; object/field pre-state (via the
+   receiver) stays with #4.
 4. **Contract-diff projection + its `fragmentImplies` engine** — deferred; the seam static-checker's
    decidable subset is low-value while real seams are opaque `@Ensures` (harvest covers them soundly).
 

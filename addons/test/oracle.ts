@@ -79,6 +79,10 @@ import {
 // re-implemented, so a fuzz report redacts by exactly the rule enforcement redacts by. Not on the root
 // surface (Q-6 keeps it internal), so read from its module, as the add-on already does for descriptors.
 import {REDACTED, shouldDiscloseValue} from '../../src/Core/redaction';
+// Pre-state capture (axiform §9) — the SAME function enforcement runs, so the fuzzer snapshots a
+// postcondition's `old` exactly as the wrapper does (no drift). Captured BEFORE the method runs, since
+// makeCall may mutate the arguments. Internal, like the redaction primitives above.
+import {captureOldState} from '../../src/Core/prestate';
 // The assert-trust gate — read/restored around a postcondition-mode run so the driver can obtain the
 // settled return value to check it independently. See the header note ("How the settled value ...").
 import {getAssertEnforcement, setAssertEnforcement} from '../../src/Core/Configuration';
@@ -770,6 +774,8 @@ export interface OracleOutcome {
  * than checking the Promise object as if it were the value.
  */
 export function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOutcome | null {
+    // Snapshot postcondition pre-state BEFORE the call — makeCall runs the real method, which may mutate args.
+    const olds = captureOldState(ctx.posts, args);
     let call: CallResult;
     try {
         call = ctx.makeCall(args);
@@ -782,7 +788,7 @@ export function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOu
         return null;
     }
 
-    return checkSettled(call.receiver, call.result, args, ctx);
+    return checkSettled(call.receiver, call.result, args, ctx, olds);
 }
 
 /**
@@ -791,6 +797,8 @@ export function oracleOutcomeSync(args: unknown[], ctx: OracleContext): OracleOu
  * a robustness finding (the async twin of a sync throw). A synchronous return is checked directly.
  */
 export async function oracleOutcomeAsync(args: unknown[], ctx: OracleContext): Promise<OracleOutcome | null> {
+    // Snapshot postcondition pre-state BEFORE the call (see the sync twin).
+    const olds = captureOldState(ctx.posts, args);
     let call: CallResult;
     try {
         call = ctx.makeCall(args);
@@ -805,10 +813,10 @@ export async function oracleOutcomeAsync(args: unknown[], ctx: OracleContext): P
         } catch (error) {
             return classifyThrow(error);
         }
-        return checkSettled(call.receiver, settled, args, ctx);
+        return checkSettled(call.receiver, settled, args, ctx, olds);
     }
 
-    return checkSettled(call.receiver, call.result, args, ctx);
+    return checkSettled(call.receiver, call.result, args, ctx, olds);
 }
 
 /**
@@ -822,6 +830,7 @@ function checkSettled(
     result: unknown,
     args: unknown[],
     ctx: OracleContext,
+    olds?: ReadonlyArray<unknown>,
 ): OracleOutcome | null {
     // Field invariants apply only to an instance method — the sole case with a receiver AND field
     // contracts (a static method and a free function both have none). Gating on `fieldContracts` rather
@@ -832,7 +841,7 @@ function checkSettled(
     }
 
     if (ctx.mode === 'postcondition') {
-        return checkPostconditionBands(result, args, ctx);
+        return checkPostconditionBands(result, args, ctx, olds);
     }
 
     return null;
@@ -873,7 +882,12 @@ function checkFieldInvariants(
  * reported. A postcondition that *threw* is surfaced as a postcondition-violation naming the thrown
  * value, so a buggy oracle is not mistaken for the bug it hunts (foundation §5.2 pt 1).
  */
-function checkPostconditionBands(result: unknown, args: unknown[], ctx: OracleContext): OracleOutcome | null {
+function checkPostconditionBands(
+    result: unknown,
+    args: unknown[],
+    ctx: OracleContext,
+    olds?: ReadonlyArray<unknown>,
+): OracleOutcome | null {
     for (const descriptor of ctx.returns) {
         if (descriptor.predicate(result)) continue;
         return {
@@ -887,7 +901,7 @@ function checkPostconditionBands(result: unknown, args: unknown[], ctx: OracleCo
         };
     }
 
-    const outcome = evaluatePostconditions(ctx.posts, result, args);
+    const outcome = evaluatePostconditions(ctx.posts, result, args, olds);
     if (outcome.ok || !outcome.failed) return null;
 
     const description = outcome.failed.description || '(anonymous closure postcondition)';

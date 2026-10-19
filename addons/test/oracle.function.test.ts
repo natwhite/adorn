@@ -13,7 +13,7 @@
  */
 
 import * as fc from 'fast-check';
-import {contract, contractSpecOf, NumberContracts, StringContracts} from '../../index';
+import {contract, contractSpecOf, NumberContracts, StringContracts, ObjectContracts} from '../../index';
 import {resetConfiguration} from '../../src/Core/Configuration';
 import {resetValueDisclosure} from '../../src/Core/redaction';
 import {fuzzFunction, fuzzFunctionAsync} from './oracle';
@@ -285,5 +285,59 @@ describe('the fuzz report renders a free function honestly (L19)', () => {
 
         expect(report).toMatch(/absVal\(\)/);
         expect(report).not.toMatch(/class declares no field contracts/);
+    });
+});
+
+describe('a capturing postcondition (§9) is sound under the fuzzer — the oracle snapshots `old` at entry', () => {
+    it('does NOT false-positive when an arg-mutating body satisfies a correct capturing postcondition', () => {
+        const bump = contract(
+            {
+                params: [ObjectContracts.Fields({n: NumberContracts.Between(0, 100)})],
+                ensures: [
+                    {
+                        capture: (box: {n: number}) => ({n: box.n}),
+                        predicate: (result: number, old: {n: number}) => result === old.n + 1,
+                        description: 'returns the ORIGINAL n plus one',
+                    },
+                ],
+            },
+            function bump(box: {n: number}): number {
+                const r = box.n + 1;
+                box.n = r; // mutate the arg — a live-arg postcondition would read this post-state
+                return r;
+            },
+        );
+
+        const result = fuzzFunction(bump, {numRuns: 100});
+
+        // Without entry capture, the predicate would read `old.n` on `undefined` and throw → a false
+        // postcondition-violation. The oracle captures, so a correct contract passes clean.
+        expect(result.declined).toBe(false);
+        expect(result.passed).toBe(true);
+        expect(result.oracle).toBe('postcondition');
+    });
+
+    it('still FINDS a genuinely violated capturing postcondition', () => {
+        const buggy = contract(
+            {
+                params: [ObjectContracts.Fields({n: NumberContracts.Between(0, 100)})],
+                ensures: [
+                    {
+                        capture: (box: {n: number}) => ({n: box.n}),
+                        predicate: (result: number, old: {n: number}) => result === old.n, // body changes it
+                        description: 'returns the original n unchanged',
+                    },
+                ],
+            },
+            function buggy(box: {n: number}): number {
+                box.n = box.n + 1;
+                return box.n; // !== old.n — a real violation, not masked by the mutation
+            },
+        );
+
+        const result = fuzzFunction(buggy, {numRuns: 100, seed: 7});
+
+        expect(result.passed).toBe(false);
+        expect(result.finding!.type).toBe('postcondition-violation');
     });
 });

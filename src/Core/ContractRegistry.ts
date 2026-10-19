@@ -158,6 +158,16 @@ export interface Postcondition {
      * failing clause. Unused by the decorator path (`@Ensures` carries none); purely additive.
      */
     readonly id?: string;
+    /**
+     * Optional PRE-STATE capture (axiform feedback 2026-10-18 §9). Run against the arguments at call ENTRY —
+     * before the body can mutate them — and its result, deep-cloned and frozen (see `Core/prestate`), is
+     * handed to {@link predicate} as a leading `old` argument: `predicate(result, old, ...args)`. Without it
+     * the postcondition reads the POST-call argument state, so a body that mutates an argument can mask its
+     * own violation. Opt-in per clause; the receiver (`this`) is not bound — a capture reads only the
+     * arguments, which is all a postcondition's pre-state needs here (object pre-state is a constructor/field
+     * concern, deferred).
+     */
+    readonly capture?: (...args: any[]) => unknown;
 }
 
 /**

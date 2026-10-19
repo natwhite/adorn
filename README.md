@@ -240,7 +240,11 @@ union of every declaration on its prototype chain, and may only *strengthen*, ne
 `Contract()` (class) / `Validate()` (method) install enforcement and register for projection.
 
 - **`@Ensures((result, ...args) => boolean, description?)`** — a **closure** postcondition (DEC-032): fully
-  general, but enforced-but-unprojectable (a closure carries no identity).
+  general, but enforced-but-unprojectable (a closure carries no identity). An options form
+  **`@Ensures({predicate, capture?, description?, id?})`** adds PRE-STATE (DEC-092): `capture(...args)` runs at
+  call entry and its deep-cloned, frozen result is passed to the predicate as `old`
+  (`(result, old, ...args)`), so a body that mutates an argument can't mask its own violation. The same
+  `capture` form is available on `contract()`/`contract.checked`'s `ensures`.
 - **`@Returns(<descriptor>)`** — a **reified** postcondition (DEC-033): checked by the same predicate machinery
   preconditions use *and* emitted into docs and schema. Coexists with `@Ensures`.
 - **`@Requires((...args) => boolean, description?)`** — the input-side twin (DEC-057): a **closure**

@@ -44,6 +44,7 @@ import {Verify, violationFromCheck} from '../Validation/Verify';
 import type {CheckFailure} from '../Validation/Verify';
 import {evaluatePreconditions} from '../Core/Preconditions';
 import {evaluatePostconditions} from '../Core/Postconditions';
+import {captureOldState} from '../Core/prestate';
 import {applyViolationPolicy, DEFAULT_TRUST, type ViolationSite} from '../Core/Configuration';
 import type {Precondition, Postcondition} from '../Core/ContractRegistry';
 import {settle, Settlement} from '../Core/settle';
@@ -78,6 +79,20 @@ interface SpecClause<P> {
 }
 
 /**
+ * The capturing form of an `ensures` entry (axiform feedback 2026-10-18 §9): a `capture(...args)` run at call
+ * ENTRY whose deep-cloned, frozen result is handed to the predicate as a leading `old` — so a postcondition
+ * can compare against pre-mutation state that a body-mutating argument would otherwise have overwritten. The
+ * predicate reads `(result, old, ...args)`; `old` is typed `any` so the author annotates it (`old: Foo`)
+ * without a cast. See `Core/prestate` for the snapshot semantics (cloneable data only; non-cloneable throws).
+ */
+interface CapturingPostcondition {
+    readonly capture: (...args: any[]) => any;
+    readonly predicate: (result: any, old: any, ...args: any[]) => boolean;
+    readonly description?: string;
+    readonly id?: string;
+}
+
+/**
  * The declarative contract for {@link contract}. Every field is optional — an all-empty spec is a no-op
  * wrapper. `params` is **positional** (a `null` slot is an argument with nothing to say about it, so it is
  * skipped), mirroring a decorated signature where an undecorated parameter is simply unconstrained.
@@ -97,6 +112,7 @@ export interface ContractSpec {
     readonly ensures?: ReadonlyArray<
         | ((result: any, ...args: any[]) => boolean)
         | SpecClause<(result: any, ...args: any[]) => boolean>
+        | CapturingPostcondition
     >;
     /** Reified return descriptor, `@Returns`-shaped — checked before the closure `ensures`. */
     readonly returns?: AnyDescriptor;
@@ -206,11 +222,20 @@ const toPrecondition = (
         : {predicate: entry.predicate, description: entry.description, id: entry.id};
 
 const toPostcondition = (
-    entry: ((result: any, ...args: any[]) => boolean) | SpecClause<(result: any, ...args: any[]) => boolean>,
-): Postcondition =>
-    typeof entry === 'function'
-        ? {predicate: entry}
-        : {predicate: entry.predicate, description: entry.description, id: entry.id};
+    entry:
+        | ((result: any, ...args: any[]) => boolean)
+        | SpecClause<(result: any, ...args: any[]) => boolean>
+        | CapturingPostcondition,
+): Postcondition => {
+    if (typeof entry === 'function') return {predicate: entry};
+    const capture = 'capture' in entry ? entry.capture : undefined;
+    return {
+        predicate: entry.predicate,
+        description: entry.description,
+        id: entry.id,
+        ...(capture ? {capture} : {}),
+    };
+};
 
 function makeObservation(observe: {kind?: SpanKind; name?: string}, fn: AnyFn): Observation {
     const name = observe.name || fn.name || 'anonymous';
@@ -379,6 +404,9 @@ function evaluateToVerdict<R>(
     // A pre-call failure (reachable only in `all` mode here — `first` mode returned above): do NOT run the body.
     if (pre.length) return failureVerdict<R>(pre, false, undefined, 0, all);
 
+    // Pre-state snapshot (axiform §9), captured BEFORE the body so a postcondition's `old` is entry-state.
+    const olds = posts.length ? captureOldState(posts, args) : undefined;
+
     // 3. Run the body (timed, async-aware via the shared classifier). The verdict is built in `onSettle`,
     //    which fires once when the call settles — synchronously for a sync body, later for a promise.
     let verdict: ContractVerdict<R> | undefined;
@@ -402,15 +430,15 @@ function evaluateToVerdict<R>(
             }
         }
 
-        // 5. Closure postconditions — the SAME evaluator enforcement runs.
+        // 5. Closure postconditions — the SAME evaluator enforcement runs, with the entry-captured `olds`.
         if (posts.length) {
             if (all) {
                 for (let i = 0; i < posts.length; i++) {
-                    const pr = evaluatePostconditions([posts[i]], result, args);
+                    const pr = evaluatePostconditions([posts[i]], result, args, olds ? [olds[i]] : undefined);
                     if (!pr.ok) post.push(ensuresFailure(i, posts[i], pr.error));
                 }
             } else {
-                const pr = evaluatePostconditions(posts, result, args);
+                const pr = evaluatePostconditions(posts, result, args, olds);
                 if (!pr.ok) post.push(ensuresFailure(posts.indexOf(pr.failed), pr.failed, pr.error));
             }
         }
@@ -513,6 +541,11 @@ function contractImpl<F extends AnyFn>(spec: ContractSpec, fn: F): F {
             }
         }
 
+        // Pre-state snapshot (axiform §9): capture BEFORE the body runs, so a postcondition's `old` reflects
+        // entry-state even if the body mutates an argument. Computed here (after the pre-call gate, which does
+        // not mutate args) and read in the postcondition band below.
+        const olds = posts.length ? captureOldState(posts, args) : undefined;
+
         // 3. Call, timed and async-aware. The return/postcondition band runs on the SETTLED value; an
         // onSettle throw propagates (sync) or rejects the returned promise (async) — that IS the enforcement.
         const onSettle = (s: Settlement<unknown>): void => {
@@ -544,7 +577,7 @@ function contractImpl<F extends AnyFn>(spec: ContractSpec, fn: F): F {
 
             // 5. Closure postconditions — the same oracle @Ensures runs.
             if (posts.length) {
-                const post = evaluatePostconditions(posts, result, args);
+                const post = evaluatePostconditions(posts, result, args, olds);
                 if (!post.ok) {
                     const f = ensuresFailure(posts.indexOf(post.failed), post.failed, post.error);
                     emitViolation(f.facts);
