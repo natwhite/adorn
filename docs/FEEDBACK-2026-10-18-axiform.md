@@ -67,6 +67,17 @@ a counterexample, later a before/after diff.
    plus a local build. Separately, `constraintFromJSON` isn't on the public surface, so a consumer holding
    `toJSON()` output can't rehydrate it.
 
+9. **Postconditions see the arguments *after* the body ran, so a body can mask its own violation.**
+   `contract()` evaluates `ensures` as `predicate(result, ...args)` with the same argument objects the body
+   received. A body that mutates an argument changes what its postconditions check against. Found during
+   Axiform's M0 adversarial review: a clamp that returns `5` for `{raw: -1}` and also sets `raw = 5` passes
+   every postcondition (`out == in` now holds) and completes cleanly. The violation is masked, and any
+   consumer recording the argument object records the falsified value. Axiform now hands realizations a
+   deep-frozen clone. Suggestions, in order of strength: evaluate postconditions against a pre-call
+   snapshot (it's the same mechanism the planned `old()` needs); or freeze/clone arguments when the contract
+   has postconditions; or at least document that postconditions read the post-call argument state. This one
+   is a soundness issue, not ergonomics, so it should probably come before §3–§8.
+
 ## Request
 
 **Main request (covers 1, 2, 4, 5 and optionally 6):** a checked call form of `contract()` that returns a
