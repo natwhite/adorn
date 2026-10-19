@@ -286,6 +286,20 @@ export const notEmptyConstraint = defineConstraint<MinLengthParams, string>({
     schema: params => ({type: 'string', minLength: params.minLength}),
 });
 
+/**
+ * The bare primitive-type rule: any string (axiform feedback 2026-10-18 §3). The sibling of
+ * `NumberContracts.Finite` — "just a string", which every type-system mapping needs and had to author with
+ * `defineConstraint`. No length or content claim: `''` passes. The `{type: 'string'}` fragment is truthful
+ * because the predicate type-guards.
+ */
+export const stringConstraint = defineConstraint<JsonObject, string>({
+    kind: 'string',
+    constraint: 'string',
+    derive: () => (value: unknown) => typeof value === 'string',
+    describe: () => 'a string',
+    schema: () => ({type: 'string'}),
+});
+
 export const matchesConstraint = defineConstraint<PatternParams, string>({
     kind: 'string',
     constraint: 'matches',
@@ -463,6 +477,15 @@ export function MaxLength(maxLength: number) {
  */
 export function NotEmpty() {
     return notEmptyConstraint({minLength: 1});
+}
+
+/**
+ * The bare string type: accepts any string (including `''`), rejects every non-string. The primitive a
+ * type-system mapping wants (axiform feedback 2026-10-18 §3). Named `Str` — not `String` — because
+ * `String` is the global this module calls for value rendering; a shadowing export would break that.
+ */
+export function Str() {
+    return stringConstraint({});
 }
 
 /**

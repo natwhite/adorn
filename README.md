@@ -5,9 +5,9 @@
 > observability — all **derived from that one declaration**, so those artifacts can't drift from each other by
 > construction, not by discipline.
 
-**Status: released — `0.1.0`, MIT.** `npm i adorn`. The public surface is pinned by a test (`index.ts`
-exports **104 values** plus the projection and observation model types); the suite is **1355 tests
-across 78 suites**, all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
+**Status: `0.1.0`, MIT — source-available, not yet on npm under this name** (see [Install](#install)). The
+public surface is pinned by a test (`index.ts` exports **106 values** plus the projection and observation
+model types); the suite is all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
 and field inheritance, closure and reified pre-/postconditions, five in-core projections (docs, JSON Schema,
 prescriptive LLM tool schema, observability, privacy review), a safe-by-default redaction runtime, a
 build-time sensitive-flow detector, and a CLI. Two opt-in add-ons ship as **subpath exports** — `adorn/otel`
@@ -481,9 +481,16 @@ secures *its own* emissions only — a raw `console.log` of a sensitive value is
 
 ### Install
 
-```bash
-npm i adorn
-```
+> **Not yet on npm under the name `adorn`** (that name is held by an unrelated package). Until a published
+> name is settled, install from the repository — a `prepare` script builds `dist/` on install, so a git
+> dependency works without a checked-in build:
+>
+> ```bash
+> npm i github:natwhite/adorn        # a tag/sha pin is recommended, e.g. #v0.1.0
+> ```
+>
+> or vendor it as a submodule and point a `file:` dependency at it. The published-package install line will
+> be added here once the name is chosen.
 
 The only runtime dependency is `tslib`. The package ships CommonJS with `.d.ts` types through its `exports`
 map, plus the `adorn` `bin`.

@@ -196,10 +196,43 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // future stateful-sequence driver's enabledness check). Its writer (`recordEnablednessGuard`) and the
     // `*EnablednessKeys` helpers stay internal, exactly like the `@Requires` band.
     // `EnablednessResult`/`EnablednessGuard`/`EnablednessPredicate` are type-only and do not count.
-    const PINNED_VALUE_EXPORT_COUNT = 104;
+    //
+    // 104 → 106: axiform feedback (2026-10-18) adds TWO value exports — `constraintFromJSON` (§8, the
+    // rehydration half of the `toJSON()` round-trip, formerly internal) and the `BooleanContracts` namespace
+    // (§3, the bare boolean primitive type). The number/string primitives `NumberContracts.Finite` and
+    // `StringContracts.Str` (§3) ride the EXISTING namespaces, so they move nothing; `SerializedConstraint`
+    // is type-only. (The verdict surface — `contract.checked`, §1 — is a property on the existing `contract`
+    // function, not a new root export, and the `ContractVerdict` type is type-only: neither moves the count.)
+    const PINNED_VALUE_EXPORT_COUNT = 106;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
+    });
+});
+
+describe('axiform feedback (2026-10-18) adds exactly its intended exports', () => {
+    const api = adorn as Record<string, any>;
+    it('exports constraintFromJSON — the rehydration half of the JSON round-trip (§8)', () => {
+        expect(typeof api.constraintFromJSON).toBe('function');
+        // Round-trips a serialised descriptor back to an enforceable one.
+        const revived = api.constraintFromJSON(JSON.parse(JSON.stringify(adorn.NumberContracts.Between(1, 7))));
+        expect(revived.predicate(5)).toBe(true);
+        expect(revived.predicate(9)).toBe(false);
+    });
+    it('exports the BooleanContracts namespace with a Bool() primitive (§3)', () => {
+        expect(typeof api.BooleanContracts).toBe('object');
+        expect(typeof api.BooleanContracts.Bool).toBe('function');
+        const bool = api.BooleanContracts.Bool();
+        expect(bool.predicate(true)).toBe(true);
+        expect(bool.predicate('true')).toBe(false);
+    });
+    it('adds the number/string primitives to the EXISTING namespaces (§3, count-neutral)', () => {
+        expect(typeof adorn.NumberContracts.Finite).toBe('function');
+        expect(typeof adorn.StringContracts.Str).toBe('function');
+        expect(adorn.NumberContracts.Finite().predicate(1.5)).toBe(true);
+        expect(adorn.NumberContracts.Finite().predicate(Infinity)).toBe(false);
+        expect(adorn.StringContracts.Str().predicate('')).toBe(true);
+        expect(adorn.StringContracts.Str().predicate(0)).toBe(false);
     });
 });
 

@@ -56,7 +56,12 @@ export type {ConstraintDescriptor, ConstraintParams, Localization} from './src/C
 // `defineConstraint` and the types its definition uses, so a consumer can define a constraint from data
 // (DEC-050) and use it in `Verify.check`/`toolSchemaFrom` exactly like a built-in. `getConstraintDefinition`
 // stays internal (it returns `ConstraintDefinition<any>` — no `any` reaches the surface).
-export {defineConstraint} from './src/Core/Descriptor';
+//
+// `constraintFromJSON` (+ the `SerializedConstraint` wire type) is the REHYDRATION half (axiform feedback
+// 2026-10-18 §8): `toJSON()` was reachable but its inverse was not, so a consumer holding a serialised
+// descriptor could not rebuild an enforceable one. It is the same function the compositional descriptors use
+// internally; exporting it closes the round-trip on the public surface.
+export {defineConstraint, constraintFromJSON} from './src/Core/Descriptor';
 export type {
     ConstraintDefinition,
     ConstraintFactory,
@@ -65,6 +70,7 @@ export type {
     ViolationContext,
     JsonObject,
     JsonValue,
+    SerializedConstraint,
 } from './src/Core/Descriptor';
 
 // --- Method decorators ----------------------------------------------------
@@ -211,6 +217,10 @@ export type {Settlement, SettleKind} from './src/Core/settle';
 //     @CreateFieldDecorator(NumberContracts.MultipleOf(5)) step: number;
 import * as NumberContracts from './src/Contracts/number';
 import * as StringContracts from './src/Contracts/string';
+// The bare boolean primitive-type descriptor (axiform feedback 2026-10-18 §3): `BooleanContracts.Bool()`,
+// the sibling of `NumberContracts.Finite()`/`StringContracts.Str()`, for a type-system mapping that wants a
+// boolean without spelling it `OneOf([true, false])`.
+import * as BooleanContracts from './src/Contracts/boolean';
 // `@OneOf` (IDEA-21/GAP-14): the reified enum/membership descriptor. `EnumContracts.OneOf([...])`
 // yields a descriptor for `Verify.that`/`CreateFieldDecorator`, exactly as the number/string
 // namespaces expose theirs; the flat `OneOf` above is the parameter *decorator* over the same rule.
@@ -424,8 +434,10 @@ export {
     telemetryForClass, telemetryForContracts, serializeTelemetry, generateTelemetryReport,
 
     // Constraint descriptors (data, not decorators). `ArrayContracts` (DEC-050) is the compositional
-    // one — its `ArrayOf` takes another descriptor as its item.
-    NumberContracts, StringContracts, EnumContracts, ArrayContracts, ObjectContracts, NullableContracts,
+    // one — its `ArrayOf` takes another descriptor as its item. `BooleanContracts` (axiform §3) is the
+    // bare boolean primitive type; `NumberContracts.Finite`/`StringContracts.Str` are its number/string twins
+    // (added to the existing namespaces, so only `BooleanContracts` moves the surface count).
+    NumberContracts, StringContracts, BooleanContracts, EnumContracts, ArrayContracts, ObjectContracts, NullableContracts,
 };
 
 /*

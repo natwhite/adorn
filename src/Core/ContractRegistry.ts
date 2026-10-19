@@ -150,6 +150,14 @@ export interface Postcondition {
     readonly predicate: PostconditionPredicate;
     /** Optional human phrase for the violation message, e.g. "the balance covers the withdrawal". */
     readonly description?: string;
+    /**
+     * Optional STABLE identity for this clause, distinct from the human-readable {@link description}
+     * (axiform feedback 2026-10-18 §5). A closure degrades to the `_OTHER` facts sentinel, so a consumer
+     * that needs to map a failure back to a declared clause has only `description` to key on — a convention
+     * resting on a display string. `id` makes that explicit: `contract.checked`'s verdict carries it on the
+     * failing clause. Unused by the decorator path (`@Ensures` carries none); purely additive.
+     */
+    readonly id?: string;
 }
 
 /**
@@ -172,6 +180,12 @@ export interface Precondition {
     readonly predicate: PreconditionPredicate;
     /** Optional human phrase for the violation message, e.g. "start is before end". */
     readonly description?: string;
+    /**
+     * Optional STABLE identity for this clause, the input-side twin of {@link Postcondition.id} (axiform
+     * feedback 2026-10-18 §5) — a key a consumer maps a failure back to, distinct from the display
+     * `description`. Surfaced on `contract.checked`'s verdict; unused by the `@Requires` decorator path.
+     */
+    readonly id?: string;
 }
 
 /**

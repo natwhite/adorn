@@ -49,6 +49,22 @@ describe('L11 — violationFromCheck maps a failed CheckResult onto ViolationFac
         expect(facts.blame).toBe('callee');
         expect(facts.parameterName).toBeUndefined();
     });
+
+    it('forwards the localized path of a compositional failure (axiform §4)', () => {
+        // A bad nested field localizes: the oracle computes `path`, and the facts must now carry it so a
+        // sink can say WHICH field failed without re-running Verify.check.
+        const r = asFail(Verify.check(shape, 'args', {name: 'ok', age: 999})); // age out of range
+        expect(r.path).toBeDefined();
+        expect(r.path && r.path.length).toBeGreaterThan(0);
+        const facts = violationFromCheck(r, {parameter: 'args'});
+        expect(facts.path).toEqual(r.path);
+    });
+
+    it('omits path when the failure is not localized (a primitive constraint)', () => {
+        const r = asFail(Verify.check(StringContracts.NotEmpty(), 'x', ''));
+        expect(r.path).toBeUndefined();
+        expect(violationFromCheck(r, {}).path).toBeUndefined();
+    });
 });
 
 describe('L12 — createConsoleObservationSink writes through a configurable stream', () => {

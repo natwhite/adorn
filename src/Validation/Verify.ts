@@ -232,7 +232,10 @@ export type CheckFailure = Extract<CheckResult<unknown>, {ok: false}>;
  * `path`; the caller supplies the `trust`/`blame`/parameter identity the enforcement SITE would have added
  * (defaults `guard`/`caller` — the posture of validating untrusted input at a boundary). `params` is empty:
  * a `CheckResult` does not carry the descriptor's params, exactly as an `@Ensures` closure violation
- * degrades — the value-free facts stay honest rather than invented. Feeds `adorn/otel`'s `violationAttributes`.
+ * degrades — the value-free facts stay honest rather than invented. The localized `path` IS forwarded
+ * (axiform feedback 2026-10-18 §4): without it the sink kept the innermost `expected` but could not say
+ * *which field* of a `Fields` argument failed, forcing a consumer to re-run `Verify.check` to recover it.
+ * Feeds `adorn/otel`'s `violationAttributes`.
  */
 export function violationFromCheck(
     result: CheckFailure,
@@ -248,6 +251,7 @@ export function violationFromCheck(
         kind: result.kind,
         params: {},
         expectation: result.expected || result.message,
+        ...(result.path && result.path.length > 0 ? {path: result.path} : {}),
         ...(options && typeof options.parameter === 'string' ? {parameterName: options.parameter} : {}),
         parameterIndex: options && typeof options.index === 'number' ? options.index : 0,
         trust: (options && options.trust) || 'guard',

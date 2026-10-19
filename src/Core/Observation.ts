@@ -214,6 +214,14 @@ export interface ViolationFacts {
     readonly kind: ConstraintKind;
     readonly params: ConstraintParams;
     readonly expectation: string; // describe() — 'a string of at least 10 characters'
+    /**
+     * The path to the failing sub-location for a COMPOSITIONAL descriptor (DEC-060), carried through from
+     * the `CheckResult.path` the oracle localized — `['slotInput', 'when']` for a bad nested field,
+     * `['tags', 2]` for a bad array element. Present only when the failing descriptor localized the failure
+     * (axiform feedback 2026-10-18 §4); absent for a primitive/container-gate failure and for a `@Ensures`
+     * closure (which has no descriptor to localize). Lets a sink say *which field* of a `Fields` argument failed.
+     */
+    readonly path?: ReadonlyArray<string | number>;
     readonly parameterName?: string;
     readonly parameterIndex: number; // RETURN_INDEX for a postcondition on the return value
     readonly parameterType?: string;

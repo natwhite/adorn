@@ -194,6 +194,14 @@ const within = (params: Readonly<RangeParams>): Predicate => {
 const whole = (): Predicate => (value: unknown) => isNumeric(value) && Number.isInteger(value);
 
 /**
+ * The bare primitive-type rule: a finite number (axiform feedback 2026-10-18 §3). Every consumer mapping a
+ * type system onto adorn needs "just a number" and had to write it with `defineConstraint`. STRICTER than
+ * {@link isNumeric} — it excludes `Infinity`/`-Infinity` too, so the name is exact and the `{type:'number'}`
+ * schema stays truthful (neither JSON nor the schema's `number` admits a non-finite value).
+ */
+const finite = (): Predicate => (value: unknown) => typeof value === 'number' && Number.isFinite(value);
+
+/**
  * Exact for integer operands; tolerant for fractional ones.
  *
  * `0.3 % 0.1` is `0.09999999999999998`, not `0`, so a naive `%` reports that `0.3` is not a
@@ -298,6 +306,16 @@ export const integerConstraint = defineConstraint<JsonObject, number>({
     schema: () => ({type: 'integer'}),
 });
 
+export const finiteConstraint = defineConstraint<JsonObject, number>({
+    kind: 'number',
+    constraint: 'finite',
+    derive: finite,
+    describe: () => 'a finite number',
+    // A type fragment, truthful because `finite` type-guards (like `integer`): the schema's `number`
+    // cannot represent `Infinity`/`NaN`, and neither does this predicate admit them.
+    schema: () => numeric({}),
+});
+
 export const multipleOfConstraint = defineConstraint<MultipleOfParams, number>({
     kind: 'number',
     constraint: 'multipleOf',
@@ -396,6 +414,16 @@ export function Between(min: number, max: number) {
 /** Rejects non-integers, and any non-number. `1.0` is an integer; `1.5`, `Infinity`, `NaN` are not. */
 export function Integer() {
     return integerConstraint({});
+}
+
+/**
+ * The bare numeric type: accepts any finite number, rejects non-numbers and `NaN`/`Infinity`. The
+ * primitive every type-system mapping wants (axiform feedback 2026-10-18 §3) — `Finite()` rather than a
+ * bound. It is NOT a boundary (DEC-020 forbids boundary-named constraints); it states a *type*, exactly as
+ * `Integer()` does.
+ */
+export function Finite() {
+    return finiteConstraint({});
 }
 
 /**

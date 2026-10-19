@@ -63,6 +63,20 @@ type AnyDescriptor = ConstraintDescriptor<ConstraintParams, unknown>;
 type AnyFn = (...args: any[]) => any;
 
 /**
+ * The object form a `requires`/`ensures` entry may take: a predicate of the band's shape plus an optional
+ * human `description` and an optional stable `id`. Spec-local (not the registry's `Precondition`/
+ * `Postcondition`) so the predicate's `result`/args stay `any` — a caller annotates them without a cast
+ * (axiform feedback 2026-10-18 §7) — and so `id` (§5) rides the authoring surface. Normalised to the
+ * registry shapes by {@link toPrecondition}/{@link toPostcondition}; the `any`-param predicate is assignable
+ * to the registry band's `unknown`-param predicate, so there is no runtime or drift difference.
+ */
+interface SpecClause<P> {
+    readonly predicate: P;
+    readonly description?: string;
+    readonly id?: string;
+}
+
+/**
  * The declarative contract for {@link contract}. Every field is optional — an all-empty spec is a no-op
  * wrapper. `params` is **positional** (a `null` slot is an argument with nothing to say about it, so it is
  * skipped), mirroring a decorated signature where an undecorated parameter is simply unconstrained.
@@ -70,14 +84,19 @@ type AnyFn = (...args: any[]) => any;
 export interface ContractSpec {
     /** Per-parameter descriptors, positional. `null` = an unconstrained argument (a hole). */
     readonly params?: ReadonlyArray<AnyDescriptor | null>;
-    /** Cross-parameter preconditions, `@Requires`-shaped: `(...args) => boolean`, or `{predicate, description}`. */
-    readonly requires?: ReadonlyArray<((...args: any[]) => boolean) | Precondition>;
+    /** Cross-parameter preconditions, `@Requires`-shaped: `(...args) => boolean`, or `{predicate, description?, id?}`. */
+    readonly requires?: ReadonlyArray<((...args: any[]) => boolean) | SpecClause<(...args: any[]) => boolean>>;
     /**
-     * Postconditions, `@Ensures`-shaped: `(result, ...args) => boolean`, or `{predicate, description}`.
-     * `result` is typed `any` (not the decorator band's `unknown`), so a caller may annotate it — `(r: Foo)
-     * => …` — without a cast; the runtime check is unchanged.
+     * Postconditions, `@Ensures`-shaped: `(result, ...args) => boolean`, or `{predicate, description?, id?}`.
+     * `result` is typed `any` (not the registry band's `unknown`) in BOTH forms, so a caller may annotate it
+     * — `(r: Foo) => …` or `{predicate: (r: Foo) => …}` — without a cast (axiform feedback 2026-10-18 §7: the
+     * object form formerly reused `Postcondition`'s `result: unknown`, so an annotated predicate that
+     * type-checked as a bare function failed to type-check as `{predicate}`). The runtime check is unchanged.
      */
-    readonly ensures?: ReadonlyArray<((result: any, ...args: any[]) => boolean) | Postcondition>;
+    readonly ensures?: ReadonlyArray<
+        | ((result: any, ...args: any[]) => boolean)
+        | SpecClause<(result: any, ...args: any[]) => boolean>
+    >;
     /** Reified return descriptor, `@Returns`-shaped — checked before the closure `ensures`. */
     readonly returns?: AnyDescriptor;
     /** When present, wrap the call in an observation `scope` and emit `completed`/`violation` events. */
@@ -126,11 +145,19 @@ export function contractSpecOf(fn: unknown): ContractSpec | undefined {
     return contractMetaOf(fn)?.spec;
 }
 
-const toPrecondition = (entry: ((...args: any[]) => boolean) | Precondition): Precondition =>
-    typeof entry === 'function' ? {predicate: entry} : entry;
+const toPrecondition = (
+    entry: ((...args: any[]) => boolean) | SpecClause<(...args: any[]) => boolean>,
+): Precondition =>
+    typeof entry === 'function'
+        ? {predicate: entry}
+        : {predicate: entry.predicate, description: entry.description, id: entry.id};
 
-const toPostcondition = (entry: ((result: any, ...args: any[]) => boolean) | Postcondition): Postcondition =>
-    typeof entry === 'function' ? {predicate: entry} : entry;
+const toPostcondition = (
+    entry: ((result: any, ...args: any[]) => boolean) | SpecClause<(result: any, ...args: any[]) => boolean>,
+): Postcondition =>
+    typeof entry === 'function'
+        ? {predicate: entry}
+        : {predicate: entry.predicate, description: entry.description, id: entry.id};
 
 function makeObservation(observe: {kind?: SpanKind; name?: string}, fn: AnyFn): Observation {
     const name = observe.name || fn.name || 'anonymous';

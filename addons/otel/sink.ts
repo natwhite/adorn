@@ -529,6 +529,11 @@ export function violationAttributes(facts: ViolationFacts, prefix = 'adorn'): Ot
         attributes[`${prefix}.violation.parameterName`] = facts.parameterName;
     if (facts.parameterType !== undefined)
         attributes[`${prefix}.violation.parameterType`] = facts.parameterType;
+    // The localized sub-path for a compositional descriptor (axiform feedback 2026-10-18 §4), joined to a
+    // dotted string since a span attribute is scalar — `'slotInput.when'`, `'tags.2'`. Absent for a
+    // primitive/container-gate failure and for an `@Ensures` closure (no descriptor to localize).
+    if (facts.path !== undefined && facts.path.length > 0)
+        attributes[`${prefix}.violation.path`] = facts.path.join('.');
     return attributes;
 }
 
