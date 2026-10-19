@@ -234,6 +234,10 @@ describe('axiform feedback (2026-10-18) adds exactly its intended exports', () =
         expect(adorn.StringContracts.Str().predicate('')).toBe(true);
         expect(adorn.StringContracts.Str().predicate(0)).toBe(false);
     });
+    it('exposes contract.checked as a PROPERTY on contract, not a new root export (§1)', () => {
+        expect(typeof (api.contract as Record<string, unknown>).checked).toBe('function');
+        expect(Object.keys(adorn)).not.toContain('checked'); // rides `contract`; moves no count
+    });
 });
 
 describe('voice-agent Round 3 adds exactly its intended functional-surface exports (DEC-074)', () => {

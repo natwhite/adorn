@@ -45,7 +45,16 @@ export type {CheckResult, CheckFailure} from './src/Validation/Verify';
 // `contract()` — the functional twin of @Contract/@Requires/@Ensures/@Returns/@Observe (L9, DEC-074),
 // so a zero-class codebase can enforce a contract on a plain function from descriptors, no decoration point.
 import {contract, contractSpecOf} from './src/Functional/contract';
-export type {ContractSpec} from './src/Functional/contract';
+// `contract.checked(spec, fn)` (axiform §1) is the non-throwing twin: a per-call `ContractVerdict` as DATA,
+// no global state. It is a property on `contract` (not a new root export); these are its type-only companions.
+export type {
+    ContractSpec,
+    ContractVerdict,
+    VerdictFailure,
+    VerdictBand,
+    CheckedFn,
+    ContractFn,
+} from './src/Functional/contract';
 // The reified constraint type (GAP-22) — the declared parameter type of `@Dictionary`/`@ArrayOf`/`@Nullable`
 // and the shape `Verify.that`/`check` narrow from. Type-only; carries the phantom output param (DEC-059),
 // so `ConstraintDescriptor<ConstraintParams, string>` names a string-producing constraint.

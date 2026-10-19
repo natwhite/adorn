@@ -437,6 +437,12 @@ decorator on the signature, and each of these is a decorator's job available as 
   decorators do (no drift), settles an async result before the return band, and — with `observe` set — emits
   `completed`/`violation` events to the installed sink. This is the fourth of four decorator jobs available as
   a function, so a zero-class codebase can adopt the enforcement layer whole.
+- **`contract.checked(spec, fn)`** — the non-throwing twin (DEC-091): each call returns a `ContractVerdict` —
+  the per-call outcome *as data* (`{ok, value}` on success; `{ok:false, band, index, id?, facts, value?, message}`
+  for a contract failure; `{ok:false, band:'body', error}` for a thrown body) — with no global state (never the
+  violation policy, never the sink). The verdict carries the settled return, the localized `path`, and, with
+  `{evaluate:'all'}`, every failure. Same bands, same oracles, same failure builders as `contract()`, so an
+  evidence/verdict consumer and a thrown violation cannot disagree.
 - **`violationFromCheck(result, {parameter?})`** — turn a failed `check` into `ViolationFacts` (DEC-074), so a
   functional refusal emits as a `violation` event on the same stream the decorator weave feeds (and that
   `adorn/otel` maps). One observability stream, decorator or not.

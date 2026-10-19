@@ -41,6 +41,7 @@
 
 import type {ConstraintDescriptor, ConstraintParams} from '../Core/Descriptor';
 import {Verify, violationFromCheck} from '../Validation/Verify';
+import type {CheckFailure} from '../Validation/Verify';
 import {evaluatePreconditions} from '../Core/Preconditions';
 import {evaluatePostconditions} from '../Core/Postconditions';
 import {applyViolationPolicy, DEFAULT_TRUST, type ViolationSite} from '../Core/Configuration';
@@ -102,6 +103,58 @@ export interface ContractSpec {
     /** When present, wrap the call in an observation `scope` and emit `completed`/`violation` events. */
     readonly observe?: {readonly kind?: SpanKind; readonly name?: string};
 }
+
+/**
+ * The band a {@link ContractVerdict} failure occurred in — the enforcement order, minus `'body'` (a throw
+ * from the function itself, which is its own verdict arm).
+ */
+export type VerdictBand = 'params' | 'requires' | 'returns' | 'ensures';
+
+/**
+ * One failing clause in a {@link ContractVerdict}: the value-free {@link ViolationFacts} (including the
+ * localized `path` for a compositional descriptor, axiform §4) plus the band, the position WITHIN the band,
+ * the clause's declared `id` if any (§5), and the redacted `message` — everything an evidence record needs,
+ * as data, with no throw.
+ */
+export interface VerdictFailure {
+    readonly band: VerdictBand;
+    /**
+     * Position within the band: the argument index for `params`, the clause index for `requires`/`ensures`,
+     * `RETURN_INDEX` for the single `returns` descriptor.
+     */
+    readonly index: number;
+    /** The clause's declared `id` (a `{predicate, id}` entry in `requires`/`ensures`), if it carried one. */
+    readonly id?: string;
+    readonly facts: ViolationFacts;
+    /** The redacted message the enforcing form would have thrown. */
+    readonly message: string;
+}
+
+/**
+ * The per-call verdict {@link ContractFn.checked} returns INSTEAD of throwing (axiform feedback 2026-10-18
+ * §1/§2) — the structured outcome as data, with NO global state: it never routes through `setViolationPolicy`
+ * and never emits to the observation sink. The SAME bands the enforcing {@link contract} runs, surfaced
+ * rather than thrown, through the SAME oracles (no drift).
+ *
+ * - `{ok: true, value, durationMs}` — every band held; `value` is the settled return.
+ * - `{ok: false, band: 'params'|'requires'|'returns'|'ensures', index, id?, facts, message, value?, failures?}`
+ *   — a contract band failed. The top-level fields are the FIRST failure; `value` is the settled return for a
+ *   `returns`/`ensures` failure (the body ran) and ABSENT for a `params`/`requires` failure (the body did not
+ *   run). With `{evaluate: 'all'}`, `failures` lists every failure in the evaluated bands (`failures[0]` equals
+ *   the top-level fields); without it only the first is reported.
+ * - `{ok: false, band: 'body', error, durationMs}` — the function itself threw/rejected; the throw is captured
+ *   (never swallowed, never re-thrown), and the `returns`/`ensures` bands are skipped, exactly as enforcement
+ *   skips them on a body throw.
+ */
+export type ContractVerdict<R = unknown> =
+    | {readonly ok: true; readonly value: R; readonly durationMs: number}
+    | ({
+          readonly ok: false;
+          readonly durationMs: number;
+          readonly value?: R;
+          readonly failures?: ReadonlyArray<VerdictFailure>;
+      } & VerdictFailure)
+    | {readonly ok: false; readonly band: 'body'; readonly error: unknown; readonly durationMs: number};
 
 /**
  * The metadata a {@link contract} wrapper carries about itself, hung off the returned function under
@@ -197,11 +250,204 @@ const closureMessage = (
     return `${band} not met${tail}`;
 };
 
+// ---------------------------------------------------------------------------
+// Per-call verdict (axiform §1): the shared failure builders + the pure evaluator `contract.checked` uses.
+//
+// Both the enforcing path (below) and `contract.checked` construct their failures HERE, so a verdict's
+// facts/message/band/index/id are byte-identical to what enforcement emits and throws — the no-drift
+// guarantee extends past the shared `Verify.check`/`evaluatePreconditions`/`evaluatePostconditions` oracles to
+// the failure DATA itself. Only the SURFACING differs: enforcement emits + routes through the violation policy
+// (may throw); `checked` records into the verdict and never touches global state.
+// ---------------------------------------------------------------------------
+
+const paramFailure = (index: number, r: CheckFailure): VerdictFailure => ({
+    band: 'params',
+    index,
+    facts: violationFromCheck(r, {index, blame: 'caller'}),
+    message: r.message,
+});
+
+const requiresFailure = (index: number, failed: Precondition, error: unknown): VerdictFailure => ({
+    band: 'requires',
+    index,
+    ...(failed.id !== undefined ? {id: failed.id} : {}),
+    facts: closureViolation(failed.description, 'caller'),
+    message: closureMessage('Precondition', failed.description, error),
+});
+
+const returnsFailure = (r: CheckFailure): VerdictFailure => ({
+    band: 'returns',
+    index: RETURN_INDEX,
+    facts: violationFromCheck(r, {parameter: 'return', index: RETURN_INDEX, blame: 'callee'}),
+    message: r.message,
+});
+
+const ensuresFailure = (index: number, failed: Postcondition, error: unknown): VerdictFailure => ({
+    band: 'ensures',
+    index,
+    ...(failed.id !== undefined ? {id: failed.id} : {}),
+    facts: closureViolation(failed.description, 'callee'),
+    message: closureMessage('Postcondition', failed.description, error),
+});
+
+/**
+ * Assemble a failure verdict from the collected failures. `failures[0]` is surfaced at the top level; the full
+ * list rides `failures` only in `evaluate:'all'` mode. `ran` distinguishes a post-call failure (the body ran —
+ * carry `value`, even when it is `undefined`) from a pre-call one (no body ran, so no value).
+ */
+function failureVerdict<R>(
+    failures: ReadonlyArray<VerdictFailure>,
+    ran: boolean,
+    value: R | undefined,
+    durationMs: number,
+    all: boolean,
+): ContractVerdict<R> {
+    const first = failures[0];
+    const verdict: Record<string, unknown> = {
+        ok: false,
+        band: first.band,
+        index: first.index,
+        facts: first.facts,
+        message: first.message,
+        durationMs,
+    };
+    if (first.id !== undefined) verdict.id = first.id;
+    if (ran) verdict.value = value;
+    if (all) verdict.failures = failures;
+    return verdict as ContractVerdict<R>;
+}
+
+const isThenable = (value: unknown): value is PromiseLike<unknown> =>
+    !!value &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as {then?: unknown}).then === 'function';
+
+/**
+ * The pure per-call evaluator behind {@link ContractFn.checked}. Runs the bands in enforcement order and
+ * returns a {@link ContractVerdict} — it NEVER throws for a contract violation, NEVER consults
+ * `setViolationPolicy`, and NEVER emits to the observation sink (the "no global state" axiform §1 asks for). A
+ * pre-call failure (params/requires) short-circuits the body: the body is never run on input the contract
+ * rejects (evidence integrity, and it matches the enforcing path, which throws before the body on a
+ * precondition). The settled value/duration come from the shared {@link settle} classifier, so sync and async
+ * are classified exactly as `contract()`/`@Time` classify them. An Observable return is out of scope (this
+ * form is sync/Promise-oriented): the stream passes through as the value with the post-bands unchecked.
+ */
+function evaluateToVerdict<R>(
+    fn: AnyFn,
+    spec: ContractSpec,
+    pres: ReadonlyArray<Precondition>,
+    posts: ReadonlyArray<Postcondition>,
+    thisArg: unknown,
+    args: any[],
+    evaluate: 'first' | 'all',
+): ContractVerdict<R> | Promise<ContractVerdict<R>> {
+    const all = evaluate === 'all';
+    const pre: VerdictFailure[] = [];
+
+    // 1. Per-parameter descriptors (positional, left to right).
+    if (spec.params) {
+        for (let i = 0; i < spec.params.length; i++) {
+            const descriptor = spec.params[i];
+            if (!descriptor) continue; // a hole
+            const r = Verify.check(descriptor, `arg${i}`, args[i]);
+            if (!r.ok) {
+                pre.push(paramFailure(i, r));
+                if (!all) return failureVerdict<R>(pre, false, undefined, 0, false);
+            }
+        }
+    }
+
+    // 2. Cross-parameter preconditions — the SAME evaluator enforcement runs. Per-clause in `all` mode (to
+    //    report every failing requirement with its index), the batch call in `first` mode (stops at the first,
+    //    matching enforcement). `evaluatePreconditions` is total — it catches a predicate throw — so running it
+    //    after a param failure in `all` mode is safe.
+    if (pres.length) {
+        if (all) {
+            for (let i = 0; i < pres.length; i++) {
+                const rr = evaluatePreconditions([pres[i]], args);
+                if (!rr.ok) pre.push(requiresFailure(i, pres[i], rr.error));
+            }
+        } else {
+            const rr = evaluatePreconditions(pres, args);
+            if (!rr.ok) {
+                pre.push(requiresFailure(pres.indexOf(rr.failed), rr.failed, rr.error));
+                return failureVerdict<R>(pre, false, undefined, 0, false);
+            }
+        }
+    }
+
+    // A pre-call failure (reachable only in `all` mode here — `first` mode returned above): do NOT run the body.
+    if (pre.length) return failureVerdict<R>(pre, false, undefined, 0, all);
+
+    // 3. Run the body (timed, async-aware via the shared classifier). The verdict is built in `onSettle`,
+    //    which fires once when the call settles — synchronously for a sync body, later for a promise.
+    let verdict: ContractVerdict<R> | undefined;
+    const onSettle = (s: Settlement<unknown>): void => {
+        if (s.outcome !== 'returned') {
+            verdict = {ok: false, band: 'body', error: s.error, durationMs: s.durationMs};
+            return; // a body throw skips the post bands, exactly as the enforcing path does
+        }
+        const result = s.value as R;
+        const post: VerdictFailure[] = [];
+
+        // 4. Reified return descriptor (checked first, DEC-033).
+        if (spec.returns) {
+            const rr = Verify.check(spec.returns, 'return', result);
+            if (!rr.ok) {
+                post.push(returnsFailure(rr));
+                if (!all) {
+                    verdict = failureVerdict<R>(post, true, result, s.durationMs, false);
+                    return;
+                }
+            }
+        }
+
+        // 5. Closure postconditions — the SAME evaluator enforcement runs.
+        if (posts.length) {
+            if (all) {
+                for (let i = 0; i < posts.length; i++) {
+                    const pr = evaluatePostconditions([posts[i]], result, args);
+                    if (!pr.ok) post.push(ensuresFailure(i, posts[i], pr.error));
+                }
+            } else {
+                const pr = evaluatePostconditions(posts, result, args);
+                if (!pr.ok) post.push(ensuresFailure(posts.indexOf(pr.failed), pr.failed, pr.error));
+            }
+        }
+
+        verdict =
+            post.length > 0
+                ? failureVerdict<R>(post, true, result, s.durationMs, all)
+                : {ok: true, value: result, durationMs: s.durationMs};
+    };
+
+    let out: unknown;
+    try {
+        out = settle(() => fn.apply(thisArg, args), onSettle);
+    } catch {
+        // A synchronous body throw: `settle` handed the settlement to `onSettle` (which set the `body` verdict)
+        // and then re-threw. We swallow that re-throw — the throw IS the verdict here, not an escape.
+        return verdict as ContractVerdict<R>;
+    }
+    if (isThenable(out)) {
+        // Async: `onSettle` fires when the promise settles, BEFORE this continuation runs, so the verdict is
+        // built either way. A rejection is a captured `band:'body'` verdict — never a propagated rejection.
+        return Promise.resolve(out).then(
+            () => verdict as ContractVerdict<R>,
+            () => verdict as ContractVerdict<R>,
+        );
+    }
+    // Sync return (verdict set by `onSettle`), or an Observable passthrough (settle fires `onSettle` only on
+    // subscription, which has not happened): the stream is handed back as the value, post-bands unchecked.
+    return verdict ?? {ok: true, value: out as R, durationMs: 0};
+}
+
 /**
  * Wrap `fn` with the contract in `spec`, returning a function of the same signature. See the module header
- * for the enforcement order and no-drift guarantee.
+ * for the enforcement order and no-drift guarantee. The public entry point is the {@link contract} value
+ * below (this impl plus its `.checked` twin).
  */
-export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
+function contractImpl<F extends AnyFn>(spec: ContractSpec, fn: F): F {
     const pres = (spec.requires || []).map(toPrecondition);
     const posts = (spec.ensures || []).map(toPostcondition);
     const observe = spec.observe;
@@ -244,12 +490,14 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
                 if (!descriptor) continue; // a hole
                 const r = Verify.check(descriptor, `arg${i}`, args[i]);
                 if (!r.ok) {
-                    // `strict` narrows `r` to the CheckResult failure arm here (DEC-079) — no cast.
-                    emitViolation(violationFromCheck(r, {index: i, blame: 'caller'}));
+                    // `strict` narrows `r` to the CheckResult failure arm here (DEC-079) — no cast. The facts +
+                    // message come from the SHARED builder `contract.checked` uses, so the two cannot drift.
+                    const f = paramFailure(i, r);
+                    emitViolation(f.facts);
                     // Route through the policy (DEC-080): throws by default, or `'warn'`/a handler proceeds
                     // — the loop then continues into the body with the offending argument. The violation
                     // event above already fired, regardless (seeing ≠ emitting, DEC-036).
-                    applyViolationPolicy(new Error(r.message), callerSite);
+                    applyViolationPolicy(new Error(f.message), callerSite);
                 }
             }
         }
@@ -258,14 +506,10 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
         if (pres.length) {
             const pre = evaluatePreconditions(pres, args);
             if (!pre.ok) {
-                emitViolation(closureViolation(pre.failed && pre.failed.description, 'caller'));
+                const f = requiresFailure(pres.indexOf(pre.failed), pre.failed, pre.error);
+                emitViolation(f.facts);
                 // Policy-routed (DEC-080): `'warn'`/a handler falls through into the call below.
-                applyViolationPolicy(
-                    new Error(
-                        closureMessage('Precondition', pre.failed && pre.failed.description, pre.error),
-                    ),
-                    callerSite,
-                );
+                applyViolationPolicy(new Error(f.message), callerSite);
             }
         }
 
@@ -289,13 +533,12 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
             if (spec.returns) {
                 const rr = Verify.check(spec.returns, 'return', result);
                 if (!rr.ok) {
-                    // `strict` narrows `rr` to the failure arm here (DEC-079) — no cast.
-                    emitViolation(
-                        violationFromCheck(rr, {parameter: 'return', index: RETURN_INDEX, blame: 'callee'}),
-                    );
+                    // `strict` narrows `rr` to the failure arm here (DEC-079) — no cast; shared builder.
+                    const f = returnsFailure(rr);
+                    emitViolation(f.facts);
                     // Policy-routed (DEC-080): under `'warn'`/a suppressing handler, `onSettle` does not
                     // throw, so `settle` returns the (contract-violating) value — as the decorator does.
-                    applyViolationPolicy(new Error(rr.message), calleeSite);
+                    applyViolationPolicy(new Error(f.message), calleeSite);
                 }
             }
 
@@ -303,18 +546,10 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
             if (posts.length) {
                 const post = evaluatePostconditions(posts, result, args);
                 if (!post.ok) {
-                    emitViolation(closureViolation(post.failed && post.failed.description, 'callee'));
+                    const f = ensuresFailure(posts.indexOf(post.failed), post.failed, post.error);
+                    emitViolation(f.facts);
                     // Policy-routed (DEC-080): `'warn'`/a suppressing handler returns the value.
-                    applyViolationPolicy(
-                        new Error(
-                            closureMessage(
-                                'Postcondition',
-                                post.failed && post.failed.description,
-                                post.error,
-                            ),
-                        ),
-                        calleeSite,
-                    );
+                    applyViolationPolicy(new Error(f.message), calleeSite);
                 }
             }
         };
@@ -345,3 +580,55 @@ export function contract<F extends AnyFn>(spec: ContractSpec, fn: F): F {
 
     return wrapped as F;
 }
+
+/**
+ * The verdict type {@link ContractFn.checked} yields for a function of return type `R`: a bare
+ * {@link ContractVerdict} for a sync function, a promise of one for an async (thenable-returning) function.
+ */
+type CheckedResult<R> = [R] extends [Promise<infer U>] ? Promise<ContractVerdict<U>> : ContractVerdict<R>;
+
+/** The checked twin of a function `F`: the same parameters, a {@link ContractVerdict} in place of the return. */
+export type CheckedFn<F extends AnyFn> = (...args: Parameters<F>) => CheckedResult<ReturnType<F>>;
+
+/** The callable `contract` value: the enforcing wrapper, plus `.checked` — its verdict-returning twin. */
+export interface ContractFn {
+    <F extends AnyFn>(spec: ContractSpec, fn: F): F;
+    /**
+     * The non-throwing twin of {@link contract} (axiform feedback 2026-10-18 §1): wraps `fn` so each call
+     * returns a {@link ContractVerdict} — the structured per-call outcome as DATA — instead of throwing. No
+     * global state: it never routes through `setViolationPolicy` and never emits to the observation sink, so
+     * it is safe for async and concurrent callers (the gaps the sink-swap workaround had). `{evaluate: 'all'}`
+     * reports every failure in the evaluated bands via `failures`, rather than only the first.
+     */
+    readonly checked: <F extends AnyFn>(
+        spec: ContractSpec,
+        fn: F,
+        options?: {readonly evaluate?: 'first' | 'all'},
+    ) => CheckedFn<F>;
+}
+
+function checked<F extends AnyFn>(
+    spec: ContractSpec,
+    fn: F,
+    options?: {readonly evaluate?: 'first' | 'all'},
+): CheckedFn<F> {
+    const pres = (spec.requires || []).map(toPrecondition);
+    const posts = (spec.ensures || []).map(toPostcondition);
+    const evaluate: 'first' | 'all' = options && options.evaluate === 'all' ? 'all' : 'first';
+    const run = function (this: unknown, ...args: any[]): ContractVerdict | Promise<ContractVerdict> {
+        return evaluateToVerdict(fn, spec, pres, posts, this, args, evaluate);
+    };
+    // Carry the wrapped function's identity, exactly as the enforcing wrapper does (voice-agent L19/L22).
+    Object.defineProperty(run, 'name', {value: fn.name, configurable: true});
+    Object.defineProperty(run, 'length', {value: fn.length, configurable: true});
+    return run as CheckedFn<F>;
+}
+
+/**
+ * `contract(spec, fn)` ENFORCES a contract on a plain function — throwing (or routing through
+ * `setViolationPolicy`) on a violation, and emitting to the observation sink when `observe` is set.
+ * `contract.checked(spec, fn)` is its non-throwing twin (axiform §1): it returns a {@link ContractVerdict} —
+ * the per-call outcome as data — with no global state. Both run the SAME bands through the SAME oracles, and
+ * construct any failure through the SAME builders, so a verdict and a thrown/emitted violation cannot disagree.
+ */
+export const contract: ContractFn = Object.assign(contractImpl, {checked});
