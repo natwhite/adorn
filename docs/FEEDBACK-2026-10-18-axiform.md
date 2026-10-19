@@ -78,6 +78,18 @@ a counterexample, later a before/after diff.
    has postconditions; or at least document that postconditions read the post-call argument state. This one
    is a soundness issue, not ergonomics, so it should probably come before §3–§8.
 
+10. **(Added after `03d4e71`.) The new `prepare` script breaks `file:`-linked consumers on `npm install`.**
+    With npm 11.3, a consumer depending on `"adorn": "file:<path>"` runs Adorn's `prepare` during its own
+    root install. Arborist first *retires* the linked package's devDependencies from `<path>/node_modules`
+    (the debug log shows `reify mark retired` for Adorn's dev tree), then runs `prepare` → `npm run build`,
+    which fails with `TS2688: Cannot find type definition file for 'node'`, and the whole install rolls back.
+    Axiform hit this immediately (submodule + `file:vendor/adorn`). job-agent's `file:../adorn` is the same
+    shape and will likely fail on its next `npm install`. Axiform works around it with
+    `npm install --ignore-scripts`. Options: guard `prepare` so it's a no-op when `dist/` is already built or
+    when not installing from git; or document that `file:` consumers must pass `--ignore-scripts`. Note that
+    `prepare` *does* make `github:natwhite/adorn#<sha>` work, which is the better consumer path once commits
+    are on the remote.
+
 ## Request
 
 **Main request (covers 1, 2, 4, 5 and optionally 6):** a checked call form of `contract()` that returns a
