@@ -8,14 +8,9 @@
  * empty tool schema, exactly as `@Ensures` emits nothing.
  */
 
-import {
-    Requires,
-    GreaterThanEqual,
-    Contract,
-    toolSchemaForMethod,
-    evaluatePreconditions,
-    getEffectivePreconditions,
-} from '../index';
+import {Requires, GreaterThanEqual, Contract} from '../index';
+import {toolSchemaForMethod} from '../schema';
+import {evaluatePreconditions, getEffectivePreconditions} from '../introspection';
 
 describe('@Requires — cross-parameter enforcement (DEC-057)', () => {
     @Contract()

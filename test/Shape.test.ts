@@ -10,17 +10,8 @@
  * `required` matches exactly what enforcement requires (no drift, DEC-006).
  */
 
-import {
-    Shape,
-    ArrayOf,
-    Dictionary,
-    Enforce,
-    ObjectContracts,
-    Contract,
-    toolSchemaForMethod,
-    schemaForClass,
-    Verify,
-} from '../index';
+import {Shape, ArrayOf, Dictionary, Enforce, ObjectContracts, Contract, Verify} from '../index';
+import {toolSchemaForMethod, schemaForClass} from '../schema';
 
 // A contracted field class, decorated BEFORE anything that `@Shape`s it (DEC-007 ordering).
 class Point {

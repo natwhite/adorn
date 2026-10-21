@@ -8,19 +8,8 @@
  * phrasing — the whole reason the shared `strictifyForProvider` pass was parameterized.
  */
 
-import {
-    Contract,
-    Tool,
-    NotEmpty,
-    GreaterThanEqual,
-    Nullable,
-    Shape,
-    Dictionary,
-    Optional,
-    Enforce,
-    toolSchemaForMethod,
-    StringContracts,
-} from '../index';
+import {Contract, Tool, NotEmpty, GreaterThanEqual, Nullable, Shape, Dictionary, Optional, Enforce, StringContracts} from '../index';
+import {toolSchemaForMethod} from '../schema';
 
 // A contracted field class for @Shape — every field is a class invariant, hence always required.
 class Point {

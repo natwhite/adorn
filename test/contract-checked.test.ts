@@ -8,16 +8,10 @@
  * the SAME builders the enforcing `contract()` uses, so the two cannot drift.
  */
 
-import {
-    contract,
-    setObservationSink,
-    getObservationSink,
-    ObjectContracts,
-    NumberContracts,
-    StringContracts,
-    RETURN_INDEX,
-} from '../index';
-import type {ContractVerdict, ObservationSink, ObservationEvent} from '../index';
+import {contract, setObservationSink, ObjectContracts, NumberContracts, StringContracts} from '../index';
+import {getObservationSink, RETURN_INDEX} from '../observe';
+import type {ContractVerdict} from '../index';
+import type {ObservationSink, ObservationEvent} from '../observe';
 
 // Narrow a (possibly async) verdict to the sync arm for assertions.
 function sync<R>(v: ContractVerdict<R> | Promise<ContractVerdict<R>>): ContractVerdict<R> {

@@ -25,19 +25,15 @@ import {
     type ReadableSpan,
 } from '@opentelemetry/sdk-trace-base';
 
+import {Contract, Observe, Telemetry, GreaterThan, setObservationSink} from '../../index';
 import {
-    Contract,
-    Observe,
-    Telemetry,
-    GreaterThan,
     RETURN_INDEX,
-    setObservationSink,
     type ObservationEvent,
     type ObservationSink,
     type ObservationCall,
     type EmittedValue,
     type Observation,
-} from '../../index';
+} from '../../observe';
 import {createOtelSink, mapSpanKind, attributesFromValues} from './index';
 
 // Test scaffolding (not the public surface) — global registry/config reset between cases, as elsewhere.

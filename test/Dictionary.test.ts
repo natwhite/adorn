@@ -8,15 +8,8 @@
  * schema and runtime enforcement (DEC-006).
  */
 
-import {
-    Dictionary,
-    ObjectContracts,
-    StringContracts,
-    NumberContracts,
-    Contract,
-    toolSchemaForMethod,
-    Verify,
-} from '../index';
+import {Dictionary, ObjectContracts, StringContracts, NumberContracts, Contract, Verify} from '../index';
+import {toolSchemaForMethod} from '../schema';
 
 describe('ObjectContracts.Dictionary — the descriptor (DEC-054)', () => {
     const descriptor = ObjectContracts.Dictionary(StringContracts.NotEmpty());

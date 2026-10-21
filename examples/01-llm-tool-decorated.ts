@@ -8,16 +8,8 @@
  *   Run:  npx ts-node examples/01-llm-tool-decorated.ts
  *   (In your own project the import is `from 'adorn'`.)
  */
-import {
-    Contract,
-    Tool,
-    Describe,
-    NotEmpty,
-    OneOf,
-    GreaterThanEqual,
-    LessThanEqual,
-    toolSchemaForMethod,
-} from '../index';
+import {Contract, Tool, Describe, NotEmpty, OneOf, GreaterThanEqual, LessThanEqual} from '../index';
+import {toolSchemaForMethod} from '../schema'; // in your own project: `from 'adorn/schema'`
 
 @Contract()
 class WeatherTool {

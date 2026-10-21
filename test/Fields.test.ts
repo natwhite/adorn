@@ -7,14 +7,8 @@
  * `typed-descriptors.test.ts`; this file covers runtime behaviour and the no-drift round-trip.
  */
 
-import {
-    Verify,
-    ObjectContracts,
-    NumberContracts,
-    StringContracts,
-    EnumContracts,
-    toolSchemaFrom,
-} from '../index';
+import {Verify, ObjectContracts, NumberContracts, StringContracts, EnumContracts} from '../index';
+import {toolSchemaFrom} from '../schema';
 
 const {Fields} = ObjectContracts;
 

@@ -61,7 +61,7 @@ import {
     getEffectiveEnablednessGuards,
     getEffectivePostconditions,
     getEffectivePreconditions,
-} from '../../index';
+} from '../../introspection';
 import {arbitraryForParameter, Arbitrary, ParameterArbitrary} from './arbitraries';
 // The oracle body and its coverage/gate helpers, reused verbatim (widened to `export` for this driver but
 // NOT re-exported from `index.ts`, so they stay add-on-internal). Reuse, not duplication: an enabled step

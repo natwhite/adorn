@@ -16,7 +16,7 @@ import {Between} from '../../src/ParameterDecorators/Constraints';
 import {Requires} from '../../src/MethodDecorators/Requires';
 import {Ensures} from '../../src/MethodDecorators/Ensures';
 import {resetConfiguration} from '../../src/Core/Configuration';
-import {evaluatePreconditions, getEffectivePreconditions} from '../../index';
+import {evaluatePreconditions, getEffectivePreconditions} from '../../introspection';
 import {fuzzMethod, fuzzMethodAsync} from './oracle';
 
 beforeEach(resetConfiguration);

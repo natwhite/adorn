@@ -7,16 +7,10 @@
  *
  *   Run:  npx ts-node examples/07-observability.ts
  */
-import {
-    Contract,
-    Observe,
-    GreaterThan,
-    setObservationSink,
-    getObservationSink,
-    nextCallId,
-    consoleObservationSink,
-} from '../index';
-import type {Observation, ObservationEvent} from '../index';
+import {Contract, Observe, GreaterThan, setObservationSink} from '../index';
+// Reading the sink, the id sequence, and the ready-made console sink live in `adorn/observe` (DEC-097).
+import {getObservationSink, nextCallId, consoleObservationSink} from '../observe';
+import type {Observation, ObservationEvent} from '../observe';
 
 // A tiny sink that captures events so we can print them plainly.
 const events: ObservationEvent[] = [];

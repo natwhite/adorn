@@ -11,17 +11,9 @@
  *  class below, so that is all you see. There are per-class forms too: `documentClass`,
  *  `schemaForClass`, `telemetryForClass`.)
  */
-import {
-    Contract,
-    Tool,
-    Describe,
-    NotEmpty,
-    Between,
-    Sensitive,
-    generateMarkdown,
-    generateSchema,
-    generateTelemetryReport,
-} from '../index';
+import {Contract, Tool, Describe, NotEmpty, Between, Sensitive} from '../index';
+import {generateMarkdown, generateSchema} from '../schema'; // in your own project: `from 'adorn/schema'`
+import {generateTelemetryReport} from '../privacy'; // `from 'adorn/privacy'`
 
 @Contract()
 class UserService {

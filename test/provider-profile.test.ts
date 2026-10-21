@@ -4,8 +4,9 @@
  * names what strict mode actually is — a specific provider's compatibility rules, not a generic flag. An
  * unsupported provider is a loud build-time error, never a silent OpenAI fallback.
  */
-import {toolSchemaFrom, NullableContracts, StringContracts, NumberContracts} from '../index';
-import type {ToolSchemaProvider} from '../index';
+import {NullableContracts, StringContracts, NumberContracts} from '../index';
+import {toolSchemaFrom} from '../schema';
+import type {ToolSchemaProvider} from '../schema';
 
 const input = {
     name: 'f',

@@ -10,18 +10,10 @@
  * UNPROJECTABLE — an `@EnabledWhen`-only method emits an empty tool schema.
  */
 
-import {
-    EnabledWhen,
-    Requires,
-    GreaterThanEqual,
-    Contract,
-    toolSchemaForMethod,
-    evaluateEnabledness,
-    getEffectiveEnablednessGuards,
-    getEffectivePreconditions,
-    setViolationPolicy,
-} from '../index';
-import type {EnablednessGuard} from '../index';
+import {EnabledWhen, Requires, GreaterThanEqual, Contract, setViolationPolicy} from '../index';
+import {toolSchemaForMethod} from '../schema';
+import {evaluateEnabledness, getEffectiveEnablednessGuards, getEffectivePreconditions} from '../introspection';
+import type {EnablednessGuard} from '../introspection';
 import {resetConfiguration, setConfigurationSink} from '../src/Core/Configuration';
 
 describe('@EnabledWhen — state-reading enforcement (DEC-089)', () => {

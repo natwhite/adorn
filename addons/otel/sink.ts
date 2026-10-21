@@ -82,7 +82,7 @@ import {
     type Attributes as AdornAttributes,
     type SpanKind as AdornSpanKind,
     type Settlement,
-} from '../../index';
+} from '../../observe';
 import {
     trace,
     context as otelContext,

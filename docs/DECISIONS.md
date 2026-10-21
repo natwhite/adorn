@@ -1491,3 +1491,24 @@ There is **no shallow-alias default** (which would re-introduce the hole) and **
 **Tooling notes.** tsup/esbuild transforms the legacy-decorator SYNTAX but does not emit `emitDecoratorMetadata` (no `@swc/core`), which is irrelevant: adorn reads only a CONSUMER's `design:paramtypes`, never its own (DEC-004). The add-on ESM bundles inline the core they import, so a consumer mixing `adorn` (CJS) and `adorn/otel` (ESM) has two core copies — SAFE only because of the DEC-095 `globalThis` singletons. `tsup.config.ts` is excluded from the `tsc` build (its `tsup` import's `.d.ts` reference `@swc/core` / `./types.cts`, unresolvable under `node16`).
 
 **Verified.** Clean `rebuild` (tsc + CLI tsc + tsup) succeeds; green-twice in-band **83 suites / 1407 tests** (incl. the isolation suite); CJS (`require(dist/index.js)`) and ESM (`import(dist/esm/index.mjs)`) smoke tests both exercise the facade + `toolSchemaFrom` + `Verify.check` and pass; the `adorn` bin runs (`--version` → `0.1.0`). Consumer re-test (axiform / voice-agent read `dist` via `file:`/submodule) is the one check left to the owner; the `require` path is unchanged, so CJS consumers are unaffected by construction.
+
+---
+
+## DEC-097 — root-surface curation: projections / introspection / observation / privacy onto subpaths (GPT review item 5)
+**Status:** ACCEPTED (owner: "is moving off root better aligned/cleaner long-term? if so, let's pay the cost upfront" — yes) · **BUILT** · semver-major · root surface **107 → 69**
+
+**Why aggressive, not additive.** The external review flagged the ~100-export root as a grab-bag that hides the ~10-function authoring API among plumbing. The additive half-measure (subpath aliases that ALSO keep everything on root) does not fix it — the root barrel still autocompletes everything and a bundler still can't prune it. Only genuinely MOVING the plumbing off root delivers the slim, honest surface and lets DEC-096's ESM tree-shake. The semver-major cost is near-zero now (`0.1.0`, not on npm, two consumers in active feedback loops) and never cheaper; the owner chose to pay it upfront.
+
+**The partition.** Root `adorn` keeps the authoring + configuration surface: every decorator, the descriptor factories + the `Contracts` facade, `contract` / `contract.checked` / `contractSpecOf`, `Verify` / `Enforce`, `defineConstraint` / `constraintFromJSON`, and the config setters (`setViolationPolicy`, the mode/trust setters, `setObservationSink`, the diagnostics setters, value-disclosure). 38 value exports moved to four subpaths — new entry files `schema.ts` / `introspection.ts` / `observe.ts` / `privacy.ts`, each re-exporting from the SAME src modules the root used:
+- **`adorn/schema`** (10) — the docs + JSON-Schema + tool-schema projections.
+- **`adorn/introspection`** (17) — the 7 registry reads, the 7 `getEffective*` reads, and the three `evaluate*` oracles.
+- **`adorn/observe`** (7) — `getObservationSink`, `settle`, `RETURN_INDEX`, `nextCallId`, the console-sink pair, `violationFromCheck`, plus the `ObservationSink` model types.
+- **`adorn/privacy`** (4) — the telemetry / privacy-review projection.
+
+**The line.** "Author and call" stays on root; "generate an artifact, introspect the registry, wire observation plumbing" moves to a named subpath. `setObservationSink` stays on root (a configuration verb, grouped with `setViolationPolicy`) while *reading* / *constructing* observation data lives in `adorn/observe` — a clean install-vs-inspect split. The registry WRITERS stay internal everywhere (Q-6); the subpaths export reads, never writers.
+
+**Build + types.** The four entry files compile like `index.ts` (`dist/schema.js` … via tsc; `dist/esm/schema.mjs` … via the DEC-096 tsup pass, added as four new tsup entries), each with its own `exports` conditions (types / import / require) sharing the tsc `.d.ts`.
+
+**Consumer impact (the cost, paid once).** A consumer importing a moved symbol from `'adorn'` changes one import line to the subpath (`import { toolSchemaFrom } from 'adorn/schema'`). Inside this repo that was ~24 files (tests / examples / add-ons) mechanically redirected; the compiler caught every straggler. A migration note goes to the two live consumers (the voice-agent and the job agent) to apply and report issues BEFORE the 4–5 series is pushed.
+
+**Verified.** Typecheck 0; clean rebuild (tsc + CLI + tsup, all seven ESM entries built); green-twice in-band **83 suites / 1412 tests**; the four CJS subpaths resolve under `require`; `public-surface.test.ts` rewritten — root pinned at **69**, the registry reads asserted on `adorn/introspection`, and a new block pins each subpath's surface and asserts the moved symbols are GONE from root.

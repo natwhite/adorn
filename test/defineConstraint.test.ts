@@ -6,7 +6,8 @@
  * (DEC-050) and use it in `Verify.check` (with narrowing) and `toolSchemaFrom` exactly like a built-in.
  */
 
-import {defineConstraint, Verify, toolSchemaFrom} from '../index';
+import {defineConstraint, Verify} from '../index';
+import {toolSchemaFrom} from '../schema';
 import type {ConstraintDescriptor, JsonObject} from '../index';
 
 // A consumer-authored constraint. `Out = number` so `Verify.check` narrows `unknown` to `number`.

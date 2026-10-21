@@ -5,7 +5,7 @@
  */
 
 import {contract, setObservationSink, setViolationPolicy, NumberContracts, StringContracts} from '../index';
-import type {ObservationEvent} from '../index';
+import type {ObservationEvent} from '../observe';
 import {resetConfiguration, setConfigurationSink} from '../src/Core/Configuration';
 
 type ViolationEvent = Extract<ObservationEvent, {kind: 'violation'}>;

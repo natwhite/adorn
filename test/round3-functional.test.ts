@@ -3,16 +3,10 @@
  * `createConsoleObservationSink` (L12).
  */
 
-import {
-    Verify,
-    violationFromCheck,
-    createConsoleObservationSink,
-    consoleObservationSink,
-    ObjectContracts,
-    StringContracts,
-    NumberContracts,
-} from '../index';
-import type {CheckResult, CheckFailure, Observation, ObservationEvent} from '../index';
+import {Verify, ObjectContracts, StringContracts, NumberContracts} from '../index';
+import {violationFromCheck, createConsoleObservationSink, consoleObservationSink} from '../observe';
+import type {CheckResult, CheckFailure} from '../index';
+import type {Observation, ObservationEvent} from '../observe';
 
 const shape = ObjectContracts.Fields({
     name: StringContracts.NotEmpty(),

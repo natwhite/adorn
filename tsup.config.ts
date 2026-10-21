@@ -20,6 +20,11 @@ import {defineConfig} from 'tsup';
 export default defineConfig({
     entry: {
         index: 'index.ts',
+        // The DEC-097 curation subpaths — the same symbols, off the root barrel so they tree-shake out.
+        schema: 'schema.ts',
+        introspection: 'introspection.ts',
+        observe: 'observe.ts',
+        privacy: 'privacy.ts',
         'otel/index': 'addons/otel/index.ts',
         'test/index': 'addons/test/index.ts',
     },

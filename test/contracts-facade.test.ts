@@ -4,14 +4,8 @@
  * proof (every member IS the namespace factory) lives in `public-surface.test.ts`; this pins the end-to-end
  * behaviour a developer actually writes.
  */
-import {
-    Contracts,
-    Verify,
-    toolSchemaFrom,
-    StringContracts,
-    ArrayContracts,
-    NullableContracts,
-} from '../index';
+import {Contracts, Verify, StringContracts, ArrayContracts, NullableContracts} from '../index';
+import {toolSchemaFrom} from '../schema';
 
 describe('Contracts fluent facade — end to end (DEC-094)', () => {
     it('validates through Verify.check identically to the namespace descriptor', () => {

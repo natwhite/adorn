@@ -16,6 +16,10 @@
  */
 
 import * as adorn from '../index';
+import * as schema from '../schema';
+import * as introspection from '../introspection';
+import * as observe from '../observe';
+import * as privacy from '../privacy';
 
 // The public registry READ surface (index.ts's "Registry introspection" + "Inheritance-aware reads"
 // sections). Enumerated from index.ts's export block, not guessed — every name here is exported there.
@@ -90,12 +94,15 @@ const INTERNAL_KEY_HELPERS = [
     'getEffectiveReturnConstraints',
 ] as const;
 
-describe('Q-6: the registry READ surface is frozen public API', () => {
-    it.each(PUBLIC_REGISTRY_READS)('exports the public registry read %s', name => {
-        // Present AND callable — a read demoted to a non-function (or dropped) is a breaking change
-        // that the projections and the `adorn` binary would only discover at runtime.
-        expect(adorn).toHaveProperty(name);
-        expect(typeof (adorn as Record<string, unknown>)[name]).toBe('function');
+describe('Q-6 + DEC-097: the registry READ surface is frozen, now on `adorn/introspection`', () => {
+    it.each(PUBLIC_REGISTRY_READS)('exports the public registry read %s from adorn/introspection', name => {
+        // The reads moved OFF the root barrel in the DEC-097 curation into `adorn/introspection`. Present AND
+        // callable — a read demoted to a non-function (or dropped) is a breaking change the projections and the
+        // `adorn` binary would only discover at runtime.
+        expect(introspection).toHaveProperty(name);
+        expect(typeof (introspection as Record<string, unknown>)[name]).toBe('function');
+        // And gone from the root — the curation's whole point.
+        expect(adorn).not.toHaveProperty(name);
     });
 });
 
@@ -209,7 +216,18 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // is a reference to an existing factory, only a second spelling). The underlying namespaces stay exported,
     // so this is purely additive. `ToolSchemaProvider`/`ProviderProfileOptions` (DEC-093, the `providerStrict`
     // → `{ provider, strict }` profile) are type-only and move nothing.
-    const PINNED_VALUE_EXPORT_COUNT = 107;
+    //
+    // 107 → 69: the DEC-097 surface curation moved 38 value exports OFF the root barrel into subpaths —
+    // `adorn/schema` (10 projection fns: documentClass / documentContracts / renderMarkdown / generateMarkdown
+    // / schemaForClass / schemaForContracts / serializeSchema / generateSchema / toolSchemaForMethod /
+    // toolSchemaFrom), `adorn/privacy` (4: telemetryForClass / telemetryForContracts / serializeTelemetry /
+    // generateTelemetryReport), `adorn/introspection` (17: 7 registry reads + 7 getEffective* +
+    // evaluatePostconditions / evaluatePreconditions / evaluateEnabledness), and `adorn/observe` (7:
+    // getObservationSink / RETURN_INDEX / nextCallId / settle / consoleObservationSink /
+    // createConsoleObservationSink / violationFromCheck). The root keeps the authoring surface (decorators,
+    // descriptor factories + Contracts, contract / Verify, config setters); `setObservationSink` stays on root
+    // (a configuration verb). The per-subpath surfaces are pinned in their own block below.
+    const PINNED_VALUE_EXPORT_COUNT = 69;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -278,16 +296,16 @@ describe('the fluent facade adds exactly its intended public export (DEC-094)', 
 
 describe('voice-agent Round 3 adds exactly its intended functional-surface exports (DEC-074)', () => {
     it('exports violationFromCheck (L11)', () => {
-        expect(typeof (adorn as Record<string, unknown>).violationFromCheck).toBe('function');
+        expect(typeof (observe as Record<string, unknown>).violationFromCheck).toBe('function');
     });
     it('exports createConsoleObservationSink (L12)', () => {
-        expect(typeof (adorn as Record<string, unknown>).createConsoleObservationSink).toBe('function');
+        expect(typeof (observe as Record<string, unknown>).createConsoleObservationSink).toBe('function');
     });
     it('exports the contract() functional wrapper (L9)', () => {
         expect(typeof (adorn as Record<string, unknown>).contract).toBe('function');
     });
     it('exports nextCallId — the shared correlation-id sequence for a consumer emitter (DEC-077)', () => {
-        const nextCallId = (adorn as Record<string, unknown>).nextCallId as () => number;
+        const nextCallId = (observe as Record<string, unknown>).nextCallId as () => number;
         expect(typeof nextCallId).toBe('function');
         // Monotonic: each call yields a strictly greater id (the property that prevents cross-emitter collision).
         expect(nextCallId()).toBeLessThan(nextCallId());
@@ -313,7 +331,7 @@ describe('the tool-schema wave adds exactly its intended public exports (DEC-048
     });
 
     it('exports the toolSchemaForMethod projection (IDEA-20)', () => {
-        expect(typeof (adorn as Record<string, unknown>).toolSchemaForMethod).toBe('function');
+        expect(typeof (schema as Record<string, unknown>).toolSchemaForMethod).toBe('function');
     });
 
     it('exports the EnumContracts descriptor namespace, carrying the oneOf factory', () => {
@@ -449,7 +467,7 @@ describe('Wave-2 polish adds exactly its intended public exports (DEC-056)', () 
 
 describe('round-3 adds exactly its intended public exports (DEC-059/060/061)', () => {
     it('exports the descriptor-first toolSchemaFrom projection (IDEA-30/DEC-061) — the +1 to 95', () => {
-        expect(typeof (adorn as Record<string, unknown>).toolSchemaFrom).toBe('function');
+        expect(typeof (schema as Record<string, unknown>).toolSchemaFrom).toBe('function');
     });
 });
 
@@ -461,7 +479,7 @@ describe('@Requires cross-parameter preconditions add exactly their intended pub
     });
 
     it('exports the evaluatePreconditions oracle (the fuzzer arg filter)', () => {
-        expect(typeof (adorn as Record<string, unknown>).evaluatePreconditions).toBe('function');
+        expect(typeof (introspection as Record<string, unknown>).evaluatePreconditions).toBe('function');
     });
 
     it('keeps the precondition writer and key helpers OFF the root surface (Q-6)', () => {
@@ -481,11 +499,11 @@ describe('@EnabledWhen enabledness guards add exactly their intended public expo
     });
 
     it('exports the evaluateEnabledness oracle (the sequence driver enabledness check)', () => {
-        expect(typeof (adorn as Record<string, unknown>).evaluateEnabledness).toBe('function');
+        expect(typeof (introspection as Record<string, unknown>).evaluateEnabledness).toBe('function');
     });
 
     it('exports the getEffectiveEnablednessGuards inheritance-aware read', () => {
-        expect(typeof (adorn as Record<string, unknown>).getEffectiveEnablednessGuards).toBe('function');
+        expect(typeof (introspection as Record<string, unknown>).getEffectiveEnablednessGuards).toBe('function');
     });
 
     it('keeps the enabledness writer and key helpers OFF the root surface (Q-6)', () => {
@@ -507,5 +525,52 @@ describe('the P1+P2+P3 buildout adds exactly its intended public exports (round-
         // The internal lookup that hands back an `<any>`-typed definition stays internal, so no `any` reaches
         // a consumer (round-4 §"Six for six" verified this).
         expect(adorn).not.toHaveProperty('getConstraintDefinition');
+    });
+});
+
+describe('DEC-097 surface curation: the subpaths carry exactly what the root shed', () => {
+    const notOnRoot = (name: string) => expect(adorn).not.toHaveProperty(name);
+
+    it('adorn/schema exports the projections, and the root does not', () => {
+        for (const name of [
+            'documentClass', 'documentContracts', 'renderMarkdown', 'generateMarkdown',
+            'schemaForClass', 'schemaForContracts', 'serializeSchema', 'generateSchema',
+            'toolSchemaForMethod', 'toolSchemaFrom',
+        ]) {
+            expect(typeof (schema as Record<string, unknown>)[name]).toBe('function');
+            notOnRoot(name);
+        }
+    });
+
+    it('adorn/privacy exports the telemetry projection, and the root does not', () => {
+        for (const name of ['telemetryForClass', 'telemetryForContracts', 'serializeTelemetry', 'generateTelemetryReport']) {
+            expect(typeof (privacy as Record<string, unknown>)[name]).toBe('function');
+            notOnRoot(name);
+        }
+    });
+
+    it('adorn/introspection exports the reads + evaluators, and the root does not', () => {
+        for (const name of ['evaluatePostconditions', 'evaluatePreconditions', 'evaluateEnabledness', 'getContractsForClass', 'getEffectiveContract']) {
+            expect(typeof (introspection as Record<string, unknown>)[name]).toBe('function');
+            notOnRoot(name);
+        }
+    });
+
+    it('adorn/observe exports the observation plumbing, and the root does not', () => {
+        for (const name of ['getObservationSink', 'nextCallId', 'settle', 'createConsoleObservationSink', 'violationFromCheck']) {
+            expect(typeof (observe as Record<string, unknown>)[name]).toBe('function');
+            notOnRoot(name);
+        }
+        // consoleObservationSink is a ready-made sink INSTANCE (an object), not a factory; RETURN_INDEX is a const.
+        expect((observe as Record<string, unknown>).consoleObservationSink).toBeDefined();
+        notOnRoot('consoleObservationSink');
+        expect((observe as Record<string, unknown>).RETURN_INDEX).toBeDefined();
+        notOnRoot('RETURN_INDEX');
+    });
+
+    it('setObservationSink stays on the root — a configuration verb, not observation plumbing', () => {
+        expect(typeof (adorn as Record<string, unknown>).setObservationSink).toBe('function');
+        // And it is NOT re-exported from adorn/observe (reading the sink is; installing it is a root config verb).
+        expect(observe).not.toHaveProperty('setObservationSink');
     });
 });

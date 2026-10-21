@@ -74,7 +74,7 @@ import {
     getEffectiveContract,
     getEffectivePostconditions,
     getEffectivePreconditions,
-} from '../../index';
+} from '../../introspection';
 // The same disclosure discipline core uses for its own emissions (DEC-030) — imported, not
 // re-implemented, so a fuzz report redacts by exactly the rule enforcement redacts by. Not on the root
 // surface (Q-6 keeps it internal), so read from its module, as the add-on already does for descriptors.

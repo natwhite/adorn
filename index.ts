@@ -40,7 +40,7 @@ import {Tool} from './src/Markers/Tool';
 // --- Imperative assertion (for call sites with no decoration point) --------
 // `Verify.that` throws; `Verify.check` (DEC-053) returns a discriminated `CheckResult` instead — the
 // non-throwing path an untrusted I/O boundary needs (a bad body → a `400` as a value, not an exception).
-import {Verify, violationFromCheck} from './src/Validation/Verify';
+import {Verify} from './src/Validation/Verify';
 export type {CheckResult, CheckFailure} from './src/Validation/Verify';
 // `contract()` — the functional twin of @Contract/@Requires/@Ensures/@Returns/@Observe (L9, DEC-074),
 // so a zero-class codebase can enforce a contract on a plain function from descriptors, no decoration point.
@@ -128,95 +128,14 @@ import {setValueDisclosure, getValueDisclosure} from './src/Core/redaction';
 // (DEC-019) is a separate future add-on and is NOT built here. `RETURN_INDEX` marks the return
 // value in an EmittedValue. NOOP_SINK and ViolationError stay INTERNAL — a sink author needs
 // neither the sentinel nor the typed error (facts arrive through the sink, not by catching).
-import {setObservationSink, getObservationSink, RETURN_INDEX, nextCallId} from './src/Core/Observation';
-import {settle} from './src/Core/settle';
-// O1c: a ready-made zero-dependency JSON-to-console sink (opt-in; never installed automatically).
-import {
-    consoleObservationSink,
-    createConsoleObservationSink,
-} from './src/Adapters/legacy/ObservationBehavior';
+import {setObservationSink} from './src/Core/Observation';
 
-// --- Registry introspection (Q-6: this surface is now semver-relevant) -----
-// Read surface only. The writers (recordParameterConstraint, recordFieldConstraint,
-// setParameterMetadata, setFieldMetadata, markInstalled, ...) are deliberately NOT
-// exported: they would let a caller bypass the adapter that owns declaration
-// ordering (SMELL-13) and installation, and write contracts the enforcement path
-// never sees.
-//
-// Grouped by line: method reads, then declared-field reads, then the inheritance-aware reads.
-// prettier-ignore
-import {
-    getContracts, getContract, getContractedClasses, getContractsForClass,
-    getFieldContract, getFieldContracts, getFieldContractsForClass,
-    getEffectiveFieldConstraints, getEffectiveFieldContract,
-    getEffectiveContract, getEffectiveParameterConstraints,
-    getEffectivePostconditions, getEffectivePreconditions, getEffectiveEnablednessGuards,
-} from './src/Core/ContractRegistry';
-export type {EnablednessGuard, EnablednessPredicate} from './src/Core/ContractRegistry';
-
-// --- Postcondition evaluation (DEC-032) -----------------------------------
-// `evaluatePostconditions` is the SAME function the runtime wrapper calls, so a fuzzer
-// (Phase B) checking the oracle checks exactly what enforcement enforces — no drift.
-import {evaluatePostconditions} from './src/Core/Postconditions';
-export type {PostconditionResult} from './src/Core/Postconditions';
-// `@Requires` cross-parameter preconditions (DEC-057). `evaluatePreconditions` is the SAME function the
-// runtime wrapper calls, so a fuzzer that filters generated args by it checks exactly what enforcement runs.
-import {evaluatePreconditions} from './src/Core/Preconditions';
-export type {PreconditionResult} from './src/Core/Preconditions';
-// `@EnabledWhen` state-reading enabledness guards (DEC-089). `evaluateEnabledness` is the SAME function
-// the runtime wrapper calls against a live receiver, so the future stateful-sequence driver checks exactly
-// what enforcement runs — no drift.
-import {evaluateEnabledness} from './src/Core/Enabledness';
-export type {EnablednessResult} from './src/Core/Enabledness';
-
-// --- Projections ----------------------------------------------------------
-import {documentClass, documentContracts, renderMarkdown, generateMarkdown} from './src/Projections/docs';
-// prettier-ignore
-import {
-    schemaForClass, schemaForContracts, serializeSchema, generateSchema, toolSchemaForMethod, toolSchemaFrom,
-} from './src/Projections/schema';
-// O1d: the "what leaves the process" privacy-review projection — the sixth projection. A pure registry
-// read (DEC-012), it reports the disclosure each parameter/return carries and renders its own scanned
-// denominator (a clean table is never a clean bill of health). It makes no claim about runtime flows.
-// prettier-ignore
-import {
-    telemetryForClass, telemetryForContracts, serializeTelemetry, generateTelemetryReport,
-} from './src/Projections/telemetry';
-export type {TelemetryReport} from './src/Projections/telemetry';
-
-// The projection's model types, so a consumer can actually type a variable holding one.
-// `ClassDoc.fields` is deliberately required, not optional: an optional band is one a future
-// projection can silently forget to populate, which is the failure this whole layer exists to avoid.
-export type {
-    ClassDoc,
-    MethodDoc,
-    ParameterDoc,
-    ConstraintDoc,
-    FieldDoc,
-    MarkdownOptions,
-} from './src/Projections/docs';
-export type {
-    ClassSchema,
-    SchemaOptions,
-    ToolSchema,
-    ToolSchemaOptions,
-    ToolSchemaProvider,
-    ProviderProfileOptions,
-    ToolSchemaFromInput,
-    ToolParamSpec,
-} from './src/Projections/schema';
-
-// The observation model + the event/payload surface an ObservationSink binds to (O1a). This union is
-// semver-frozen the moment an adapter binds to it (Q-6): every event payload field is optional and
-// object-shaped, so the "seeing ≠ emitting" channel (values, error, attributes) grows additively.
-// prettier-ignore
-export type {
-    ObservationSink, Observation, ObservedParameter, ParameterDisclosure,
-    ObservationEvent, ViolationFacts, EmittedValue, ErrorFacts,
-    Attributes, AttributeValue, LogLevel, ObservationDetail, ObservationCall, SpanKind,
-} from './src/Core/Observation';
-// The value-XOR-error settlement handed to settle()'s callback, and its kind discriminant.
-export type {Settlement, SettleKind} from './src/Core/settle';
+// Registry introspection, the shared evaluators, the projections (docs / schema / telemetry), and the
+// observation model moved OFF the package root in the DEC-097 surface curation — see `adorn/introspection`,
+// `adorn/schema`, `adorn/privacy`, and `adorn/observe` (the entry files `introspection.ts` / `schema.ts` /
+// `privacy.ts` / `observe.ts`). The root keeps the authoring surface: decorators, descriptors, `contract` /
+// `Verify`, and the configuration setters. `setObservationSink` stays here (a configuration verb); reading the
+// sink, `settle`, `nextCallId`, the console sink and `violationFromCheck` live in `adorn/observe`.
 
 // --- Constraint descriptors, namespaced -----------------------------------
 // `src/Contracts/*` exports `GreaterThan`, `Between`, `GreaterThanEqual`, ... under the SAME
@@ -321,8 +240,6 @@ export {
 
     // Imperative assertion
     Verify,
-    // Translate a functional check failure into ViolationFacts for the observation stream (L11, DEC-074)
-    violationFromCheck,
     // The functional contract wrapper — enforcement (params/requires/returns/ensures/observe) without a class (L9)
     contract,
     // Recover the spec a `contract()` wrapper enforces — introspectable, and readable by the fuzzer (L19)
@@ -393,61 +310,11 @@ export {
     // setValueDisclosure('all') opts in for local debugging. @Sensitive always vetoes.
     setValueDisclosure, getValueDisclosure,
 
-    // Observability (O1). Install one around-shaped ObservationSink and read it; the enforcement weave
-    // emits value-free violation facts + completions through it, and @Observe (O1c) opens the scope and
-    // emits completions carrying the pre-disclosed values (redacted by default — "seeing ≠ emitting").
-    // `settle` is the shared sync/thenable/observable settling classifier @Time now rides and an
-    // @adorn/otel adapter (DEC-019) ends spans with. `RETURN_INDEX` marks the return value in an
-    // EmittedValue. `consoleObservationSink` is a ready-made zero-dep JSON-to-console sink (opt-in; never
-    // installed automatically). `nextCallId` (DEC-077) is the one shared correlation-id sequence a consumer's
-    // own non-decorator emitter must draw from, so its callIds never collide with adorn's. NOOP_SINK /
-    // ViolationError stay internal.
-    setObservationSink, getObservationSink, settle, RETURN_INDEX, nextCallId, consoleObservationSink, createConsoleObservationSink,
-
-    // Registry introspection — what the projections read
-    getContracts, getContract, getContractedClasses, getContractsForClass,
-    getFieldContract, getFieldContracts, getFieldContractsForClass,
-
-    // Inheritance-aware reads (DEC-021 fields, DEC-022 methods). The prefix is the whole
-    // distinction: the plain reads answer "what does this class *declare*", while the
-    // `getEffective*` reads answer "what is *in force* here" — the union of every
-    // declaration on the prototype chain, which is what enforcement applies and what a
-    // projection should render. Reading the plain form and assuming it describes runtime
-    // behaviour is a mistake, which is why the names disambiguate.
-    //
-    // `getEffectiveContractKeys` is deliberately NOT exported: it exists for the installer,
-    // and Q-6 makes every registry export semver-relevant.
-    getEffectiveFieldConstraints, getEffectiveFieldContract,
-    getEffectiveContract, getEffectiveParameterConstraints,
-    getEffectivePostconditions, getEffectivePreconditions, getEffectiveEnablednessGuards,
-
-    // The postcondition oracle — the same evaluator the runtime wrapper runs, exposed so a
-    // fuzzer (Phase B) checks exactly what enforcement enforces. `evaluatePreconditions` is its
-    // input-side twin (DEC-057): a fuzzer filters generated args through the same function enforcement runs.
-    // `evaluateEnabledness` (DEC-089) is the state-reading twin: the sequence driver reads it off the same
-    // effective band and evaluates it against a live receiver, matching enforcement byte-for-byte.
-    evaluatePostconditions, evaluatePreconditions, evaluateEnabledness,
-
-    // Projections: documentation generated from recorded contracts
-    documentClass, documentContracts, renderMarkdown, generateMarkdown,
-
-    // Projections: JSON Schema (draft 2020-12) generated from recorded contracts
-    schemaForClass, schemaForContracts, serializeSchema, generateSchema,
-
-    // Projection: the PRESCRIPTIVE LLM tool-call schema for ONE method (IDEA-20/DEC-048). A sibling of
-    // schemaForClass, not a flag on it: params-as-object and tight (required + additionalProperties:false)
-    // where schemaForClass is a descriptive instance schema that under-claims. Reuses schema.ts's merge
-    // internals (no fork, DEC-010); Core+Contracts only (DEC-012). `@OneOf` flows in as `{enum:[…]}`.
-    toolSchemaForMethod,
-    // Projection: the DESCRIPTOR-FIRST tool schema (IDEA-30/DEC-061) — `toolSchemaFrom({params:{x:descriptor}})`
-    // builds the same tight envelope from named descriptors, no class required, so a PER-SESSION enum
-    // (`ArrayOf(OneOf([...roster]))`) projects at runtime. Reuses `tightenObjects` unchanged.
-    toolSchemaFrom,
-
-    // Projections: telemetry disclosure (O1d) — the "what leaves the process" privacy-review table.
-    // A pure registry read (DEC-012) that reports the disclosure each position carries and renders its
-    // own scanned denominator; it makes no claim about runtime flows.
-    telemetryForClass, telemetryForContracts, serializeTelemetry, generateTelemetryReport,
+    // Install an around-shaped ObservationSink — a configuration verb, like setViolationPolicy; the enforcement
+    // weave emits value-free violation facts + completions through it. Reading the sink, the settle()
+    // classifier, nextCallId, the console sink and violationFromCheck live in `adorn/observe` (DEC-097); the
+    // registry reads + evaluators in `adorn/introspection`; the projections in `adorn/schema` / `adorn/privacy`.
+    setObservationSink,
 
     // Constraint descriptors (data, not decorators). `ArrayContracts` (DEC-050) is the compositional
     // one — its `ArrayOf` takes another descriptor as its item. `BooleanContracts` (axiform §3) is the

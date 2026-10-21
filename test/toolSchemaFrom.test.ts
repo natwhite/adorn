@@ -6,9 +6,8 @@
  * equivalent, which proves it REUSES `toolSchemaForMethod`'s internals rather than forking them.
  */
 
+import {toolSchemaFrom, toolSchemaForMethod} from '../schema';
 import {
-    toolSchemaFrom,
-    toolSchemaForMethod,
     Contract,
     Between,
     OneOf,

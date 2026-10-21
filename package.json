@@ -33,6 +33,30 @@
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/esm/schema.mjs",
+      "require": "./dist/schema.js",
+      "default": "./dist/schema.js"
+    },
+    "./introspection": {
+      "types": "./dist/introspection.d.ts",
+      "import": "./dist/esm/introspection.mjs",
+      "require": "./dist/introspection.js",
+      "default": "./dist/introspection.js"
+    },
+    "./observe": {
+      "types": "./dist/observe.d.ts",
+      "import": "./dist/esm/observe.mjs",
+      "require": "./dist/observe.js",
+      "default": "./dist/observe.js"
+    },
+    "./privacy": {
+      "types": "./dist/privacy.d.ts",
+      "import": "./dist/esm/privacy.mjs",
+      "require": "./dist/privacy.js",
+      "default": "./dist/privacy.js"
+    },
     "./otel": {
       "types": "./dist/addons/otel/index.d.ts",
       "import": "./dist/esm/otel/index.mjs",

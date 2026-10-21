@@ -6,6 +6,10 @@
   },
   "include": [
     "index.ts",
+    "schema.ts",
+    "introspection.ts",
+    "observe.ts",
+    "privacy.ts",
     "src/**/*.ts",
     "test/**/*.ts",
     // `examples/` is excluded from the *build* (it must not reach `dist/`) but it still has to

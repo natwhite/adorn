@@ -6,13 +6,15 @@
 > construction, not by discipline.
 
 **Status: `0.1.0`, MIT — source-available, not yet on npm under this name** (see [Install](#install)). The
-public surface is pinned by a test (`index.ts` exports **107 values** plus the projection and observation
-model types); the suite is all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
-and field inheritance, closure and reified pre-/postconditions, five in-core projections (docs, JSON Schema,
-prescriptive LLM tool schema, observability, privacy review), a safe-by-default redaction runtime, a
-build-time sensitive-flow detector, and a CLI. Two opt-in add-ons ship as **subpath exports** — `adorn/otel`
-(OpenTelemetry) and `adorn/test` (fuzzing) — each behind an optional peer dependency, so the package root stays
-`tslib`-only.
+public surface is pinned by a test: the root `adorn` exports **69 values** — the authoring surface (decorators,
+descriptor factories, `contract`/`Verify`, the configuration setters) — while the projections, registry
+introspection, observation plumbing and privacy review live on focused **subpath exports** (`adorn/schema`,
+`adorn/introspection`, `adorn/observe`, `adorn/privacy`), so a consumer pulls only what it uses (DEC-097). The
+suite is all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method and field
+inheritance, closure and reified pre-/postconditions, five projections (docs, JSON Schema, prescriptive LLM
+tool schema, observability, privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow
+detector, and a CLI. Two further opt-in add-ons — `adorn/otel` (OpenTelemetry) and `adorn/test` (fuzzing) — sit
+behind an optional peer dependency each, so the package root stays `tslib`-only.
 
 > **Proven against OpenAI, not asserted.** The tool schemas adorn generates are round-tripped through OpenAI's
 > live function-calling API (`gpt-4o-mini`, temperature 0): the generated schema is accepted, the model
@@ -602,6 +604,26 @@ ts-jest has no TS 7 release yet (DEC-013). The shipped `.d.ts` compile cleanly u
 Runnable, self-contained scripts covering each capability — the LLM tool paths, `contract()`, boundary
 validation, the projections, observability, and redaction — live in [`examples/`](examples/README.md). Each
 is `npx ts-node examples/<file>.ts`.
+
+---
+
+## Package entry points
+
+`adorn` is dual ESM + CommonJS (DEC-096). The root is the authoring surface; the rest of the API is grouped
+onto subpaths so a consumer imports only what it uses and a bundler can tree-shake the rest (DEC-097):
+
+| Entry point | What it holds |
+| --- | --- |
+| `adorn` | Decorators; the descriptor factories + the `Contracts` facade; `contract` / `contract.checked`; `Verify` / `Enforce`; `defineConstraint` / `constraintFromJSON`; and the configuration setters (`setViolationPolicy`, `setObservationSink`, …). |
+| `adorn/schema` | The projections — `toolSchemaForMethod`, `toolSchemaFrom`, `schemaForClass`, and the docs generators. |
+| `adorn/introspection` | The registry reads (`getContractsForClass`, `getEffective*`) and the shared evaluators (`evaluatePreconditions` / `evaluatePostconditions` / `evaluateEnabledness`). |
+| `adorn/observe` | Observation plumbing — `getObservationSink`, `nextCallId`, `settle`, `createConsoleObservationSink`, `violationFromCheck`, and the `ObservationSink` model. |
+| `adorn/privacy` | The telemetry / privacy-review projection — `telemetryForClass`, `generateTelemetryReport`. |
+| `adorn/otel` | An OpenTelemetry `ObservationSink` (optional peer `@opentelemetry/api`). |
+| `adorn/test` | Property-based testing from descriptors (optional peer `fast-check`). |
+
+Installing a sink stays on the root (`setObservationSink` is a configuration verb, like `setViolationPolicy`);
+*reading* or *constructing* observation data lives in `adorn/observe`.
 
 ---
 
