@@ -1431,3 +1431,33 @@ There is **no shallow-alias default** (which would re-introduce the hole) and **
 **Verified.** Typecheck 0; green-twice in-band **80 suites / 1390 tests**. `test/prestate.test.ts` (the hazard without capture; the fix on `contract.checked`/`contract()`/`@Ensures`; alias-capture soundness via clone-at-entry; the deep-frozen snapshot; a non-cloneable capture failing loudly; the legacy `@Ensures` form still accepted) and two `oracle.function` pins (a correct capturing postcondition does not false-positive under the fuzzer; a genuinely violated one is still found). `dist` rebuilt. **Confirmed by the consumer** (axiform, on `eadc814`): each compiled `ensures` clause declares `capture: ins => ins` and evaluates against `old`; a mutating-body test lands `band:'ensures'`/`id:'clamp-low'` and fails with capture removed; GAP-010 closed, clean clone 92/92.
 
 **Deferred optimization (noted by axiform, no demand yet — do NOT build ahead of it).** `capture` is per-clause, so N postconditions that want the same pre-state clone the arguments N times. Fine at current scale; if a consumer ever has many postconditions over large arguments, a spec-level SHARED capture (one snapshot handed to every clause) would avoid the repeat clone. Evidence-gated like the rest of the plan of record.
+
+---
+
+## DEC-093 — `providerStrict` → `{ provider, strict }`, a named provider-compatibility profile (GPT review 2026-10-20)
+**Status:** ACCEPTED · **BUILT** · types-only (no new value export) · surface unchanged by this entry
+
+**The critique (external review).** Both tool-schema entries took `{ providerStrict: true }`. The reviewer's point: `providerStrict` encodes "strict = OpenAI's every-property-in-`required` rule" as if strictness were a provider-independent concept, when what is actually applied is ONE provider's compatibility profile (DEC-068/069/071 are all OpenAI). As more providers accrue (Anthropic, Gemini, MCP variants), a single boolean cannot name which profile — the abstraction is wrong-shaped, and now (young API, small adoption) is the cheapest time to fix it. This sits on adorn's highest-value axis (DEC-048, multi-provider tool schemas), so it was prioritized above the heavier build-format work.
+
+**Decision.** Both entries now take `ProviderProfileOptions` = `{ provider?: 'openai'; strict?: boolean; providerStrict?: boolean }`. Strict mode applies iff `strict === true` or the deprecated `providerStrict === true`; `provider` defaults to `'openai'` (the only profile today), so a bare `{ strict: true }` still means OpenAI. An explicitly unsupported `provider` throws a `TypeError` at build time — never a silent OpenAI fallback — because naming the provider is the whole point: the profile is not generic. `providerStrict` is kept as a `@deprecated`, behaviour-identical alias (`{ providerStrict: true }` ≡ `{ provider: 'openai', strict: true }`), so no consumer breaks.
+
+**No runtime deprecation warning** — a type-level `@deprecated` (IDE strikethrough) nudges without noise or test churn. The shared `strictifyForProvider` pass is unchanged; a single `resolveProviderStrict(options)` collapses the profile to the one boolean it asks ("apply OpenAI strict?"), so there is no new strict logic, only a better-named door. The two refusal messages now name the `{ provider: 'openai', strict: true }` spelling.
+
+**Surface.** `ToolSchemaProvider` (= `'openai'`) and `ProviderProfileOptions` are type-only exports; `ToolSchemaOptions extends ProviderProfileOptions`. No value export moves.
+
+**Verified.** `test/provider-profile.test.ts` (new ≡ old alias; `{strict}` defaults provider; `{provider:'openai'}` sans strict is a no-op; unsupported provider throws with/without strict; the refusal message points at the new form, not `providerStrict`). The existing `toolSchemaForMethod-strict` / `toolSchemaFrom` strict suites still pass against the retained alias (green-twice in-band; counts in DEC-094).
+
+---
+
+## DEC-094 — the fluent `Contracts` facade over the descriptor namespaces (GPT review 2026-10-20)
+**Status:** ACCEPTED (owner: "yes please build the facade as well — it will appeal to developers") · **BUILT** · +1 value export · surface **106 → 107**
+
+**The idea (external review, owner-endorsed).** The descriptor-first path is seven parallel module namespaces whose members often stutter — `NullableContracts.Nullable`, `ArrayContracts.ArrayOf`. Once the descriptor path is a first-class authoring surface (DEC-062/093, and the README "two authoring paths" reframe), a single fluent entry object that groups the factories by type and drops the stutter makes it read as one algebra: `Contracts.number.between(1, 10)`, `Contracts.nullable(item)`, `Contracts.object({...})`.
+
+**Design — a second spelling, never a second implementation.** `src/Contracts/facade.ts` exports `Contracts`, every member of which is a DIRECT REFERENCE to an existing `*Contracts` factory (`Contracts.number.between === NumberContracts.Between`, pinned by reference-equality in `public-surface.test.ts`). Nothing new is constructed, so the facade cannot drift from the namespaces — there is no parallel logic to keep in sync. The underlying namespaces stay exported and unchanged; this is purely additive and purely ergonomic. Grouped members: `number.*` (8), `string.*` (11); flattened single-factory callables: `bool`, `enum` (`OneOf`), `const`, `array` (`ArrayOf`), `nullable`, `dictionary`, `object` (`Fields`), `shape`. (`enum`/`const` are reserved words but legal as property names.)
+
+**Why build it now (not deferred).** It was listed as item 6 "after the surface reshuffle," but the owner asked for it directly, and it is independent of the ESM/subpath work (items 4–5): the facade re-exports from wherever the namespaces live, so a later subpath move does not invalidate it.
+
+**Surface.** `Contracts` is one new value export → **106 → 107**, pinned in `public-surface.test.ts`. The namespaces remain the canonical factories.
+
+**Verified.** `public-surface.test.ts` (reference-identity of every member; count 107) and `test/contracts-facade.test.ts` (end-to-end through `Verify.check`, composition into `toolSchemaFrom`, `Contracts.object` → `Fields`). Typecheck 0; green-twice in-band **82 suites / 1403 tests**; `dist` rebuilt.

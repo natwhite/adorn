@@ -203,7 +203,13 @@ describe('Q-6: the whole value-export surface is pinned', () => {
     // `StringContracts.Str` (§3) ride the EXISTING namespaces, so they move nothing; `SerializedConstraint`
     // is type-only. (The verdict surface — `contract.checked`, §1 — is a property on the existing `contract`
     // function, not a new root export, and the `ContractVerdict` type is type-only: neither moves the count.)
-    const PINNED_VALUE_EXPORT_COUNT = 106;
+    //
+    // 106 → 107: the fluent facade (DEC-094, GPT review) adds ONE value export — `Contracts`, a lowercase,
+    // type-grouped re-grouping of the SAME `*Contracts` descriptor factories (no new descriptors; every member
+    // is a reference to an existing factory, only a second spelling). The underlying namespaces stay exported,
+    // so this is purely additive. `ToolSchemaProvider`/`ProviderProfileOptions` (DEC-093, the `providerStrict`
+    // → `{ provider, strict }` profile) are type-only and move nothing.
+    const PINNED_VALUE_EXPORT_COUNT = 107;
 
     it('the root index exposes exactly the frozen number of value exports', () => {
         expect(Object.keys(adorn)).toHaveLength(PINNED_VALUE_EXPORT_COUNT);
@@ -237,6 +243,36 @@ describe('axiform feedback (2026-10-18) adds exactly its intended exports', () =
     it('exposes contract.checked as a PROPERTY on contract, not a new root export (§1)', () => {
         expect(typeof (api.contract as Record<string, unknown>).checked).toBe('function');
         expect(Object.keys(adorn)).not.toContain('checked'); // rides `contract`; moves no count
+    });
+});
+
+describe('the fluent facade adds exactly its intended public export (DEC-094)', () => {
+    const api = adorn as Record<string, any>;
+    it('exports the Contracts facade object', () => {
+        expect(typeof api.Contracts).toBe('object');
+    });
+    it('maps grouped lowercase names to the SAME descriptor factories (no drift, only a second spelling)', () => {
+        // Reference equality: every facade member IS the namespace factory, so there is no second
+        // implementation that could drift — the facade is a re-spelling, not a reimplementation.
+        expect(api.Contracts.number.between).toBe(adorn.NumberContracts.Between);
+        expect(api.Contracts.number.finite).toBe(adorn.NumberContracts.Finite);
+        expect(api.Contracts.string.notEmpty).toBe(adorn.StringContracts.NotEmpty);
+        expect(api.Contracts.string.uuid).toBe(adorn.StringContracts.Uuid);
+        expect(api.Contracts.bool).toBe(adorn.BooleanContracts.Bool);
+        expect(api.Contracts.enum).toBe(adorn.EnumContracts.OneOf);
+        expect(api.Contracts.const).toBe(adorn.EnumContracts.Const);
+        expect(api.Contracts.array).toBe(adorn.ArrayContracts.ArrayOf);
+        expect(api.Contracts.nullable).toBe(adorn.NullableContracts.Nullable);
+        expect(api.Contracts.dictionary).toBe(adorn.ObjectContracts.Dictionary);
+        expect(api.Contracts.object).toBe(adorn.ObjectContracts.Fields);
+        expect(api.Contracts.shape).toBe(adorn.ObjectContracts.Shape);
+    });
+    it('produces working descriptors identical to the namespace factories', () => {
+        const viaFacade = api.Contracts.number.between(1, 7);
+        const viaNamespace = adorn.NumberContracts.Between(1, 7);
+        expect(viaFacade.predicate(5)).toBe(true);
+        expect(viaFacade.predicate(9)).toBe(false);
+        expect(JSON.stringify(viaFacade)).toBe(JSON.stringify(viaNamespace));
     });
 });
 

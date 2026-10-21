@@ -200,6 +200,8 @@ export type {
     SchemaOptions,
     ToolSchema,
     ToolSchemaOptions,
+    ToolSchemaProvider,
+    ProviderProfileOptions,
     ToolSchemaFromInput,
     ToolParamSpec,
 } from './src/Projections/schema';
@@ -246,6 +248,11 @@ import * as ObjectContracts from './src/Contracts/object';
 // `@Nullable` (DEC-056) — the compositional null-widening combinator. `NullableContracts.Nullable(inner)`
 // yields a descriptor usable directly (`Verify.that`, `CreateFieldDecorator`, an `@ArrayOf` item).
 import * as NullableContracts from './src/Contracts/nullable';
+
+// `Contracts` (DEC-094) — the fluent facade: the SAME descriptor factories as the `*Contracts` namespaces,
+// re-grouped under one entry object with lowercase, type-grouped names (`Contracts.number.between(1, 10)`,
+// `Contracts.nullable(item)`), no namespace stutter. Additive; the namespaces stay exported and unchanged.
+import {Contracts} from './src/Contracts/facade';
 
 // The public surface, and the one place a reader can see its whole shape at once. Both the
 // section comments and the line grouping within each section are load-bearing: they say which
@@ -447,6 +454,9 @@ export {
     // bare boolean primitive type; `NumberContracts.Finite`/`StringContracts.Str` are its number/string twins
     // (added to the existing namespaces, so only `BooleanContracts` moves the surface count).
     NumberContracts, StringContracts, BooleanContracts, EnumContracts, ArrayContracts, ObjectContracts, NullableContracts,
+
+    // The fluent facade over all of the above (DEC-094) — one entry object, lowercase/type-grouped, no stutter.
+    Contracts,
 };
 
 /*

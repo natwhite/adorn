@@ -159,7 +159,44 @@ export interface SchemaOptions {
     readonly indent?: number;
 }
 
-export interface ToolSchemaOptions {
+/**
+ * An LLM provider whose tool-schema compatibility profile adorn can target. Only `'openai'` has a strict
+ * profile today (DEC-069/071/093); the type exists so that "strictness" is named as what it actually is — a
+ * specific provider's compatibility rules — rather than a provider-independent boolean, and so further
+ * providers slot in without overloading one flag.
+ */
+export type ToolSchemaProvider = 'openai';
+
+/**
+ * Target an LLM provider's tool-schema compatibility profile (DEC-093). What was originally the single boolean
+ * `providerStrict` is really a (provider, strict) pair: strict mode is not provider-independent — it is
+ * OpenAI's requirement that EVERY property sit in `required` with `additionalProperties:false` at every object
+ * level. Both tool-schema entries ({@link toolSchemaForMethod}, {@link toolSchemaFrom}) accept these.
+ */
+export interface ProviderProfileOptions {
+    /**
+     * The provider whose compatibility profile to apply. Defaults to `'openai'` (the only profile today) when
+     * {@link strict} is set. An explicitly unsupported provider is a loud build-time error — never a silent
+     * fallback to OpenAI's rules — because naming the provider is the whole point: the profile is not generic.
+     */
+    readonly provider?: ToolSchemaProvider;
+    /**
+     * Apply the provider's strict-mode profile. For OpenAI, strict mode requires that EVERY property appear in
+     * `required` and `additionalProperties:false` be set at EVERY object level — not only the root. When set,
+     * one recursive pass promotes each field into `required` at its own level; a field that is not already
+     * required must ADMIT NULL — declared nullable — so the model sends `null` and the validator accepts it
+     * with no drift (nullability-in-the-declaration). A bare non-nullable optional, or an open map strict
+     * cannot express, is refused at build time with an actionable message rather than deferred to a 400.
+     */
+    readonly strict?: boolean;
+    /**
+     * @deprecated Use `{ provider: 'openai', strict: true }`. Kept as a back-compatible alias for the original
+     * boolean (DEC-071): `providerStrict: true` is exactly `{ provider: 'openai', strict: true }`.
+     */
+    readonly providerStrict?: boolean;
+}
+
+export interface ToolSchemaOptions extends ProviderProfileOptions {
     /**
      * Natural-language description of the tool, emitted as the schema's `description`. This is the
      * tool-level meaning ("look up a weather forecast") the model reads — distinct from each
@@ -167,16 +204,6 @@ export interface ToolSchemaOptions {
      * (adorn is runtime-introspection only, so JSDoc is not a source — DEC-007).
      */
     readonly description?: string;
-    /**
-     * Emit an OpenAI-`strict`-compatible schema (DEC-069/071). Strict mode requires that EVERY property
-     * appear in `required` and `additionalProperties:false` be set at EVERY object level — not only the
-     * root. When set, one recursive pass promotes each field into `required` at its own level; a field that
-     * is not already required must ADMIT NULL — declared `@Nullable(...)`, so the model sends `null` and the
-     * validator accepts it with no drift (nullability-in-the-declaration). A bare non-nullable `@Optional`
-     * parameter, or an open `@Dictionary` map (which strict cannot express), is refused at build time with an
-     * actionable message rather than deferred to a 400 from the API. The same option `toolSchemaFrom` takes.
-     */
-    readonly providerStrict?: boolean;
 }
 
 /** The dialect every document declares. draft 2020-12 is what `prefixItems`/`exclusiveMinimum:number` assume. */
@@ -186,6 +213,24 @@ const DEFAULT_INDENT = 2;
 
 /** Sentinel: two fragments disagree on a keyword in a way the flat merge cannot combine. */
 const CONFLICT = Symbol('schema-merge-conflict');
+
+/**
+ * Resolve a {@link ProviderProfileOptions} to the single question the strict pass asks — "apply OpenAI strict
+ * mode?" (DEC-093). `strict` and the deprecated `providerStrict` alias each request it; `provider` defaults to
+ * `'openai'`, the only profile today, so a bare `{ strict: true }` still means OpenAI. An explicitly
+ * unsupported provider throws, rather than silently applying OpenAI's rules — the profile is named precisely
+ * because it is provider-specific.
+ */
+function resolveProviderStrict(options: ProviderProfileOptions | undefined): boolean {
+    if (!options) return false;
+    if (options.provider !== undefined && options.provider !== 'openai') {
+        throw new TypeError(
+            `tool schema: provider '${String(options.provider)}' has no compatibility profile — only 'openai' ` +
+                'is supported today. Omit `provider`, or pass `openai`.',
+        );
+    }
+    return options.strict === true || options.providerStrict === true;
+}
 
 // ---------------------------------------------------------------------------
 // Extraction — the plain schema object (mirrors documentClass)
@@ -424,7 +469,7 @@ export function toolSchemaForMethod(
     // document — promote every property into `required` at each object level (nullable-if-not-already), or
     // refuse a bare non-nullable optional / open map. Runs before `canonicalize` so promotions get ordered;
     // decorator-flavored diagnostics via STRICT_CTX_METHOD.
-    if (options && options.providerStrict) {
+    if (resolveProviderStrict(options)) {
         document = strictifyForProvider(document, '', STRICT_CTX_METHOD) as JsonObject;
     }
 
@@ -474,12 +519,12 @@ export interface ToolSchemaFromInput {
  */
 export function toolSchemaFrom(
     input: ToolSchemaFromInput,
-    options?: {readonly providerStrict?: boolean},
+    options?: ProviderProfileOptions,
 ): ToolSchema {
     if (!input || typeof input !== 'object' || !input.params || typeof input.params !== 'object') {
         throw new TypeError('toolSchemaFrom: expected `{ params: { <name>: descriptor | spec } }`');
     }
-    const providerStrict = !!(options && options.providerStrict);
+    const providerStrict = resolveProviderStrict(options);
 
     const properties: JsonObject = {};
     const required: string[] = [];
@@ -811,14 +856,14 @@ interface StrictifyContext {
 
 /** The descriptor-first idiom — {@link toolSchemaFrom}. */
 const STRICT_CTX_FROM: StrictifyContext = {
-    fn: 'toolSchemaFrom({ providerStrict })',
+    fn: "toolSchemaFrom({ provider: 'openai', strict: true })",
     nullableFix: 'Declare it NullableContracts.Nullable(...) (so schema and validator both admit null)',
     mapFix: 'Model the object with Fields({...})',
 };
 
 /** The decorated-method idiom — {@link toolSchemaForMethod}. */
 const STRICT_CTX_METHOD: StrictifyContext = {
-    fn: 'toolSchemaForMethod(..., { providerStrict })',
+    fn: "toolSchemaForMethod(..., { provider: 'openai', strict: true })",
     nullableFix: 'Declare it @Nullable(...) (so schema and validator both admit null)',
     mapFix: 'Model the object with @Shape(FieldClass) instead of an open @Dictionary(...)',
 };
@@ -857,7 +902,7 @@ function strictifyForProvider(node: JsonValue, path: string, ctx: StrictifyConte
             throw new TypeError(
                 `${ctx.fn}: ${where} is an open map — OpenAI strict requires closed objects ` +
                     '(additionalProperties:false), so a Dictionary(...) cannot be expressed under strict. ' +
-                    `${ctx.mapFix}, or call without { providerStrict: true }.`,
+                    `${ctx.mapFix}, or call without strict mode.`,
             );
         }
         if (isObjectFragment(out.properties)) {
@@ -878,7 +923,7 @@ function strictifyForProvider(node: JsonValue, path: string, ctx: StrictifyConte
                     throw new TypeError(
                         `${ctx.fn}: '${key}' at ${where} is optional but not nullable — OpenAI strict requires ` +
                             `every property in \`required\`. ${ctx.nullableFix}, or call without ` +
-                            '{ providerStrict: true }.',
+                            'strict mode.',
                     );
                 }
             }

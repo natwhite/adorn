@@ -6,7 +6,7 @@
 > construction, not by discipline.
 
 **Status: `0.1.0`, MIT — source-available, not yet on npm under this name** (see [Install](#install)). The
-public surface is pinned by a test (`index.ts` exports **106 values** plus the projection and observation
+public surface is pinned by a test (`index.ts` exports **107 values** plus the projection and observation
 model types); the suite is all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method
 and field inheritance, closure and reified pre-/postconditions, five in-core projections (docs, JSON Schema,
 prescriptive LLM tool schema, observability, privacy review), a safe-by-default redaction runtime, a
@@ -178,10 +178,12 @@ what lets one decorator project into a schema keyword, a docs line, a fuzzer gen
 none of which can disagree, because they are all read from the same recorded data. The paradigm rests on this:
 the decorator is the ergonomic surface; the reified descriptor underneath is why it can be more than a check.
 
-> Those descriptors are also exported directly (`NumberContracts.Between(1, 10)`, `Verify.check(...)`,
-> `toolSchemaFrom({...})`) for the handful of places a decorator can't reach — validating a raw `unknown` off
-> the wire where there is no signature to annotate, or a schema whose enum is known only at session start.
-> These are the **escape hatch, not the front door**: the paradigm is the decorator on the signature. See
+> Those descriptors are a **first-class authoring path**, exported directly (`NumberContracts.Between(1, 10)`,
+> `Verify.check(...)`, `contract(spec, fn)`, `toolSchemaFrom({...})`) — the decorator is sugar over them, not
+> the other way round. Reach for them whenever a decorator can't (a raw `unknown` off the wire with no
+> signature to annotate, a schema whose enum is known only at session start, a codebase with no classes) **or
+> simply by preference**: the descriptor path delivers the identical enforcement and projections with no
+> compiler flags. See [Two authoring paths](#two-authoring-paths) and
 > [Working with values directly](#working-with-values-directly).
 
 ---
@@ -407,17 +409,23 @@ it proves common).
 
 OpenAI's [strict function calling](https://platform.openai.com/docs/guides/function-calling) requires that
 **every** property appear in `required` and `additionalProperties: false` be set at **every** object level —
-not just the root. Pass `{ providerStrict: true }` to the decorated flagship (or to `toolSchemaFrom`) and adorn
-emits a strict-compatible schema, proven end-to-end against the live API in the capstone above:
+not just the root. Pass `{ provider: 'openai', strict: true }` to the decorated flagship (or to
+`toolSchemaFrom`) and adorn emits a strict-compatible schema, proven end-to-end against the live API in the
+capstone above:
 
 ```ts
-const parameters = toolSchemaForMethod(ScheduleTool, 'remind', { providerStrict: true });
+const parameters = toolSchemaForMethod(ScheduleTool, 'remind', { provider: 'openai', strict: true });
 ```
 
-The rule strict mode forces is *nullability-in-the-declaration* (DEC-068/069/071): because strict mode forbids
-a truly-absent property, an "optional" field is instead declared `@Nullable(...)` and sent as `null` — so one
-recursive pass promotes it into `required` at its own object level, and schema and validator both accept the
-model's `null` with no drift. A bare non-nullable `@Optional` parameter or an open `@Dictionary` map (which
+`strict` is a **provider compatibility profile**, not a provider-independent toggle — naming the provider is
+deliberate, so other providers can define their own profiles without overloading one flag, and an unsupported
+`provider` is a loud build-time error rather than a silent fallback. (The original boolean
+`{ providerStrict: true }` remains as a deprecated, behaviour-identical alias.)
+
+The rule strict mode forces is *nullability-in-the-declaration* (DEC-068/069/071/093): because strict mode
+forbids a truly-absent property, an "optional" field is instead declared `@Nullable(...)` and sent as `null` —
+so one recursive pass promotes it into `required` at its own object level, and schema and validator both accept
+the model's `null` with no drift. A bare non-nullable `@Optional` parameter or an open `@Dictionary` map (which
 strict mode cannot express) is refused at build time with an actionable, decorator-flavoured message instead of
 a silent 400 from the API.
 
@@ -427,9 +435,10 @@ a silent 400 from the API.
 
 Not everything is a function you can decorate. A raw `unknown` arriving from `JSON.parse` at an HTTP boundary
 has no signature to annotate; a tool schema whose enum is known only at session start can't be fixed at module
-load; a codebase may have zero classes at all. For those cases the same reified descriptors are available as
-plain data — for validation, schema, **and enforcement**. This is the escape hatch; the paradigm is still the
-decorator on the signature, and each of these is a decorator's job available as a function.
+load; a codebase may have zero classes at all. For those cases — and equally **by preference** — the same
+reified descriptors are available as plain data, for validation, schema, **and enforcement**. This is a
+co-equal authoring path, not a fallback: each entry below is a decorator's job available as a plain function,
+producing the identical descriptor and projections with no decorators and no compiler flags.
 
 - **`Verify.that(descriptor, name, value)`** throws on a violation; **`Verify.check(...)`** returns a
   discriminated `CheckResult` instead (DEC-053) — the non-throwing path for a boundary that needs the failure
@@ -451,12 +460,16 @@ decorator on the signature, and each of these is a decorator's job available as 
   functional refusal emits as a `violation` event on the same stream the decorator weave feeds (and that
   `adorn/otel` maps). One observability stream, decorator or not.
 - **`toolSchemaFrom({params: {...}})`** builds the same prescriptive schema from named descriptors rather than
-  from a decorated method, for a per-session schema; it takes the `{providerStrict}` option described above.
+  from a decorated method, for a per-session schema; it takes the same `{ provider, strict }` profile described
+  above.
 - **`defineConstraint({...})`** builds a first-class reified constraint from data, so a constraint you define
   yourself projects into schemas and `Verify` exactly like a built-in.
 - The descriptor namespaces themselves — `NumberContracts` · `StringContracts` · `EnumContracts` ·
   `ArrayContracts` · `ObjectContracts` (incl. `ObjectContracts.Fields({...})`, the optional-aware object
-  literal) · `NullableContracts` — feed all of the above.
+  literal) · `NullableContracts` — feed all of the above. The fluent **`Contracts`** facade re-groups every one
+  of them under a single entry object with lowercase, type-grouped names and no namespace stutter:
+  `Contracts.number.between(1, 10)`, `Contracts.enum(['a', 'b'])`, `Contracts.array(Contracts.nullable(
+  Contracts.string.uuid()))`, `Contracts.object({...})` — the identical descriptors, a second spelling.
 
 ---
 
@@ -505,27 +518,73 @@ secures *its own* emissions only — a raw `console.log` of a sensitive value is
 The only runtime dependency is `tslib`. The package ships CommonJS with `.d.ts` types through its `exports`
 map, plus the `adorn` `bin`.
 
+### Two authoring paths
+
+adorn has **one semantic core — the reified descriptor — and two syntaxes that produce it.** Choose either,
+per file; they interoperate and project identically.
+
+| Decorator syntax — needs `experimentalDecorators` | Descriptor syntax — no compiler flags |
+| --- | --- |
+| `@Contract()` on the class | `contract(spec, fn)` / `contract.checked(spec, fn)` |
+| `@NotEmpty() name: string` | `StringContracts.NotEmpty()` |
+| `@Between(1, 7) days: number` | `NumberContracts.Between(1, 7)` |
+| `@OneOf(['a', 'b']) unit: string` | `EnumContracts.OneOf(['a', 'b'])` |
+| `toolSchemaForMethod(C, 'm')` | `toolSchemaFrom({ params: { … } })` |
+| validation via the installed `@Contract` wrapper | `Verify.check(descriptor, name, value)` |
+
+Both forms reduce to the **same descriptors**, so both feed the same pipeline — these are two frontends onto one
+semantic system, not two libraries bolted together:
+
+```text
+   decorator  ─┐
+               ├─▶  one reified descriptor  ─▶  runtime enforcement
+   descriptor ─┘                                + JSON Schema
+                                                + LLM tool schema
+                                                + documentation
+                                                + property-based tests
+                                                + observability
+```
+
+The decorator is the *ergonomic* frontend; the descriptor is the *foundation* every projection reads
+([constraints are data](#why-a-decorator-can-become-five-artifacts-constraints-are-data)). A codebase that can't
+or won't enable `experimentalDecorators` — or has no classes at all — adopts the **identical** enforcement and
+projections through the descriptor path, which needs no compiler flags. The next section enables the decorator
+frontend; the descriptor frontend needs nothing but the import.
+
+The descriptor frontend also has a fluent **`Contracts`** facade — the same factories grouped under one entry
+object with lowercase, type-grouped names (`Contracts.number.between(1, 10)`, `Contracts.nullable(item)`,
+`Contracts.object({...})`), so it reads as one algebra rather than seven namespaces. See [Working with values
+directly](#working-with-values-directly).
+
 ### Enable decorators
 
-The `@`-decorator paradigm requires TypeScript with `experimentalDecorators` and `emitDecoratorMetadata`:
+Decorator **syntax** needs exactly one TypeScript flag, `experimentalDecorators`:
 
 ```jsonc
 // tsconfig.json
-{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }
+{ "compilerOptions": { "experimentalDecorators": true } }
 ```
 
-`reflect-metadata` is **not** required — adorn feature-detects it and degrades honestly when absent (its only
-effect is filling a `Type` column in generated docs from `design:paramtypes`). Node.js 20.19+ is supported (CI
-runs on 20.19 / 22 / 24). A note on toolchains: the decorator authoring path needs the two flags above, which
-constrains you to a metadata-emitting compiler (`tsc` / ts-jest / ts-node); esbuild/SWC/Vite/Bun don't emit
-that metadata (DEC-004).
+That is the whole requirement. Enforcement, every projection, and the tool schemas read the **reified
+descriptor** — not reflected type metadata — so none of them depend on `emitDecoratorMetadata` or on
+`reflect-metadata`. The second flag is **optional and purely cosmetic**: `emitDecoratorMetadata: true` *together
+with* an imported `Reflect.metadata` implementation (`reflect-metadata`) fills the inferred **`Type` column** in
+generated docs from `design:paramtypes`, and nothing else — with either absent, adorn feature-detects that and
+simply omits the column. Node.js 20.19+ is supported (CI runs on 20.19 / 22 / 24).
+
+> **Toolchains.** Because only decorator *syntax* is required, any `experimentalDecorators`-capable compiler
+> works — `tsc`, ts-jest, ts-node, SWC, esbuild, Vite, Bun. The optional `Type`-column metadata is the one
+> place they differ: `tsc` / ts-jest / ts-node and **SWC** (`jsc.transform.legacyDecorator` +
+> `decoratorMetadata`) emit it; **esbuild** (and Vite, which transpiles with it) and **Bun** do not (DEC-004).
+> Since adorn never needs that metadata to run, the choice affects only whether generated docs can show an
+> inferred `Type` column — never whether a contract is enforced or a schema is produced.
 
 ### Build from source (contributors)
 
 ```bash
 npm install
 npm run build      # tsc -> ./dist, then the CLI build (tsconfig.cli.json)
-npm test           # jest — 78 suites, 1355 tests
+npm test           # jest — 82 suites, 1403 tests
 npm run typecheck  # tsc --noEmit over src, tests, addons, tools (tsconfig.test.json)
 npm run demo       # ts-node examples/demo.ts — a genuine install smoke test
 ```
@@ -577,12 +636,14 @@ dependency stays `tslib` alone, asserted by the isolation tests. Each declares i
 - Enforcement-aware `@Optional` / `@Default` and record-only `@Describe` / `@Tool`.
 - `@Log()`, `@Time()`, `@Observe()`.
 - Five in-core projections: Markdown docs, descriptive JSON Schema, prescriptive tool schema
-  (`toolSchemaForMethod`, incl. OpenAI strict mode via `{providerStrict}` on both entries — DEC-071),
+  (`toolSchemaForMethod`, incl. OpenAI strict mode via `{ provider: 'openai', strict: true }` on both
+  entries — DEC-071/093),
   observability (O1 sink), privacy-review telemetry.
 - `@Sensitive` / `@Telemetry` plus safe-by-default redaction.
 - Build-time sensitive-flow detector, and the `adorn` CLI (`docs` / `schema` / `check`).
-- The descriptor escape hatch — `Verify.that`/`Verify.check`, `toolSchemaFrom`, `defineConstraint`, and the
-  `*Contracts` namespaces — for boundaries a decorator can't reach.
+- The descriptor-first path, co-equal to decorators — `Verify.that`/`Verify.check`, `contract()`,
+  `toolSchemaFrom`, `defineConstraint`, and the `*Contracts` namespaces — the same enforcement and projections
+  with no decorators and no compiler flags.
 
 ### Validated against OpenAI
 
