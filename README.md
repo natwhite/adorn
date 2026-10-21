@@ -589,11 +589,15 @@ simply omits the column. Node.js 20.19+ is supported (CI runs on 20.19 / 22 / 24
 
 ```bash
 npm install
-npm run build      # tsc -> ./dist, then the CLI build (tsconfig.cli.json)
-npm test           # jest — 82 suites, 1403 tests
+npm run build      # tsc -> ./dist (CJS mirror + CLI), then tsup -> ./dist/esm (the ESM bundles)
+npm test           # jest — 83 suites, 1412 tests
 npm run typecheck  # tsc --noEmit over src, tests, addons, tools (tsconfig.test.json)
 npm run demo       # ts-node examples/demo.ts — a genuine install smoke test
 ```
+
+During the tsup pass you will see `You have emitDecoratorMetadata enabled but @swc/core was not installed,
+skipping swc plugin`. This is **expected, not a warning to fix**: adorn reads only a *consumer's*
+`design:paramtypes`, never its own, so the ESM bundles need no decorator metadata (DEC-004 / DEC-096).
 
 adorn is pinned to **TypeScript 6.0.3** for the build — the highest version the toolchain supports, because
 ts-jest has no TS 7 release yet (DEC-013). The shipped `.d.ts` compile cleanly under a consumer's
@@ -624,6 +628,14 @@ onto subpaths so a consumer imports only what it uses and a bundler can tree-sha
 
 Installing a sink stays on the root (`setObservationSink` is a configuration verb, like `setViolationPolicy`);
 *reading* or *constructing* observation data lives in `adorn/observe`.
+
+**A moved symbol takes its types with it.** Each subpath also exports the TypeScript types for what it holds,
+so repoint the type imports alongside the values: `ToolSchema` / `ToolSchemaOptions` / `ToolSchemaProvider` /
+`ToolSchemaFromInput` / `ToolParamSpec` / `ClassSchema` / `SchemaOptions` on `adorn/schema`; the
+`Observation` / `ObservationEvent` / `ObservationCall` / `Attributes` / `EmittedValue` / `ErrorFacts` /
+`SpanKind` / `Settlement` model on `adorn/observe`; `PostconditionResult` / `PreconditionResult` /
+`EnablednessResult` / `EnablednessGuard` on `adorn/introspection`; `TelemetryReport` on `adorn/privacy`.
+(`ConstraintDescriptor`, `ContractVerdict`, `CheckResult` and the authoring types stay on the root.)
 
 ---
 
