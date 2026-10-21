@@ -24,18 +24,25 @@
   "license": "MIT",
   "author": "natwhite",
   "main": "dist/index.js",
+  "module": "dist/esm/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/esm/index.mjs",
+      "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./otel": {
       "types": "./dist/addons/otel/index.d.ts",
+      "import": "./dist/esm/otel/index.mjs",
+      "require": "./dist/addons/otel/index.js",
       "default": "./dist/addons/otel/index.js"
     },
     "./test": {
       "types": "./dist/addons/test/index.d.ts",
+      "import": "./dist/esm/test/index.mjs",
+      "require": "./dist/addons/test/index.js",
       "default": "./dist/addons/test/index.js"
     }
   },
@@ -53,7 +60,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "tsc && tsc -p tsconfig.cli.json",
+    "build": "tsc && tsc -p tsconfig.cli.json && tsup",
     "build:cli": "tsc -p tsconfig.cli.json",
     "rebuild": "npm run clean && npm run build",
     "prepare": "node scripts/prepare.js",
@@ -94,6 +101,7 @@
     "reflect-metadata": "^0.2.2",
     "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
+    "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.19.0"
   }

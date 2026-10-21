@@ -515,8 +515,12 @@ secures *its own* emissions only — a raw `console.log` of a sensitive value is
 > or vendor it as a submodule and point a `file:` dependency at it. The published-package install line will
 > be added here once the name is chosen.
 
-The only runtime dependency is `tslib`. The package ships CommonJS with `.d.ts` types through its `exports`
-map, plus the `adorn` `bin`.
+The only runtime dependency is `tslib`. The package ships **dual ESM + CommonJS** through its `exports` map —
+`import` resolves to a tree-shakeable ESM build (`dist/esm/*.mjs`), `require` to the CommonJS build
+(`dist/index.js`), both sharing one set of `.d.ts` types — plus the `adorn` `bin`. The two formats are safe to
+mix in one process: adorn's mutable state (the contract registry, the sinks, the policy) lives in a
+`globalThis`-keyed slot, so a dual-loaded copy shares one registry rather than silently splitting enforcement
+(DEC-095).
 
 ### Two authoring paths
 

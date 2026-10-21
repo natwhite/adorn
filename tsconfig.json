@@ -64,6 +64,10 @@
     // a demo script. Excluded here so that cannot happen again; `npm run demo` runs it through
     // ts-node, and `tsconfig.test.json` still typechecks it.
     "examples",
+    // Build-time tooling config, not library source. It imports `tsup` (whose shipped `.d.ts` references
+    // `@swc/core`/`./types.cts`, unresolvable under this project's `node16` resolution) and must never reach
+    // `dist/` or be type-checked by the library build — the same rule as `spike`/`tools`/`examples`.
+    "tsup.config.ts",
     "**/*.test.ts"
   ]
 }
