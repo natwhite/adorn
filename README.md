@@ -637,6 +637,12 @@ so repoint the type imports alongside the values: `ToolSchema` / `ToolSchemaOpti
 `EnablednessResult` / `EnablednessGuard` on `adorn/introspection`; `TelemetryReport` on `adorn/privacy`.
 (`ConstraintDescriptor`, `ContractVerdict`, `CheckResult` and the authoring types stay on the root.)
 
+> **Upgrading across the curation (DEC-097):** these subpaths are **new in this release** — not a
+> pre-existing alternative import path. A repointing change (`import … from 'adorn/schema'`) will not compile
+> against an older adorn that exposes only the root plus `adorn/otel` / `adorn/test`. So **upgrade adorn
+> first, then repoint** — the two steps cannot be reordered, and a consumer commit that repoints must land
+> after the adorn version that introduces the subpaths.
+
 ---
 
 ## Add-ons — the `adorn/otel` and `adorn/test` subpath exports
