@@ -250,6 +250,11 @@ export interface ConstraintFactory<P extends ConstraintParams = ConstraintParams
  * Caveat, same shape as DEC-007's: this table is populated by module *evaluation*. A constraint
  * identity is only rehydratable if the module that defines it has been imported.
  */
+// Deliberately NOT globalized (DEC-095): this is per-copy CODE registration — adorn's built-ins, registered
+// identically by every loaded copy at module-load, guarded by a within-copy uniqueness check (a duplicate id
+// throws, below). Enforcement never reads it cross-copy (a descriptor carries its own predicate), so a shared
+// map would only turn the second copy's identical built-in registration into a false "already registered"
+// error. The contract REGISTRY and the configuration/sink/call-id state ARE shared; this is not.
 const definitions = new Map<string, ConstraintDefinition<any>>();
 
 /**

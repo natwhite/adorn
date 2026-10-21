@@ -59,6 +59,7 @@
  */
 
 import {ConstraintDescriptor, JsonValue} from './Descriptor';
+import {globalSlot} from './singletons';
 
 /** A prototype or constructor. Deliberately not a decorator-specific type. */
 export type ContractTarget = object;
@@ -360,11 +361,61 @@ interface MutableFieldContract {
 // Storage
 // ---------------------------------------------------------------------------
 
+/**
+ * All mutable registry state, in one object held in a process-global slot (DEC-095) so every loaded copy of
+ * adorn shares it. The map/set bands below are seeded BY REFERENCE from this object: once created they are the
+ * same instances across copies, so a `@Contract` recorded through one copy is visible to an evaluator reached
+ * through another (the dual-package / two-install hazard). Only the test-only {@link resetRegistry} replaces
+ * them. `classEnumerationEnabled` is a primitive — not shareable by reference — so it is read and written
+ * through `REG` directly. See `./singletons`.
+ */
+interface RegistryState {
+    contractsByTarget: WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>;
+    fieldsByTarget: WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>;
+    postconditionsByTarget: WeakMap<ContractTarget, Map<MethodKey, Postcondition[]>>;
+    preconditionsByTarget: WeakMap<ContractTarget, Map<MethodKey, Precondition[]>>;
+    enablednessByTarget: WeakMap<ContractTarget, Map<MethodKey, EnablednessGuard[]>>;
+    contractedClasses: Set<Function>;
+    fieldSensitivityByTarget: WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>;
+    parameterSensitivityByTarget: WeakMap<ContractTarget, Map<MethodKey, Map<number, SensitivityMarking>>>;
+    classSensitivityByTarget: WeakMap<Function, SensitivityMarking>;
+    parameterTelemetryByTarget: WeakMap<ContractTarget, Map<MethodKey, Map<number, TelemetryMarking>>>;
+    returnTelemetryByTarget: WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>;
+    parameterOptionalByTarget: WeakMap<ContractTarget, Map<MethodKey, Map<number, OptionalMarking>>>;
+    parameterDefaultByTarget: WeakMap<ContractTarget, Map<MethodKey, Map<number, JsonValue>>>;
+    parameterDescriptionByTarget: WeakMap<ContractTarget, Map<MethodKey, Map<number, string>>>;
+    methodDescriptionByTarget: WeakMap<ContractTarget, Map<MethodKey, string>>;
+    classEnumerationEnabled: boolean;
+}
+
+function createRegistryState(): RegistryState {
+    return {
+        contractsByTarget: new WeakMap(),
+        fieldsByTarget: new WeakMap(),
+        postconditionsByTarget: new WeakMap(),
+        preconditionsByTarget: new WeakMap(),
+        enablednessByTarget: new WeakMap(),
+        contractedClasses: new Set(),
+        fieldSensitivityByTarget: new WeakMap(),
+        parameterSensitivityByTarget: new WeakMap(),
+        classSensitivityByTarget: new WeakMap(),
+        parameterTelemetryByTarget: new WeakMap(),
+        returnTelemetryByTarget: new WeakMap(),
+        parameterOptionalByTarget: new WeakMap(),
+        parameterDefaultByTarget: new WeakMap(),
+        parameterDescriptionByTarget: new WeakMap(),
+        methodDescriptionByTarget: new WeakMap(),
+        classEnumerationEnabled: true,
+    };
+}
+
+const REG = globalSlot<RegistryState>('registry', createRegistryState);
+
 /** Authoritative per-target store. Lookup only — a WeakMap cannot be enumerated (DEC-011). */
-let contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>();
+let contractsByTarget = REG.contractsByTarget;
 
 /** The field band's twin of {@link contractsByTarget} (GAP-9). Same keying, same own-scoping. */
-let fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
+let fieldsByTarget = REG.fieldsByTarget;
 
 /**
  * The postcondition band (Q-11). Own-scoped and keyed exactly like {@link contractsByTarget}, so the
@@ -374,10 +425,10 @@ let fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContr
  * `MethodContract.post` slot because a postcondition is a closure, not a {@link ConstraintDescriptor}
  * (see {@link Postcondition}).
  */
-let postconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Postcondition[]>>();
+let postconditionsByTarget = REG.postconditionsByTarget;
 
 /** Companion enumerable store. Strong references; see the header note. */
-let contractedClasses = new Set<Function>();
+let contractedClasses = REG.contractedClasses;
 
 /**
  * The sensitivity band (DEC-PII-1/2). Own-scoped and keyed **exactly** as the constraint bands are,
@@ -391,26 +442,23 @@ let contractedClasses = new Set<Function>();
  * an installer (`@Contract()` / `installFieldContracts`) will attach a validating accessor to. Keeping
  * the marking out of the enforcement band keeps the marker record-only.
  */
-let fieldSensitivityByTarget = new WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>();
+let fieldSensitivityByTarget = REG.fieldSensitivityByTarget;
 
 /** Parameter sensitivity: target → method key → parameter index → marking. */
-let parameterSensitivityByTarget = new WeakMap<
-    ContractTarget,
-    Map<MethodKey, Map<number, SensitivityMarking>>
->();
+let parameterSensitivityByTarget = REG.parameterSensitivityByTarget;
 
 /** Class-level sensitivity — `@Sensitive` on a class marks the whole type (and its subclasses). */
-let classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
+let classSensitivityByTarget = REG.classSensitivityByTarget;
 
 /**
  * The telemetry-disclosure band (O1c, DEC-036) — the exact twin of {@link parameterSensitivityByTarget}.
  * Own-scoped and index-keyed, so a subclass conjoins rather than un-marks, and minification cannot break
  * the keying. Record-only: no key here ever causes an installer to attach anything.
  */
-let parameterTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, TelemetryMarking>>>();
+let parameterTelemetryByTarget = REG.parameterTelemetryByTarget;
 
 /** Return telemetry: target → method key → marking (`@Telemetry.result()`). The disclosure-side of Q-23. */
-let returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
+let returnTelemetryByTarget = REG.returnTelemetryByTarget;
 
 /**
  * The `@Optional` band (DEC-051) — the twin of {@link parameterSensitivityByTarget}. Own-scoped and
@@ -418,7 +466,7 @@ let returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, Telemet
  * **required-wins** ({@link getEffectiveParameterOptional}), the safe direction for a precondition
  * *weakening* (DEC-016/DEC-022), which is why it is NOT the over-marking rule the sensitivity band uses.
  */
-let parameterOptionalByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, OptionalMarking>>>();
+let parameterOptionalByTarget = REG.parameterOptionalByTarget;
 
 /**
  * The `@Default` band (DEC-051) — target → method key → parameter index → the (JSON-serialisable)
@@ -426,7 +474,7 @@ let parameterOptionalByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<n
  * so a stored `null` default is distinguishable from "no default" (a missing map entry) — `Map.get`
  * returns `undefined` only when the key is absent. Nearest-declaration-wins ({@link getEffectiveParameterDefault}).
  */
-let parameterDefaultByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, JsonValue>>>();
+let parameterDefaultByTarget = REG.parameterDefaultByTarget;
 
 /**
  * The `@Describe` parameter-description band (Q-30) — target → method key → parameter index → the
@@ -436,7 +484,7 @@ let parameterDefaultByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<nu
  * `@Default` uses — a description is a plain annotation, not a precondition, so there is nothing to
  * conjoin (contrast the constraint band's DEC-022 union).
  */
-let parameterDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, string>>>();
+let parameterDescriptionByTarget = REG.parameterDescriptionByTarget;
 
 /**
  * The `@Tool` method-description band (Q-30) — target → method key → the tool-level description. The
@@ -444,9 +492,7 @@ let parameterDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, Ma
  * nearest-declaration-wins ({@link getEffectiveMethodDescription}). It is the recorded twin of the
  * `toolSchemaForMethod(C, m, {description})` option — the option overrides it when both are present.
  */
-let methodDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, string>>();
-
-let classEnumerationEnabled = true;
+let methodDescriptionByTarget = REG.methodDescriptionByTarget;
 
 const EMPTY_CONTRACTS: ReadonlyMap<MethodKey, MethodContract> = new Map<MethodKey, MethodContract>();
 
@@ -858,7 +904,7 @@ export function getEffectivePostconditionKeys(target: ContractTarget): MethodKey
  * {@link postconditionsByTarget}. A separate closure band (not the reserved descriptor `pre` slot) for
  * the same reason postconditions are: a {@link Precondition} is a closure with no identity/params.
  */
-let preconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Precondition[]>>();
+let preconditionsByTarget = REG.preconditionsByTarget;
 
 const NO_PRECONDITIONS: ReadonlyArray<Precondition> = Object.freeze([]);
 
@@ -998,7 +1044,7 @@ function preconditionEntry(target: ContractTarget, key: MethodKey): Precondition
  * separation is also forced by the signature: a guard is `(self, ...args) => boolean` and cannot share
  * {@link Precondition}'s `(...args) => boolean` storage.
  */
-let enablednessByTarget = new WeakMap<ContractTarget, Map<MethodKey, EnablednessGuard[]>>();
+let enablednessByTarget = REG.enablednessByTarget;
 
 const NO_ENABLEDNESS: ReadonlyArray<EnablednessGuard> = Object.freeze([]);
 
@@ -2200,7 +2246,7 @@ export function getDescriptionMethodKeysForClass(
  * A no-op when enumeration is disabled.
  */
 export function registerContractedClass(constructor: Function): void {
-    if (!classEnumerationEnabled) return;
+    if (!REG.classEnumerationEnabled) return;
     if (typeof constructor !== 'function') {
         throw new TypeError('registerContractedClass: expected a constructor function');
     }
@@ -2217,12 +2263,12 @@ export function registerContractedClass(constructor: Function): void {
  * so the opt-out actually releases memory rather than merely stopping additions.
  */
 export function setClassEnumerationEnabled(enabled: boolean): void {
-    classEnumerationEnabled = enabled;
+    REG.classEnumerationEnabled = enabled;
     if (!enabled) contractedClasses.clear();
 }
 
 export function isClassEnumerationEnabled(): boolean {
-    return classEnumerationEnabled;
+    return REG.classEnumerationEnabled;
 }
 
 /**
@@ -2242,25 +2288,25 @@ export function isClassEnumerationEnabled(): boolean {
  * between tests must declare its contracted classes *inside* the test rather than at module scope.
  */
 export function resetRegistry(): void {
-    contractsByTarget = new WeakMap<ContractTarget, Map<MethodKey, MutableMethodContract>>();
-    fieldsByTarget = new WeakMap<ContractTarget, Map<FieldKey, MutableFieldContract>>();
-    postconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Postcondition[]>>();
-    preconditionsByTarget = new WeakMap<ContractTarget, Map<MethodKey, Precondition[]>>();
-    enablednessByTarget = new WeakMap<ContractTarget, Map<MethodKey, EnablednessGuard[]>>();
-    contractedClasses = new Set<Function>();
-    fieldSensitivityByTarget = new WeakMap<ContractTarget, Map<FieldKey, SensitivityMarking>>();
-    parameterSensitivityByTarget = new WeakMap<
-        ContractTarget,
-        Map<MethodKey, Map<number, SensitivityMarking>>
-    >();
-    classSensitivityByTarget = new WeakMap<Function, SensitivityMarking>();
-    parameterTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, TelemetryMarking>>>();
-    returnTelemetryByTarget = new WeakMap<ContractTarget, Map<MethodKey, TelemetryMarking>>();
-    parameterOptionalByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, OptionalMarking>>>();
-    parameterDefaultByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, JsonValue>>>();
-    parameterDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, Map<number, string>>>();
-    methodDescriptionByTarget = new WeakMap<ContractTarget, Map<MethodKey, string>>();
-    classEnumerationEnabled = true;
+    // Replace every band with a fresh instance IN the shared slot, then re-seed the module-local bindings
+    // from it, so locals and the global store stay consistent (test-only; a single copy in the test process).
+    Object.assign(REG, createRegistryState());
+    contractsByTarget = REG.contractsByTarget;
+    fieldsByTarget = REG.fieldsByTarget;
+    postconditionsByTarget = REG.postconditionsByTarget;
+    preconditionsByTarget = REG.preconditionsByTarget;
+    enablednessByTarget = REG.enablednessByTarget;
+    contractedClasses = REG.contractedClasses;
+    fieldSensitivityByTarget = REG.fieldSensitivityByTarget;
+    parameterSensitivityByTarget = REG.parameterSensitivityByTarget;
+    classSensitivityByTarget = REG.classSensitivityByTarget;
+    parameterTelemetryByTarget = REG.parameterTelemetryByTarget;
+    returnTelemetryByTarget = REG.returnTelemetryByTarget;
+    parameterOptionalByTarget = REG.parameterOptionalByTarget;
+    parameterDefaultByTarget = REG.parameterDefaultByTarget;
+    parameterDescriptionByTarget = REG.parameterDescriptionByTarget;
+    methodDescriptionByTarget = REG.methodDescriptionByTarget;
+    // classEnumerationEnabled is read/written through REG directly (reset by the Object.assign above).
 }
 
 // ---------------------------------------------------------------------------

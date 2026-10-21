@@ -130,6 +130,8 @@ export type AssertEnforcement = boolean | 'auto';
  */
 export type ObservationVerbosity = 'normal' | 'detailed';
 
+import {globalSlot} from './singletons';
+
 const DEFAULT_VERBOSITY: ObservationVerbosity = 'normal';
 
 interface ConfigurationState {
@@ -152,7 +154,17 @@ function initialState(): ConfigurationState {
     };
 }
 
-let state: ConfigurationState = initialState();
+/**
+ * Process-global configuration state (DEC-095): the settings object plus this module's own warn-output sink,
+ * in one shared slot so a dual-loaded adorn reads ONE policy/verbosity and routes warnings through ONE sink.
+ * `state` is mutated in place (seeded by reference); the sink is reassigned at runtime, so it is read and
+ * written through `CFG`. See `./singletons`.
+ */
+const CFG = globalSlot('configuration', () => ({
+    state: initialState(),
+    sink: null as ((message: string) => void) | null,
+}));
+const state: ConfigurationState = CFG.state;
 
 // ---------------------------------------------------------------------------
 // Mode
@@ -358,16 +370,14 @@ function describeViolation(violation: unknown): string {
 // Diagnostics sink & test support
 // ---------------------------------------------------------------------------
 
-let sink: ((message: string) => void) | null = null;
-
 /** Route this module's own warnings somewhere other than `console.warn`. */
 export function setConfigurationSink(next: ((message: string) => void) | null): void {
-    sink = next;
+    CFG.sink = next;
 }
 
 function emit(message: string): void {
     try {
-        if (sink) sink(message);
+        if (CFG.sink) CFG.sink(message);
         else if (typeof console !== 'undefined' && typeof console.warn === 'function') console.warn(message);
     } catch {
         // A diagnostic must never become the failure it is reporting on.
@@ -376,6 +386,6 @@ function emit(message: string): void {
 
 /** Restore every setting to its shipped default. Test support. */
 export function resetConfiguration(): void {
-    state = initialState();
-    sink = null;
+    Object.assign(state, initialState());
+    CFG.sink = null;
 }

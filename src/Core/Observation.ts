@@ -38,6 +38,7 @@
  */
 
 import type {ConstraintKind, ConstraintParams} from './Descriptor';
+import {globalSlot} from './singletons';
 
 // ---------------------------------------------------------------------------
 // Attributes — the low-cardinality span/log attribute map
@@ -104,7 +105,7 @@ export function markOwnsCompletion(fn: Function): void {
  * `Math.random()` — is deterministic, allocation-free, and collision-free for the life of the process:
  * the id only has to be unique among concurrently-live calls, and a strictly increasing integer is.
  */
-let callSeq = 0;
+const OBS = globalSlot('observation', () => ({callSeq: 0, sink: null as ObservationSink | null}));
 
 /**
  * The next per-call correlation id (Q-27). It is stamped once per observed invocation onto that call's
@@ -128,7 +129,7 @@ let callSeq = 0;
  * own wrappers AND any consumer emitter alike, makes that impossible.
  */
 export function nextCallId(): number {
-    return ++callSeq;
+    return ++OBS.callSeq;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,14 +339,12 @@ export interface ObservationSink {
  */
 export const NOOP_SINK: ObservationSink = Object.freeze({});
 
-let sink: ObservationSink = NOOP_SINK;
-
 /** Route every observation somewhere — an `@adorn/otel` adapter, a JSON logger, a test spy. */
 export function setObservationSink(next: ObservationSink | null): void {
-    sink = next || NOOP_SINK;
+    OBS.sink = next || NOOP_SINK;
 }
 
 /** The installed sink, read live by the emitters. Compare against {@link NOOP_SINK} for the fast path. */
 export function getObservationSink(): ObservationSink {
-    return sink;
+    return OBS.sink || NOOP_SINK;
 }

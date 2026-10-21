@@ -10,18 +10,24 @@
  * trap C-1 flags). `ContractDiagnostics.ts` re-exports these so its public surface is unchanged.
  */
 
+import {globalSlot} from './singletons';
+
 /** Where warnings go. Swappable so tests can assert on them and hosts can route them. */
 export type DiagnosticSink = (message: string) => void;
 
-let sink: DiagnosticSink | null = null;
-let enabled = true;
+/**
+ * Process-global diagnostics state (DEC-095): the swappable sink and the enabled flag, in one shared slot so a
+ * dual-loaded adorn has ONE sink a test can spy on and ONE enabled flag. Both are reassigned at runtime, so
+ * they are read and written through `DIAG`. See `./singletons`.
+ */
+const DIAG = globalSlot('diagnostics', () => ({sink: null as DiagnosticSink | null, enabled: true}));
 
 /**
  * Development mode is the default; only an explicit `NODE_ENV=production` opts out. Read per call rather
  * than cached at module load, so a host that sets it late still gets the behaviour it asked for.
  */
 export function diagnosticsActive(): boolean {
-    if (!enabled) return false;
+    if (!DIAG.enabled) return false;
     const env = typeof process !== 'undefined' && process && process.env ? process.env.NODE_ENV : undefined;
     return env !== 'production';
 }
@@ -29,8 +35,8 @@ export function diagnosticsActive(): boolean {
 /** Emit through the sink (or `console.warn`), guarded so a diagnostic never becomes the failure it reports. */
 export function emitDiagnostic(message: string): void {
     try {
-        if (sink) {
-            sink(message);
+        if (DIAG.sink) {
+            DIAG.sink(message);
         } else if (typeof console !== 'undefined' && typeof console.warn === 'function') {
             console.warn(message);
         }
@@ -51,7 +57,7 @@ export function reportDiagnostic(message: string): void {
 
 /** Route warnings somewhere other than `console.warn`. Pass `null` to restore the default. */
 export function setContractDiagnosticsSink(next: DiagnosticSink | null): void {
-    sink = next;
+    DIAG.sink = next;
 }
 
 /**
@@ -59,15 +65,15 @@ export function setContractDiagnosticsSink(next: DiagnosticSink | null): void {
  * not install or fix anything.
  */
 export function setContractDiagnosticsEnabled(next: boolean): void {
-    enabled = next;
+    DIAG.enabled = next;
 }
 
 export function isContractDiagnosticsEnabled(): boolean {
-    return enabled;
+    return DIAG.enabled;
 }
 
 /** Test support — reset the sink and enabled flag to their defaults (the pending set lives Adapter-side). */
 export function resetDiagnosticsState(): void {
-    sink = null;
-    enabled = true;
+    DIAG.sink = null;
+    DIAG.enabled = true;
 }
