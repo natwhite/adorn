@@ -11,7 +11,7 @@
 // typechecks each as its own module against the installed package's types. A moved/renamed/removed export,
 // or an exports-map that forgets a subpath's types under one resolution mode, fails the build.
 import {execFileSync} from 'node:child_process';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -55,15 +55,21 @@ console.log(
     `Extracted ${imports.length} adorn import statement(s) across entry points: ${specifiers.join(', ')}`,
 );
 
-// 2. Build dist (so `prepare` is a no-op during pack and pack's stdout stays clean JSON), then pack.
+// 2. Build dist, then pack the tarball. We never parse npm's stdout: the `prepare` lifecycle script
+//    prints to stdout during pack (even with --ignore-scripts on some npm versions), which would corrupt
+//    a --json parse. Instead we pack into a fresh empty directory and find the single *.tgz by listing it.
 let tgz = process.env.TGZ;
 if (!tgz) {
     console.log('Building dist and packing the artifact...');
     runNpm(['run', 'build'], {cwd: repo, stdio: 'ignore'});
-    // --ignore-scripts: dist is already built above, so skip the `prepare` lifecycle whose stdout would
-    // otherwise pollute the --json output we parse.
-    const out = runNpm(['pack', '--ignore-scripts', '--json', '--pack-destination', tmpdir()], {cwd: repo});
-    tgz = join(tmpdir(), JSON.parse(out)[0].filename);
+    const packDir = mkdtempSync(join(tmpdir(), 'adorn-pack-'));
+    runNpm(['pack', '--pack-destination', packDir], {cwd: repo, stdio: 'ignore'});
+    const tgzName = readdirSync(packDir).find(f => f.endsWith('.tgz'));
+    if (!tgzName) {
+        console.error('npm pack produced no .tgz in', packDir);
+        process.exit(1);
+    }
+    tgz = join(packDir, tgzName);
 }
 tgz = resolve(tgz);
 console.log('Artifact:', tgz, '\n');
