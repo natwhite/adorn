@@ -517,10 +517,7 @@ export interface ToolSchemaFromInput {
  * the DEC-048 rule ("carries a constraint and is not `optional`"); every listed param has ≥1 descriptor by
  * construction, so `optional` is the only way to drop one.
  */
-export function toolSchemaFrom(
-    input: ToolSchemaFromInput,
-    options?: ProviderProfileOptions,
-): ToolSchema {
+export function toolSchemaFrom(input: ToolSchemaFromInput, options?: ProviderProfileOptions): ToolSchema {
     if (!input || typeof input !== 'object' || !input.params || typeof input.params !== 'object') {
         throw new TypeError('toolSchemaFrom: expected `{ params: { <name>: descriptor | spec } }`');
     }

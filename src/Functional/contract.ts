@@ -101,7 +101,9 @@ export interface ContractSpec {
     /** Per-parameter descriptors, positional. `null` = an unconstrained argument (a hole). */
     readonly params?: ReadonlyArray<AnyDescriptor | null>;
     /** Cross-parameter preconditions, `@Requires`-shaped: `(...args) => boolean`, or `{predicate, description?, id?}`. */
-    readonly requires?: ReadonlyArray<((...args: any[]) => boolean) | SpecClause<(...args: any[]) => boolean>>;
+    readonly requires?: ReadonlyArray<
+        ((...args: any[]) => boolean) | SpecClause<(...args: any[]) => boolean>
+    >;
     /**
      * Postconditions, `@Ensures`-shaped: `(result, ...args) => boolean`, or `{predicate, description?, id?}`.
      * `result` is typed `any` (not the registry band's `unknown`) in BOTH forms, so a caller may annotate it

@@ -239,7 +239,9 @@ describe('axiform feedback (2026-10-18) adds exactly its intended exports', () =
     it('exports constraintFromJSON — the rehydration half of the JSON round-trip (§8)', () => {
         expect(typeof api.constraintFromJSON).toBe('function');
         // Round-trips a serialised descriptor back to an enforceable one.
-        const revived = api.constraintFromJSON(JSON.parse(JSON.stringify(adorn.NumberContracts.Between(1, 7))));
+        const revived = api.constraintFromJSON(
+            JSON.parse(JSON.stringify(adorn.NumberContracts.Between(1, 7))),
+        );
         expect(revived.predicate(5)).toBe(true);
         expect(revived.predicate(9)).toBe(false);
     });
@@ -503,7 +505,9 @@ describe('@EnabledWhen enabledness guards add exactly their intended public expo
     });
 
     it('exports the getEffectiveEnablednessGuards inheritance-aware read', () => {
-        expect(typeof (introspection as Record<string, unknown>).getEffectiveEnablednessGuards).toBe('function');
+        expect(typeof (introspection as Record<string, unknown>).getEffectiveEnablednessGuards).toBe(
+            'function',
+        );
     });
 
     it('keeps the enabledness writer and key helpers OFF the root surface (Q-6)', () => {
@@ -533,9 +537,16 @@ describe('DEC-097 surface curation: the subpaths carry exactly what the root she
 
     it('adorn/schema exports the projections, and the root does not', () => {
         for (const name of [
-            'documentClass', 'documentContracts', 'renderMarkdown', 'generateMarkdown',
-            'schemaForClass', 'schemaForContracts', 'serializeSchema', 'generateSchema',
-            'toolSchemaForMethod', 'toolSchemaFrom',
+            'documentClass',
+            'documentContracts',
+            'renderMarkdown',
+            'generateMarkdown',
+            'schemaForClass',
+            'schemaForContracts',
+            'serializeSchema',
+            'generateSchema',
+            'toolSchemaForMethod',
+            'toolSchemaFrom',
         ]) {
             expect(typeof (schema as Record<string, unknown>)[name]).toBe('function');
             notOnRoot(name);
@@ -543,21 +554,38 @@ describe('DEC-097 surface curation: the subpaths carry exactly what the root she
     });
 
     it('adorn/privacy exports the telemetry projection, and the root does not', () => {
-        for (const name of ['telemetryForClass', 'telemetryForContracts', 'serializeTelemetry', 'generateTelemetryReport']) {
+        for (const name of [
+            'telemetryForClass',
+            'telemetryForContracts',
+            'serializeTelemetry',
+            'generateTelemetryReport',
+        ]) {
             expect(typeof (privacy as Record<string, unknown>)[name]).toBe('function');
             notOnRoot(name);
         }
     });
 
     it('adorn/introspection exports the reads + evaluators, and the root does not', () => {
-        for (const name of ['evaluatePostconditions', 'evaluatePreconditions', 'evaluateEnabledness', 'getContractsForClass', 'getEffectiveContract']) {
+        for (const name of [
+            'evaluatePostconditions',
+            'evaluatePreconditions',
+            'evaluateEnabledness',
+            'getContractsForClass',
+            'getEffectiveContract',
+        ]) {
             expect(typeof (introspection as Record<string, unknown>)[name]).toBe('function');
             notOnRoot(name);
         }
     });
 
     it('adorn/observe exports the observation plumbing, and the root does not', () => {
-        for (const name of ['getObservationSink', 'nextCallId', 'settle', 'createConsoleObservationSink', 'violationFromCheck']) {
+        for (const name of [
+            'getObservationSink',
+            'nextCallId',
+            'settle',
+            'createConsoleObservationSink',
+            'violationFromCheck',
+        ]) {
             expect(typeof (observe as Record<string, unknown>)[name]).toBe('function');
             notOnRoot(name);
         }

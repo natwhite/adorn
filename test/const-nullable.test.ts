@@ -6,7 +6,16 @@
  * "may be absent"). Both project exactly and both compose end-to-end with enforcement.
  */
 
-import {Const, Nullable, EnumContracts, NullableContracts, NumberContracts, StringContracts, Contract, Verify} from '../index';
+import {
+    Const,
+    Nullable,
+    EnumContracts,
+    NullableContracts,
+    NumberContracts,
+    StringContracts,
+    Contract,
+    Verify,
+} from '../index';
 import {toolSchemaForMethod} from '../schema';
 
 describe('@Const — a single allowed literal (DEC-056)', () => {

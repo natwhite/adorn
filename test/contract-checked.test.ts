@@ -78,7 +78,14 @@ describe('contract.checked — pre-call failures short-circuit the body', () => 
 
     it('forwards the localized path of a compositional params failure (§4)', () => {
         const f = contract.checked(
-            {params: [ObjectContracts.Fields({name: StringContracts.NotEmpty(), age: NumberContracts.Between(0, 120)})]},
+            {
+                params: [
+                    ObjectContracts.Fields({
+                        name: StringContracts.NotEmpty(),
+                        age: NumberContracts.Between(0, 120),
+                    }),
+                ],
+            },
             (_rec: {name: string; age: number}) => 'ok',
         );
         const v = sync(f({name: 'ok', age: 999}));
@@ -173,7 +180,12 @@ describe('contract.checked — {evaluate:"all"} reports every failure (§6)', ()
 
     it('default (first) mode reports only the first failure, with no failures[] list', () => {
         const f = contract.checked(
-            {ensures: [{predicate: (r: number) => r > 0, id: 'positive'}, {predicate: (r: number) => r % 2 === 0, id: 'even'}]},
+            {
+                ensures: [
+                    {predicate: (r: number) => r > 0, id: 'positive'},
+                    {predicate: (r: number) => r % 2 === 0, id: 'even'},
+                ],
+            },
             (n: number) => n,
         );
         const v = sync(f(-3));
@@ -186,20 +198,14 @@ describe('contract.checked — {evaluate:"all"} reports every failure (§6)', ()
 
 describe('contract.checked — async returns a promise of the same verdict', () => {
     it('resolves to {ok:true} for a satisfied async contract', async () => {
-        const f = contract.checked(
-            {returns: NumberContracts.Finite()},
-            async (n: number) => n * 2,
-        );
+        const f = contract.checked({returns: NumberContracts.Finite()}, async (n: number) => n * 2);
         const v = await f(21);
         expect(v.ok).toBe(true);
         if (v.ok) expect(v.value).toBe(42);
     });
 
     it('resolves to an ensures failure (never rejects) for a violated async postcondition', async () => {
-        const f = contract.checked(
-            {ensures: [{predicate: (r: number) => r >= 0}]},
-            async (n: number) => n,
-        );
+        const f = contract.checked({ensures: [{predicate: (r: number) => r >= 0}]}, async (n: number) => n);
         const v = await f(-1);
         expect(v.ok).toBe(false);
         if (!v.ok && v.band !== 'body') {

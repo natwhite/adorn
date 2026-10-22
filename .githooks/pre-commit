@@ -1,0 +1,25 @@
+#!/bin/sh
+# adorn pre-commit gate — block a commit that would fail CI's Prettier "format:check" gate.
+#
+# Formatting drift reached master once and only surfaced at publish time (the release workflow's first
+# step, `npm run format:check`, went red). This runs that same check locally, on just the files staged
+# for this commit, before the commit is created.
+#
+#   Fix drift:        npm run format    (then re-stage and commit)
+#   Bypass (rare):    git commit --no-verify
+#   Enable per clone: npm run hooks     (sets core.hooksPath to .githooks)
+
+# Only the files staged for THIS commit, NUL-delimited so paths with spaces are safe. `--ignore-unknown`
+# makes Prettier skip anything it has no parser for (LICENSE, images, the hooks themselves); .prettierignore
+# still covers Markdown. `-r` skips the run entirely when nothing relevant is staged.
+git diff --cached --name-only --diff-filter=ACM -z \
+  | xargs -0 -r npx --no-install prettier --check --ignore-unknown
+status=$?
+
+if [ "$status" -ne 0 ]; then
+  echo ""
+  echo "  ✗ Prettier found formatting drift in staged files — this is exactly what CI rejects."
+  echo "    Fix it:  npm run format    (then re-stage and commit)"
+  exit 1
+fi
+exit 0

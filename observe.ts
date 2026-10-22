@@ -19,7 +19,10 @@ export type {
 export {settle} from './src/Core/settle';
 export type {Settlement, SettleKind} from './src/Core/settle';
 
-export {consoleObservationSink, createConsoleObservationSink} from './src/Adapters/legacy/ObservationBehavior';
+export {
+    consoleObservationSink,
+    createConsoleObservationSink,
+} from './src/Adapters/legacy/ObservationBehavior';
 
 // Translate a functional `Verify.check` failure into `ViolationFacts` for the observation stream (DEC-074), so
 // a non-decorator refusal emits as a `violation` event on the same stream the decorator weave feeds.

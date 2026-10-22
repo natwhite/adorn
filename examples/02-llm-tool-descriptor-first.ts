@@ -8,7 +8,14 @@
  *
  *   Run:  npx ts-node examples/02-llm-tool-descriptor-first.ts
  */
-import {Verify, ObjectContracts, StringContracts, EnumContracts, NumberContracts, NullableContracts} from '../index';
+import {
+    Verify,
+    ObjectContracts,
+    StringContracts,
+    EnumContracts,
+    NumberContracts,
+    NullableContracts,
+} from '../index';
 import {toolSchemaFrom} from '../schema'; // in your own project: `from 'adorn/schema'`
 
 // Per-session data — the slots THIS caller can book, known only now:

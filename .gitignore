@@ -1,5 +1,7 @@
 # Project exclude paths
 /dist/
+# Build output from the tools/ scratch utilities (e.g. tools/q31/dist) — source stays tracked, builds don't.
+tools/*/dist/
 /node_modules/
 
 # Local secrets — never commit (Q-31 harness reads OPENAI_API_KEY from here)

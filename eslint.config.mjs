@@ -39,7 +39,7 @@ export default tseslint.config(
         // Build output, dependencies, and coverage are never linted.
         // `spike/**` is throwaway feasibility-spike code (docs/sensitive-flow-spike.md), kept
         // out of the build by tsconfig `exclude` and out of the linter here.
-        ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'spike/**'],
+        ignores: ['**/dist/**', 'node_modules/**', 'coverage/**', 'spike/**'],
     },
 
     js.configs.recommended,
@@ -138,10 +138,14 @@ export default tseslint.config(
     },
 
     {
-        // Jest config and this file are Node scripts, not library sources.
-        files: ['jest.config.js', 'eslint.config.mjs'],
+        // Jest config, this config, and the npm lifecycle scripts (scripts/**) are Node CommonJS scripts,
+        // not library sources: `require()`, `process`, `module` and `__dirname` are correct there, not lapses.
+        files: ['jest.config.js', 'eslint.config.mjs', 'scripts/**/*.js'],
         languageOptions: {
-            globals: {module: 'writable', require: 'readonly', __dirname: 'readonly'},
+            globals: {module: 'writable', require: 'readonly', __dirname: 'readonly', process: 'readonly'},
+        },
+        rules: {
+            '@typescript-eslint/no-require-imports': 'off',
         },
     },
 );

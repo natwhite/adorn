@@ -11,7 +11,14 @@
 export {
     documentClass, documentContracts, renderMarkdown, generateMarkdown,
 } from './src/Projections/docs';
-export type {ClassDoc, MethodDoc, ParameterDoc, ConstraintDoc, FieldDoc, MarkdownOptions} from './src/Projections/docs';
+export type {
+    ClassDoc,
+    MethodDoc,
+    ParameterDoc,
+    ConstraintDoc,
+    FieldDoc,
+    MarkdownOptions,
+} from './src/Projections/docs';
 
 // prettier-ignore
 export {

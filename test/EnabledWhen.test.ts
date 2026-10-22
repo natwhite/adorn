@@ -12,7 +12,11 @@
 
 import {EnabledWhen, Requires, GreaterThanEqual, Contract, setViolationPolicy} from '../index';
 import {toolSchemaForMethod} from '../schema';
-import {evaluateEnabledness, getEffectiveEnablednessGuards, getEffectivePreconditions} from '../introspection';
+import {
+    evaluateEnabledness,
+    getEffectiveEnablednessGuards,
+    getEffectivePreconditions,
+} from '../introspection';
 import type {EnablednessGuard} from '../introspection';
 import {resetConfiguration, setConfigurationSink} from '../src/Core/Configuration';
 

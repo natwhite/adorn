@@ -95,6 +95,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "hooks": "git config core.hooksPath .githooks",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
