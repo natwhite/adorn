@@ -1,9 +1,9 @@
 # adorn
 
-> Decorators **adorn** a function with its contract. One declaration on the signature becomes the tool schema
-> an LLM reads, the runtime validation its arguments face, the JSON Schema, the documentation, and the
-> observability — all **derived from that one declaration**, so those artifacts can't drift from each other by
-> construction, not by discipline.
+> **adorn is contract-driven development for TypeScript.** Decorators **adorn** a function with its contract —
+> what its inputs must satisfy, what has to hold before and after. Runtime validation, JSON Schema,
+> documentation, tests, observability, and an LLM tool schema are all **derived from that one declaration**, so
+> those artifacts can't drift from each other by construction, not by discipline.
 
 **`0.1.0` · MIT · TypeScript.** The core has a single runtime dependency (`tslib`). Two opt-in add-ons —
 `adorn/otel` (OpenTelemetry) and `adorn/test` (property-based testing) — sit behind an optional peer dependency
@@ -12,12 +12,6 @@ each, so the package root stays `tslib`-only.
 ```bash
 npm install adorn
 ```
-
-> **Proven against OpenAI, not asserted.** The tool schemas adorn generates are round-tripped through OpenAI's
-> live function-calling API (`gpt-4o-mini`, temperature 0): the generated schema is accepted, the model
-> returns a tool call, and its arguments validate against **the same declaration** that produced the schema —
-> including nested objects, nullable-optional fields, and OpenAI strict mode. The verbatim evidence is in
-> [`docs/q31-capstone-results.md`](docs/q31-capstone-results.md).
 
 ---
 
@@ -29,7 +23,7 @@ maintained by hand; each drifts.
 
 adorn's wager is that the contract belongs **on the declaration**, not in the body — lifted up to the signature
 where you can *see* it, and enforced at the boundary of **every** function that carries one. A contracted method
-*is* a tool definition, *is* a schema, *is* its own documentation — because all of them are read from the one
+*is* its own documentation, *is* a schema, *is* a tool definition — because all of them are read from the one
 thing you wrote on the signature.
 
 ```ts
@@ -78,9 +72,18 @@ the model is steered by **and** the predicate that throws when the model sends `
 `@LessThanEqual(7)` to `@LessThanEqual(14)` and *both* the schema the model reads and the check its reply faces
 move together, because there is only one of them, and it lives on the signature.
 
-This is the strongest case for the paradigm: the consumer of the schema is a machine that produces malformed
-input the moment the schema is wrong — a drifted *doc* misleads a human who can compensate; a drifted *tool
-schema* silently corrupts every call.
+### Why this matters even more for machine consumers
+
+A drifted *doc* misleads a human who can compensate; a drifted *tool schema* silently corrupts every call,
+because the consumer produces malformed input the moment the schema is wrong. That makes an LLM tool the most
+*unforgiving* consumer of a contract — and a good stress test for one, rather than the reason the paradigm
+exists.
+
+To prove the tool-schema projection against a real provider, its output was round-tripped end to end through
+OpenAI's live function-calling API (`gpt-4o-mini`, temperature 0): the generated schema was accepted, the model
+returned a tool call, and its arguments validated against **the same declaration** that produced the schema —
+nested objects, nullable-optional fields, and OpenAI strict mode included. The verbatim evidence is in
+[`docs/q31-capstone-results.md`](docs/q31-capstone-results.md).
 
 ## One declaration, every artifact
 
@@ -186,7 +189,7 @@ The guides below cover the full surface; the website hosts an interactive refere
 A focused, honestly-scoped `0.1.0`: a working decorator core with method and field inheritance, closure and
 reified pre-/postconditions, five projections (docs, JSON Schema, prescriptive LLM tool schema, observability,
 privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow detector, and a CLI. The
-public surface is pinned by a test, and the suite is green (83 suites, 1412 tests).
+public surface is pinned by a test, and the suite is green.
 
 **What works today**
 
@@ -209,7 +212,7 @@ supported) are documented in [Decorators & contracts](docs/decorators.md#known-l
 ```bash
 npm install
 npm run build      # tsc -> ./dist (CJS mirror + CLI), then tsup -> ./dist/esm (the ESM bundles)
-npm test           # jest — 83 suites, 1412 tests
+npm test           # jest — the full suite
 npm run typecheck  # tsc --noEmit over src, tests, add-ons, tools
 npm run demo       # ts-node examples/demo.ts — a genuine install smoke test
 npm run hooks      # enable the repo's pre-commit Prettier gate (.githooks)

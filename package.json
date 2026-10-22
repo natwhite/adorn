@@ -1,7 +1,7 @@
 {
   "name": "adorn",
   "version": "0.1.1",
-  "description": "One TypeScript declaration → an LLM tool schema, a runtime validator, JSON Schema, and docs, derived from a single source.",
+  "description": "Contract-driven development for TypeScript — declare a contract once; runtime validation, JSON Schema, docs, tests, and an LLM tool schema all derive from the same source.",
   "keywords": [
     "typescript",
     "decorators",

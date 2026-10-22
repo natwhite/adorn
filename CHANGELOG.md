@@ -17,6 +17,9 @@ tooling that keeps them honest.
 
 ### Changed
 
+- Repositioned the framing around **contract-driven development**: the README, the package description, and the
+  website now lead with the contract as the project's identity, with the LLM tool schema presented as one
+  derived consumer (the most unforgiving one) rather than the headline. No surface or behaviour changed.
 - The README is now a lean overview; the full reference lives in topical guides under `docs/`
   (decorators, schemas, functional API, observability, add-ons). Internal decision-log codes and the
   pre-publish "not yet on npm" caveats are gone, and the artifacts table names real entry points.
