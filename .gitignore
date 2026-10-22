@@ -2,6 +2,8 @@
 /dist/
 # Build output from the tools/ scratch utilities (e.g. tools/q31/dist) — source stays tracked, builds don't.
 tools/*/dist/
+# Stray compiled test output — a local tsc can emit <name>.test.js beside the .test.ts sources; the .ts is the source of truth.
+test/*.js
 /node_modules/
 
 # Local secrets — never commit (Q-31 harness reads OPENAI_API_KEY from here)
