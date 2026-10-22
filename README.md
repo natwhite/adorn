@@ -5,44 +5,32 @@
 > observability — all **derived from that one declaration**, so those artifacts can't drift from each other by
 > construction, not by discipline.
 
-**Status: `0.1.0`, MIT — source-available, not yet on npm under this name** (see [Install](#install)). The
-public surface is pinned by a test: the root `adorn` exports **69 values** — the authoring surface (decorators,
-descriptor factories, `contract`/`Verify`, the configuration setters) — while the projections, registry
-introspection, observation plumbing and privacy review live on focused **subpath exports** (`adorn/schema`,
-`adorn/introspection`, `adorn/observe`, `adorn/privacy`), so a consumer pulls only what it uses (DEC-097). The
-suite is all green. It is a focused, honestly-scoped `0.1.0`: a working decorator core with method and field
-inheritance, closure and reified pre-/postconditions, five projections (docs, JSON Schema, prescriptive LLM
-tool schema, observability, privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow
-detector, and a CLI. Two further opt-in add-ons — `adorn/otel` (OpenTelemetry) and `adorn/test` (fuzzing) — sit
-behind an optional peer dependency each, so the package root stays `tslib`-only.
+**`0.1.0` · MIT · TypeScript.** The core has a single runtime dependency (`tslib`). Two opt-in add-ons —
+`adorn/otel` (OpenTelemetry) and `adorn/test` (property-based testing) — sit behind an optional peer dependency
+each, so the package root stays `tslib`-only.
+
+```bash
+npm install adorn
+```
 
 > **Proven against OpenAI, not asserted.** The tool schemas adorn generates are round-tripped through OpenAI's
 > live function-calling API (`gpt-4o-mini`, temperature 0): the generated schema is accepted, the model
 > returns a tool call, and its arguments validate against **the same declaration** that produced the schema —
-> including nested objects, nullable-optional fields, and OpenAI strict mode. Evidence, with the verbatim
-> schemas, is in [`docs/q31-capstone-results.md`](docs/q31-capstone-results.md).
+> including nested objects, nullable-optional fields, and OpenAI strict mode. The verbatim evidence is in
+> [`docs/q31-capstone-results.md`](docs/q31-capstone-results.md).
 
 ---
 
-## The idea
+## The problem it solves
 
 The intent of a function is normally scattered across places that immediately begin to disagree: a runtime
 check buried in the body, a schema in a separate file, a sentence in the docs, a hand-written test. Each is
 maintained by hand; each drifts.
 
-adorn's wager (DEC-006) is that the contract belongs **on the declaration**, not in the body — lifted up to the
-signature where you can *see* it, enforced at the boundary of **every** function that carries one. That is
-contract-driven development, and decorators are what make it ergonomic enough to be a paradigm rather than a
-chore. A contracted method *is* a tool definition, *is* a schema, *is* its own documentation — because all of
-them are read from the one thing you wrote on the signature.
-
-The decorator is the *ergonomic* form, not the foundation. What every projection reads is the **reified
-contract descriptor** — plain data — and decorators are simply the preferred TypeScript *adapter* that
-produces it. The same descriptors drive a fully decorator-free path (`contract()`, `toolSchemaFrom`,
-`Verify.check`, `defineConstraint` — DEC-074), so a codebase that can't or won't use legacy decorators adopts
-the identical enforcement and projections without them. Parameter decorators in particular are a
-legacy-TypeScript feature — the newer TC39 standard decorators don't cover parameters at all — so keeping the
-descriptor model constitutional is what makes decorator syntax a choice rather than a lock-in.
+adorn's wager is that the contract belongs **on the declaration**, not in the body — lifted up to the signature
+where you can *see* it, and enforced at the boundary of **every** function that carries one. A contracted method
+*is* a tool definition, *is* a schema, *is* its own documentation — because all of them are read from the one
+thing you wrote on the signature.
 
 ```ts
 import {
@@ -65,12 +53,9 @@ class WeatherTool {
     }
 }
 
+// Exactly the object a function-calling API wants:
 const parameters = toolSchemaForMethod(WeatherTool, 'getWeather');
 ```
-
-That one line — `@GreaterThanEqual(1) @LessThanEqual(7) days: number` — is *both* the `{minimum: 1, maximum:
-7}` the model is steered by **and** the predicate that throws when the model sends `{days: 99}`. `parameters`
-is exactly the object a function-calling API wants:
 
 ```json
 {
@@ -87,28 +72,16 @@ is exactly the object a function-calling API wants:
 }
 ```
 
-Change `@LessThanEqual(7)` to `@LessThanEqual(14)` and *both* the schema the model reads and the check its
-reply faces move together, because there is only one of them, and it lives on the signature.
+That one line — `@GreaterThanEqual(1) @LessThanEqual(7) days: number` — is *both* the `{minimum: 1, maximum: 7}`
+the model is steered by **and** the predicate that throws when the model sends `{days: 99}`. Change
+`@LessThanEqual(7)` to `@LessThanEqual(14)` and *both* the schema the model reads and the check its reply faces
+move together, because there is only one of them, and it lives on the signature.
 
-> **What "no drift" does and doesn't cover.** The artifacts adorn *derives* — schema, validation, docs,
-> telemetry — cannot drift from each other, because they all read the one descriptor. The descriptor itself
-> still has to be authored to match the two channels adorn cannot see at runtime: the parameter's
-> **TypeScript type** (`@GreaterThan(0) x: string` compiles, and adorn then enforces `number` while the type
-> says `string`) and any **TypeScript default** (`@Default(10) x = 20` publishes `10` to the schema but runs
-> with `20` — see the gotcha box below). adorn removes drift *between the projections*; it does not reconcile
-> the descriptor with TypeScript's own view. A build-time linter that cross-checks the two is a plausible
-> future, but is not shipped.
+This is the strongest case for the paradigm: the consumer of the schema is a machine that produces malformed
+input the moment the schema is wrong — a drifted *doc* misleads a human who can compensate; a drifted *tool
+schema* silently corrupts every call.
 
-This is the strongest case for the paradigm, because the consumer of the schema is a machine that produces
-malformed input the moment the schema is wrong — a drifted *doc* misleads a human who can compensate; a drifted
-*tool schema* silently corrupts every call.
-
-> **Permitted values known only at runtime?** A decorator is fixed when the module loads, so
-> `@OneOf(['celsius','fahrenheit'])` works only for a *static* set. When the allowed values are per-call data —
-> this session's available slots, this user's account ids — the constraint can't be a decorator. That case is
-> first-class, not unsupported: build the same tool schema from descriptors with
-> [`toolSchemaFrom`](#working-with-values-directly), and validate the reply with the same descriptors. It's
-> common in LLM work; see [Working with values directly](#working-with-values-directly).
+## One declaration, every artifact
 
 | One declaration on the signature produces | Where it ships |
 | --- | --- |
@@ -118,617 +91,130 @@ malformed input the moment the schema is wrong — a drifted *doc* misleads a hu
 | **Documentation** — Markdown generated from the same statement it enforces | core |
 | **Observability** — value-free violation & completion facts through a neutral sink | core |
 | **Privacy review** — the disclosure each parameter/return carries (`telemetryForClass`) | core |
-| **Property-based tests** — `fast-check` inputs derived from the contract | `adorn/test` subpath export (optional `fast-check` peer) |
+| **Property-based tests** — `fast-check` inputs derived from the contract | [`adorn/test`](docs/add-ons.md) |
 
-**Scope — a validator, not a coercion library.** adorn *rejects* an invalid value; it never silently coerces,
+**adorn is a validator, not a coercion library.** It *rejects* an invalid value; it never silently coerces,
 defaults, or transforms one. A malformed argument is a violation, not something to degrade into a fallback.
 
----
+> **What "no drift" does and doesn't cover.** The artifacts adorn *derives* — schema, validation, docs,
+> telemetry — cannot drift from each other, because they all read one underlying descriptor. The descriptor
+> itself still has to be authored to match the two channels adorn can't see at runtime: the parameter's
+> **TypeScript type** and any **TypeScript default**. adorn removes drift *between the projections*; it does not
+> reconcile the descriptor with TypeScript's own view. See
+> [Decorators & contracts](docs/decorators.md#surprising-shapes) for the details.
 
-## The core trick
+## Decorators are the ergonomic form, not the foundation
 
-A standard TypeScript parameter decorator runs once, at class-definition time, and receives only `(target,
-propertyKey, parameterIndex)` — it never sees actual argument values. adorn bridges that gap by splitting the
-work in two:
-
-1. **Parameter decorators record.** `@GreaterThanEqual(1)` files its constraint against `(prototype, method,
-   parameterIndex)` in a contract registry. It writes nothing to the method itself.
-2. **`@Contract()` installs.** A class decorator runs *after* every member decorator, so by then the registry
-   holds the whole class. It replaces each contracted method with a wrapper that, on every call, checks the
-   recorded constraints against the runtime arguments before delegating.
-
-> #### ⚠ `@Contract()` is required
->
-> Parameter constraints **do nothing on their own**. A class that declares them without `@Contract()` is not
-> enforced, and is invisible to every projection. Because that failure is silent, adorn emits a
-> development-mode warning naming the offending class and methods (off under `NODE_ENV=production`; routable via
-> `setContractDiagnosticsSink` / `setContractDiagnosticsEnabled`). `@Validate()` is a per-method alternative
-> that also registers the class for projection (DEC-016) — adorn never enforces what it would omit from a
-> generated artifact. Prefer class-level `@Contract()`: it installs **outermost**, so guard-before-flow and
-> postcondition-on-final-result hold by construction (DEC-043); the per-method form is order-sensitive.
-
-> #### ⚠ Three shapes that surprise new consumers
->
-> - **A TypeScript default value is honoured.** `detect(@GreaterThanEqual(1000) timeoutMs = 30_000)` called
->   as `detect()` uses the default rather than throwing — adorn treats any parameter at or after the first
->   defaulted one as optional, so an omitted (or explicitly `undefined`) argument is not validated as
->   `undefined` (a default is compiled into the body, which runs *after* the wrapper). The one exception is a
->   *required* parameter placed **after** a defaulted one (`f(a, b = 1, c)`), a signature TS lint discourages;
->   mark it `@Optional()`/`@Default()` explicitly if you must write it. `@Default(x)` is still worth reaching
->   for — after this, its job is publishing the default into the generated **schema** (a TS default is
->   invisible to projections), not enforcement, which a plain TS default now handles on its own.
-> - **adorn's parameter decorators don't apply to constructor parameters yet** — an adorn limitation, not a
->   TypeScript one. Legacy TypeScript *does* allow constructor-parameter decorators (dependency-injection
->   frameworks rely on them); a constructor parameter's `propertyKey` is simply `undefined`. adorn's decorator
->   signature types that key as `string | symbol` (and its registry keys off it), so applying one to a
->   constructor parameter is a TS1239. Widening the signature and the registry key is a deferred feature; for
->   now, validate at construction with a **static factory**: a `static of(...)` decorated with `@Validate()`
->   that returns `new`; a private constructor then makes the validated path the only path.
-> - **A `static #private` member blocks a class decorator** (TS18036 — TypeScript's own limitation, though the
->   error blames the decorator). Move the static private to module scope, or use `@Validate()` per method.
->   Instance `#private` members are fine.
-
-Constraints evaluate in **declaration order** — parameters left to right, stacked decorators top to bottom
-(DEC-015/017). When several arguments are invalid, the first one in the signature is the one reported.
-
-### Why a decorator can become five artifacts: constraints are data
-
-The load-bearing move is that a constraint is **not an opaque closure that throws** — it is a *reified
-descriptor*: an identity plus JSON-serialisable params, with the predicate **derived** from those params
-(DEC-010). `@GreaterThanEqual(1)` is literally a thin `@`-syntax adapter over that descriptor. Derivation is
-what lets one decorator project into a schema keyword, a docs line, a fuzzer generator, and the runtime check —
-none of which can disagree, because they are all read from the same recorded data. The paradigm rests on this:
-the decorator is the ergonomic surface; the reified descriptor underneath is why it can be more than a check.
-
-> Those descriptors are a **first-class authoring path**, exported directly (`NumberContracts.Between(1, 10)`,
-> `Verify.check(...)`, `contract(spec, fn)`, `toolSchemaFrom({...})`) — the decorator is sugar over them, not
-> the other way round. Reach for them whenever a decorator can't (a raw `unknown` off the wire with no
-> signature to annotate, a schema whose enum is known only at session start, a codebase with no classes) **or
-> simply by preference**: the descriptor path delivers the identical enforcement and projections with no
-> compiler flags. See [Two authoring paths](#two-authoring-paths) and
-> [Working with values directly](#working-with-values-directly).
-
----
-
-## What's included
-
-The public surface groups by what it constrains or produces. Everything below is exported from `index.ts`.
-
-### Parameter constraints
-
-Numeric: `GreaterThan` · `GreaterThanEqual` · `LessThan` · `LessThanEqual` · `Between` · `Integer` ·
-`MultipleOf`. String length and pattern: `StringMinLength` · `MinLength` · `MaxLength` · `NotEmpty` ·
-`Matches` · `Email` · `Url`. Every predicate is **total** (a `null`/`NaN`/wrong-type argument reports a
-contract violation, never a bare `TypeError`) — which matters because a fuzzer feeds it those first and a
-schema claims a `type` on the strength of it (BUG-4).
-
-- **`@OneOf([...])`** — a reified enum/membership constraint, type-agnostic. Projects to `{enum: [...]}`, the
-  LLM constrained-decoding target several providers honour; strict `===` membership.
-- **`@Const(value)`** — the single-literal sibling of `@OneOf` (DEC-056): projects to `{const: value}`.
-- **`@ArrayOf(item, {minItems?, maxItems?})`** — the first **compositional** constraint (DEC-050): a list whose
-  every element satisfies an inner descriptor, carried as serialised data. Projects to `{type:'array', items:
-  <item fragment>, …}`, nests, and round-trips through JSON.
-- **`@Dictionary(value)`** — an **open** map (`Record<string, V>`, DEC-054): arbitrary string keys, every value
-  satisfying an inner descriptor. Projects to `{type:'object', additionalProperties: <value fragment>}`.
-- **`@Shape(FieldClass)`** — a **closed** DTO (DEC-055) validated against another class's `@Contract`ed
-  instance fields. `toolSchemaForMethod` tightens it recursively (`required` = every field,
-  `additionalProperties: false`), descending array items and dictionary values.
-- **`@Nullable(item)`** — a compositional combinator (DEC-056) widening any constraint to also accept `null`,
-  distinct from `@Optional`'s "may be absent". Stays *required* in a tool schema (the model must send a value
-  or explicit `null`).
-- **String formats** — `@Uuid` · `@DateTime` · `@Ipv4`, and `@Format(name)` as a keyed alias (DEC-052). Each
-  is a **validating** descriptor whose predicate is at-least-as-strict as the `format` keyword it emits, so the
-  schema never over-claims (DEC-029). `date-time` uses strict RFC-3339 with real-calendar validation, not
-  `Date.parse`.
-
-> `@Positive()` / `@Negative()` / `@NonNegative()` / `@NonPositive()` were **removed** (DEC-020) — a name can't
-> carry a boundary. Write the boundary you mean: `@GreaterThan(0)`, `@LessThan(0)`, etc.
-
-### Field constraints
-
-`Enforce` installs an accessor that validates on assignment (`Enforce.greaterThan(0)`);
-`CreateFieldDecorator(descriptor)` builds a field decorator over any descriptor; `installFieldContracts(ctor)`
-is the imperative installer. Field constraints are **inherited**: a subclass's field is checked against the
-union of every declaration on its prototype chain, and may only *strengthen*, never weaken (DEC-021).
-
-### Markers (record-only)
-
-- **`@Optional` / `@Default(value)`** (DEC-051) — enforcement-aware. `@Optional` makes an *absent*
-  (`undefined`) argument satisfy the position (dropped from the tool schema's `required`); `@Default`
-  annotates a JSON default and implies `@Optional`. Inheritance is **required-wins** (DEC-016/022).
-- **`@Describe('…')` / `@Tool('…')`** (DEC-052) — pure annotation. `@Describe` is the sole source of a
-  property's `description`; `@Tool` is the method/tool description. Both flow into docs.
-
-### Contracts, pre- and postconditions
-
-`Contract()` (class) / `Validate()` (method) install enforcement and register for projection.
-
-- **`@Ensures((result, ...args) => boolean, description?)`** — a **closure** postcondition (DEC-032): fully
-  general, but enforced-but-unprojectable (a closure carries no identity). An options form
-  **`@Ensures({predicate, capture?, description?, id?})`** adds PRE-STATE (DEC-092): `capture(...args)` runs at
-  call entry and its deep-cloned, frozen result is passed to the predicate as `old`
-  (`(result, old, ...args)`), so a body that mutates an argument can't mask its own violation. The same
-  `capture` form is available on `contract()`/`contract.checked`'s `ensures`.
-- **`@Returns(<descriptor>)`** — a **reified** postcondition (DEC-033): checked by the same predicate machinery
-  preconditions use *and* emitted into docs and schema. Coexists with `@Ensures`.
-- **`@Requires((...args) => boolean, description?)`** — the input-side twin (DEC-057): a **closure**
-  cross-parameter precondition (`start < end`) checked before the call, blaming the caller. Like `@Ensures`,
-  enforced-but-unprojectable.
-- **`@EnabledWhen((self, ...args) => boolean, description?)`** — a **state-reading** precondition (DEC-089):
-  the receiver-aware sibling of `@Requires`, for "`withdraw` is enabled only while `balance >= amount`".
-  Caller-blamed ("not enabled in this state"), never projected into a schema (no argument choice satisfies
-  it), and the hook `fuzzSequence` uses to skip calls that are legitimately not enabled yet.
-
-All four stack on one signature — parameter constraints, a cross-parameter precondition, and both
-postcondition bands:
+What every projection reads is a **reified contract descriptor** — plain, JSON-serialisable data — and decorators
+are simply the preferred adapter that produces it. The same descriptors drive a fully decorator-free path
+(`contract()`, `toolSchemaFrom`, `Verify.check`, `defineConstraint`), so a codebase that can't or won't use
+decorators adopts the identical enforcement and projections without them — and with **no compiler flags**.
 
 ```ts
-import {Contract, Requires, Returns, Ensures, GreaterThanEqual, NumberContracts} from 'adorn';
+// The descriptor path — same enforcement, same schema, no decorators:
+import { Verify, toolSchemaFrom, Contracts } from 'adorn';
 
-@Contract()
-class Bank {
-    @Requires((amount: number, balance: number) => amount <= balance, 'cannot overdraw')
-    @Returns(NumberContracts.GreaterThanEqual(0))   // reified postcondition: the new balance is never negative
-    @Ensures(                                        // closure postcondition (`result` is typed `unknown`, so narrow it)
-        (result: unknown, amount: number, balance: number) => (result as number) === balance - amount,
-        'balance drops by exactly the amount',
-    )
-    withdraw(@GreaterThanEqual(1) amount: number, @GreaterThanEqual(0) balance: number): number {
-        return balance - amount;
-    }
-}
+const params = { city: Contracts.string.notEmpty(), days: Contracts.number.between(1, 7) };
 
-const bank = new Bank();
-bank.withdraw(30, 100);    // → 70
-bank.withdraw(150, 100);   // throws @Requires — the CALLER overdrew (checked before the body runs)
-bank.withdraw(0, 100);     // throws @GreaterThanEqual(1) on `amount` (a parameter constraint)
-// A body that returned a negative balance would throw @Returns — blaming the CALLEE, on the settled result.
+const schema = toolSchemaFrom({ name: 'getWeather', params });  // the model's parameters object
+const result = Verify.check(Contracts.object(params), 'args', untrustedJson); // typed, non-throwing verdict
 ```
 
-`@Requires` runs before the call (caller-blamed); `@Returns`/`@Ensures` run on the settled result
-(callee-blamed). Only `@Returns` is reified, so only it projects into the generated docs and schema (as the
-return type). Runnable as [`examples/05-pre-post-conditions.ts`](examples/05-pre-post-conditions.ts), which
-also shows `@Returns` catching a buggy return value.
+Choose decorators or descriptors per file; they interoperate and project identically. See
+[The functional (descriptor) API](docs/functional-api.md) and
+[Two authoring paths](docs/functional-api.md#two-authoring-paths).
 
-`evaluatePostconditions` / `evaluatePreconditions` are exported because they are the *same* oracles the runtime
-wrapper runs — a fuzzer checking them checks exactly what enforcement enforces, with no drift.
-
-### Method decorators
-
-`Log()` logs each call (safe-by-default redaction below). `Time()` measures duration, including async and
-Observable-like returns (`setTimingSink(fn)` routes it). `Observe()` opens an observation span over the O1 seam
-carrying a declared `SpanKind`.
-
-### `@Sensitive` / `@Telemetry` and safe-by-default redaction
-
-`Sensitive()` marks a field, parameter, or class as holding sensitive data (record-only). The **redaction
-runtime** (DEC-030) makes it matter: every path adorn can emit a value through — `@Log`, violation messages,
-observation events — renders `[REDACTED]` **by default, without reading any annotation**.
-`setValueDisclosure('all')` turns raw values back on for local debugging; a `@Sensitive` marking *vetoes* even
-that (and the veto is surfaced, not silenced). The safe default holds with zero `@Sensitive` anywhere — the
-annotation is defence-in-depth. `Telemetry.value()` / `.redact(strategy)` / `.result()` opt a value *into*
-disclosure on the observation path. See [`docs/sensitive.md`](docs/sensitive.md).
-
-### Enforcement and disclosure configuration
-
-Each contract is classified by **trust** (DEC-008): `guard` (default) validates untrusted input and survives
-production (only `disableGuardEnforcement({confirm, reason})` strips it); `assert` is an internal self-check,
-stripped in production. `setEnforcementMode` · `setAssertEnforcement` · `setDefaultTrust` ·
-`enableGuardEnforcement` · `disableGuardEnforcement` tune the gate; `setViolationPolicy('throw' | 'warn' |
-handler)` routes what happens on a violation (`'warn'` proceeds into the method, which is what makes staging a
-new contract over live traffic possible); `setObservationVerbosity`, `setValueDisclosure` / `getValueDisclosure`,
-and `setContractDiagnosticsEnabled` / `setContractDiagnosticsSink` / `flushContractDiagnostics` round it out.
-
-> **This family is process-level, set-once-at-startup configuration** — not per-request state. Set at boot,
-> it is safe under concurrency; mutating it per request in a shared process would change other in-flight
-> calls, so don't. If you need *divergent policy per concurrent context* (one request `throw`, another
-> `warn`), that is not expressible today — a known limitation. The data-first core you'll reach for most —
-> the constraint decorators, the `*Contracts` descriptors, and `Verify.check` — is pure and carries no
-> ambient state, so it is concurrency-safe regardless.
-
-### Registry introspection (semver-frozen read surface)
-
-The `getContracts` / `getContract` / `getContractedClasses` / `getFieldContract(s)` family answers *"what does
-this class declare?"*; the `getEffective…` family (`getEffectiveFieldConstraints` /
-`getEffectiveParameterConstraints` / `getEffectivePostconditions` / …) answers *"what is in force here?"* — the
-union of every declaration on the prototype chain, which is what enforcement applies and a projection should
-render. This read surface is the semver-frozen public API (DEC-039, pinned by `test/public-surface.test.ts`);
-the registry's *writers* are deliberately not exported (they would bypass the adapter that owns ordering and
-installation).
-
-### Projections
-
-The same registry read feeds every projection:
-
-- **Docs:** `documentClass` · `documentContracts` → `renderMarkdown` · `generateMarkdown`.
-- **JSON Schema (draft 2020-12), descriptive:** `schemaForClass` · `schemaForContracts` →
-  `serializeSchema` · `generateSchema`. Degradation always goes toward the *weaker* true statement — an
-  over-claiming schema is worse than none (DEC-029).
-- **Tool schema, prescriptive:** `toolSchemaForMethod(Class, 'method', {description?, providerStrict?})` — the
-  flagship above (`providerStrict` emits [OpenAI strict mode](#openai-strict-mode)). A sibling of
-  `schemaForClass`, not a flag on it: `schemaForClass` under-claims (describe a value enforcement will
-  *accept*), `toolSchemaForMethod` is tight (specify the object the producer must *send*; `required` +
-  `additionalProperties: false`).
-- **Telemetry / privacy review:** `telemetryForClass` · `telemetryForContracts` → `serializeTelemetry` ·
-  `generateTelemetryReport`. A pure registry read reporting the disclosure each parameter/return carries.
-
-The projection model types (`ClassDoc`, `MethodDoc`, `ToolSchema`, `TelemetryReport`, …) are exported so a
-consumer can type a variable holding one.
-
-Three deliberate shape decisions the tool schema makes: **no `$schema`** (a `parameters` sub-schema, not a
-standalone document — DEC-049; `schemaForClass` still emits it); **`required` = "carries ≥1 constraint" minus
-`@Optional`** (sound, because adorn's predicates are total — a missing argument already fails at runtime — so
-`required` matches enforcement; DEC-048/051); **`additionalProperties: false`** (a method's parameter set is
-closed — the one keyword the tool schema asserts that runtime enforcement doesn't itself check, labelled
-honestly as producer-steering; DEC-048).
-
-### Observability (O1)
-
-A neutral, zero-dependency observation seam (DEC-035/036/037). `setObservationSink` / `getObservationSink`
-install one around-shaped `ObservationSink`; the enforcement weave emits **value-free violation facts** and
-completions through it, and `@Observe` emits completions carrying pre-disclosed values (redacted by default —
-*"seeing ≠ emitting"*). `settle` is the shared sync/thenable/observable settling classifier; `RETURN_INDEX`
-marks the return value; `nextCallId` is the one shared correlation-id sequence a consumer's own emitter draws
-from (below); `consoleObservationSink` is a ready-made opt-in JSON-to-console sink. The event union
-(`ObservationEvent`, `ViolationFacts`, `EmittedValue`, `Settlement<T>`, …) is exported and additive.
-
-**Emitting without decorators.** The stream isn't decorator-only — a functional codebase (no classes to
-`@Observe`) emits point events straight to the installed sink, the observation analog of `Verify.check`:
-
-```ts
-import { getObservationSink, nextCallId } from 'adorn';
-import type { Observation } from 'adorn';
-
-const observation: Observation = {
-    owner: 'reminders', member: 'schedule', name: 'reminders.schedule',
-    isStatic: false, detail: 'always', kind: 'internal', parameters: [],
-};
-getObservationSink().record?.({
-    kind: 'completed', observation, callId: nextCallId(),
-    durationMs: 12, outcome: 'returned', settled: true,
-    // startedAt?: number   — position a retroactive interval (epoch ms)
-    // parentCallId?: number — nest it under another call's span
-});
-```
-
-Draw the `callId` from **`nextCallId()`** — the one shared, monotonic sequence adorn's own wrappers use — so
-your ids never collide with adorn's (a sink may key per-call state by `callId`, e.g. `createOtelSink`'s span
-nesting). For an interval you *time* rather than *wrap*, add **`startedAt`** (epoch ms) so the sink can
-*position* the span, and **`parentCallId`** to *nest* it: a record-only sink can then build a full waterfall
-tree with no context manager.
-
-`record` is the fire-and-forget point-event surface (`completed` / `violation` / `message`); `scope` is the
-around-wrapper for span nesting. **If you drive `scope` yourself, mind the lifecycle:** `scope` *opens* the
-span, but its correlated `completed` event *ends* it — matched by `callId` (DEC-047). Do **not** end the span
-inside `scope`, or every async span is flat (it closes before the promise settles). Because `createOtelSink`
-maps *only* the public `ObservationSink`, a well-formed event you emit this way becomes an OTel span/metric with
-no decorator in sight. It's a documented pattern rather than a one-call helper (a blessed emitter may follow if
-it proves common).
-
----
-
-## OpenAI strict mode
-
-OpenAI's [strict function calling](https://platform.openai.com/docs/guides/function-calling) requires that
-**every** property appear in `required` and `additionalProperties: false` be set at **every** object level —
-not just the root. Pass `{ provider: 'openai', strict: true }` to the decorated flagship (or to
-`toolSchemaFrom`) and adorn emits a strict-compatible schema, proven end-to-end against the live API in the
-capstone above:
-
-```ts
-const parameters = toolSchemaForMethod(ScheduleTool, 'remind', { provider: 'openai', strict: true });
-```
-
-`strict` is a **provider compatibility profile**, not a provider-independent toggle — naming the provider is
-deliberate, so other providers can define their own profiles without overloading one flag, and an unsupported
-`provider` is a loud build-time error rather than a silent fallback. (The original boolean
-`{ providerStrict: true }` remains as a deprecated, behaviour-identical alias.)
-
-The rule strict mode forces is *nullability-in-the-declaration* (DEC-068/069/071/093): because strict mode
-forbids a truly-absent property, an "optional" field is instead declared `@Nullable(...)` and sent as `null` —
-so one recursive pass promotes it into `required` at its own object level, and schema and validator both accept
-the model's `null` with no drift. A bare non-nullable `@Optional` parameter or an open `@Dictionary` map (which
-strict mode cannot express) is refused at build time with an actionable, decorator-flavoured message instead of
-a silent 400 from the API.
-
----
-
-## Working with values directly
-
-Not everything is a function you can decorate. A raw `unknown` arriving from `JSON.parse` at an HTTP boundary
-has no signature to annotate; a tool schema whose enum is known only at session start can't be fixed at module
-load; a codebase may have zero classes at all. For those cases — and equally **by preference** — the same
-reified descriptors are available as plain data, for validation, schema, **and enforcement**. This is a
-co-equal authoring path, not a fallback: each entry below is a decorator's job available as a plain function,
-producing the identical descriptor and projections with no decorators and no compiler flags.
-
-- **`Verify.that(descriptor, name, value)`** throws on a violation; **`Verify.check(...)`** returns a
-  discriminated `CheckResult` instead (DEC-053) — the non-throwing path for a boundary that needs the failure
-  as a *value* (an HTTP 400) rather than an exception. Since DEC-059 both **narrow** `unknown` to the
-  constraint's output type, and `Verify.check` reports the failing key on `path` (DEC-060).
-- **`contract(spec, fn)`** — the functional twin of `@Contract` / `@Requires` / `@Ensures` / `@Returns` /
-  `@Observe` (DEC-074): wrap a plain function with `{params, requires, ensures, returns, observe}` from
-  descriptors, no class or decoration point. It runs the *same* precondition/postcondition oracles the
-  decorators do (no drift), settles an async result before the return band, and — with `observe` set — emits
-  `completed`/`violation` events to the installed sink. This is the fourth of four decorator jobs available as
-  a function, so a zero-class codebase can adopt the enforcement layer whole.
-- **`contract.checked(spec, fn)`** — the non-throwing twin (DEC-091): each call returns a `ContractVerdict` —
-  the per-call outcome *as data* (`{ok, value}` on success; `{ok:false, band, index, id?, facts, value?, message}`
-  for a contract failure; `{ok:false, band:'body', error}` for a thrown body) — with no global state (never the
-  violation policy, never the sink). The verdict carries the settled return, the localized `path`, and, with
-  `{evaluate:'all'}`, every failure. Same bands, same oracles, same failure builders as `contract()`, so an
-  evidence/verdict consumer and a thrown violation cannot disagree.
-- **`violationFromCheck(result, {parameter?})`** — turn a failed `check` into `ViolationFacts` (DEC-074), so a
-  functional refusal emits as a `violation` event on the same stream the decorator weave feeds (and that
-  `adorn/otel` maps). One observability stream, decorator or not.
-- **`toolSchemaFrom({params: {...}})`** builds the same prescriptive schema from named descriptors rather than
-  from a decorated method, for a per-session schema; it takes the same `{ provider, strict }` profile described
-  above.
-- **`defineConstraint({...})`** builds a first-class reified constraint from data, so a constraint you define
-  yourself projects into schemas and `Verify` exactly like a built-in.
-- The descriptor namespaces themselves — `NumberContracts` · `StringContracts` · `EnumContracts` ·
-  `ArrayContracts` · `ObjectContracts` (incl. `ObjectContracts.Fields({...})`, the optional-aware object
-  literal) · `NullableContracts` — feed all of the above. The fluent **`Contracts`** facade re-groups every one
-  of them under a single entry object with lowercase, type-grouped names and no namespace stutter:
-  `Contracts.number.between(1, 10)`, `Contracts.enum(['a', 'b'])`, `Contracts.array(Contracts.nullable(
-  Contracts.string.uuid()))`, `Contracts.object({...})` — the identical descriptors, a second spelling.
-
----
-
-## Projections and the CLI
-
-The projections are functions; the `adorn` CLI is their delivery vehicle:
+## Install & setup
 
 ```bash
-adorn docs   [--out <file>] <entry...>   # Markdown documentation projection
-adorn schema [--out <file>] <entry...>   # JSON Schema projection (draft 2020-12)
-adorn check  <tsconfig-or-globs...>      # report @Sensitive values reaching an adorn emitter
+npm install adorn
 ```
-
-`docs` and `schema` **load then project** (DEC-007): they `require` each entry so its decorators execute and
-populate the registry, then walk it — so loading *executes* the module, side effects and all. A `.ts` entry is
-run through `ts-node`, which the CLI lazily requires: for `.ts` entries you need `ts-node` and `typescript`
-installed in your project (they are not runtime dependencies of adorn). `check` is **static** — it builds a
-`ts.Program`, runs the sensitive-flow detector, and never executes your code (non-zero exit on a leak).
-
-### The sensitive-flow detector
-
-`tools/sensitive-flow/` is build-time tooling — an ESLint rule (`no-sensitive-to-adorn-sink`) over a shared
-analysis core. It reports where a `@Sensitive` value reaches one of adorn's **own** emitters, following the
-value through same-function aliases, template interpolation, and destructuring (DEC-028). It is
-**report-only, permanently**, prints its own scope on every run, and states its two limits plainly rather than
-chasing them: `s.ssn.slice(-4)` is caught by nothing (a regulatory judgement, not a library's), and adorn
-secures *its own* emissions only — a raw `console.log` of a sensitive value is yours (DEC-025).
-
----
-
-## Getting started
-
-### Install
-
-> **Not yet on npm under the name `adorn`** (that name is held by an unrelated package). Until a published
-> name is settled, install from the repository — a `prepare` script builds `dist/` on install, so a git
-> dependency works without a checked-in build:
->
-> ```bash
-> npm i github:natwhite/adorn        # a tag/sha pin is recommended, e.g. #v0.1.0
-> ```
->
-> or vendor it as a submodule and point a `file:` dependency at it. The published-package install line will
-> be added here once the name is chosen.
 
 The only runtime dependency is `tslib`. The package ships **dual ESM + CommonJS** through its `exports` map —
-`import` resolves to a tree-shakeable ESM build (`dist/esm/*.mjs`), `require` to the CommonJS build
-(`dist/index.js`), both sharing one set of `.d.ts` types — plus the `adorn` `bin`. The two formats are safe to
-mix in one process: adorn's mutable state (the contract registry, the sinks, the policy) lives in a
-`globalThis`-keyed slot, so a dual-loaded copy shares one registry rather than silently splitting enforcement
-(DEC-095).
+`import` resolves to a tree-shakeable ESM build, `require` to the CommonJS build, both sharing one set of `.d.ts`
+types. The two formats are safe to mix in one process: adorn's mutable state (the registry, the sinks, the
+policy) lives in a `globalThis`-keyed slot, so a dual-loaded copy shares one registry rather than silently
+splitting enforcement.
 
-### Two authoring paths
-
-adorn has **one semantic core — the reified descriptor — and two syntaxes that produce it.** Choose either,
-per file; they interoperate and project identically.
-
-| Decorator syntax — needs `experimentalDecorators` | Descriptor syntax — no compiler flags |
-| --- | --- |
-| `@Contract()` on the class | `contract(spec, fn)` / `contract.checked(spec, fn)` |
-| `@NotEmpty() name: string` | `StringContracts.NotEmpty()` |
-| `@Between(1, 7) days: number` | `NumberContracts.Between(1, 7)` |
-| `@OneOf(['a', 'b']) unit: string` | `EnumContracts.OneOf(['a', 'b'])` |
-| `toolSchemaForMethod(C, 'm')` | `toolSchemaFrom({ params: { … } })` |
-| validation via the installed `@Contract` wrapper | `Verify.check(descriptor, name, value)` |
-
-Both forms reduce to the **same descriptors**, so both feed the same pipeline — these are two frontends onto one
-semantic system, not two libraries bolted together:
-
-```text
-   decorator  ─┐
-               ├─▶  one reified descriptor  ─▶  runtime enforcement
-   descriptor ─┘                                + JSON Schema
-                                                + LLM tool schema
-                                                + documentation
-                                                + property-based tests
-                                                + observability
-```
-
-The decorator is the *ergonomic* frontend; the descriptor is the *foundation* every projection reads
-([constraints are data](#why-a-decorator-can-become-five-artifacts-constraints-are-data)). A codebase that can't
-or won't enable `experimentalDecorators` — or has no classes at all — adopts the **identical** enforcement and
-projections through the descriptor path, which needs no compiler flags. The next section enables the decorator
-frontend; the descriptor frontend needs nothing but the import.
-
-The descriptor frontend also has a fluent **`Contracts`** facade — the same factories grouped under one entry
-object with lowercase, type-grouped names (`Contracts.number.between(1, 10)`, `Contracts.nullable(item)`,
-`Contracts.object({...})`), so it reads as one algebra rather than seven namespaces. See [Working with values
-directly](#working-with-values-directly).
-
-### Enable decorators
-
-Decorator **syntax** needs exactly one TypeScript flag, `experimentalDecorators`:
+**Decorator syntax** needs exactly one TypeScript flag:
 
 ```jsonc
 // tsconfig.json
 { "compilerOptions": { "experimentalDecorators": true } }
 ```
 
-That is the whole requirement. Enforcement, every projection, and the tool schemas read the **reified
-descriptor** — not reflected type metadata — so none of them depend on `emitDecoratorMetadata` or on
-`reflect-metadata`. The second flag is **optional and purely cosmetic**: `emitDecoratorMetadata: true` *together
-with* an imported `Reflect.metadata` implementation (`reflect-metadata`) fills the inferred **`Type` column** in
-generated docs from `design:paramtypes`, and nothing else — with either absent, adorn feature-detects that and
-simply omits the column. Node.js 20.19+ is supported (CI runs on 20.19 / 22 / 24).
+That is the whole requirement — enforcement and every projection read the reified descriptor, not reflected type
+metadata, so nothing depends on `emitDecoratorMetadata` or `reflect-metadata`. Node.js 20.19+ is supported (CI
+runs on 20.19 / 22 / 24). The descriptor API needs no flags at all. Full setup, including the optional docs
+`Type` column and per-toolchain notes, is in [Enable decorators](docs/decorators.md#enable-decorators).
 
-> **Toolchains.** Because only decorator *syntax* is required, any `experimentalDecorators`-capable compiler
-> works — `tsc`, ts-jest, ts-node, SWC, esbuild, Vite, Bun. The optional `Type`-column metadata is the one
-> place they differ: `tsc` / ts-jest / ts-node and **SWC** (`jsc.transform.legacyDecorator` +
-> `decoratorMetadata`) emit it; **esbuild** (and Vite, which transpiles with it) and **Bun** do not (DEC-004).
-> Since adorn never needs that metadata to run, the choice affects only whether generated docs can show an
-> inferred `Type` column — never whether a contract is enforced or a schema is produced.
+## Package entry points
 
-### Build from source (contributors)
+The root is the authoring surface; the rest of the API is grouped onto subpaths so a consumer imports only what
+it uses and a bundler can tree-shake the rest. Each subpath also exports the TypeScript types for what it holds.
+
+| Entry point | What it holds |
+| --- | --- |
+| `adorn` | Decorators; the descriptor factories + the `Contracts` facade; `contract` / `contract.checked`; `Verify` / `Enforce`; `defineConstraint`; and the configuration setters (`setViolationPolicy`, `setObservationSink`, …). |
+| `adorn/schema` | The projections — `toolSchemaForMethod`, `toolSchemaFrom`, `schemaForClass`, and the docs generators. |
+| `adorn/introspection` | The registry reads (`getContractsForClass`, `getEffective*`) and the shared evaluators. |
+| `adorn/observe` | Observation plumbing — `getObservationSink`, `nextCallId`, `settle`, `violationFromCheck`, and the `ObservationSink` model. |
+| `adorn/privacy` | The telemetry / privacy-review projection — `telemetryForClass`, `generateTelemetryReport`. |
+| `adorn/otel` | An OpenTelemetry `ObservationSink` (optional peer `@opentelemetry/api`). |
+| `adorn/test` | Property-based testing from descriptors (optional peer `fast-check`). |
+
+## Documentation
+
+The guides below cover the full surface; the website hosts an interactive reference and a live playground.
+
+- **[Decorators & contracts](docs/decorators.md)** — the full decorator catalog (constraints, markers,
+  pre/postconditions), how `@Contract()` works, and enforcement/disclosure configuration.
+- **[Schemas, projections & the CLI](docs/schemas.md)** — the tool schema, descriptive JSON Schema, Markdown
+  docs, OpenAI strict mode, registry introspection, and the `adorn` CLI.
+- **[The functional (descriptor) API](docs/functional-api.md)** — `Verify`, `contract()`, `toolSchemaFrom`, the
+  `Contracts` facade, and the two authoring paths — decorator-free authoring and validation.
+- **[Observability & privacy](docs/observability.md)** — the neutral observation sink, `@Sensitive` /
+  `@Telemetry`, and safe-by-default redaction.
+- **[Add-ons](docs/add-ons.md)** — `adorn/otel` (OpenTelemetry sink) and `adorn/test` (property-based testing).
+- **Interactive reference & playground:** [adorn-ts.dev](https://adorn-ts.dev)
+- **Runnable examples:** [`examples/`](examples/README.md) · **Decision log:** [`docs/DECISIONS.md`](docs/DECISIONS.md) · **Releases:** [`CHANGELOG.md`](CHANGELOG.md)
+
+## Project status
+
+A focused, honestly-scoped `0.1.0`: a working decorator core with method and field inheritance, closure and
+reified pre-/postconditions, five projections (docs, JSON Schema, prescriptive LLM tool schema, observability,
+privacy review), a safe-by-default redaction runtime, a build-time sensitive-flow detector, and a CLI. The
+public surface is pinned by a test, and the suite is green (83 suites, 1412 tests).
+
+**What works today**
+
+- The parameter-constraint decorators (numeric, string, `@OneOf`/`@Const`, `@ArrayOf`, `@Dictionary`, `@Shape`,
+  `@Nullable`, string formats), the reified descriptor model, and the `@Contract()` / `@Validate()` installer.
+- Field decorators and method-parameter inheritance (a subclass strengthens, never weakens).
+- Pre-/postconditions — `@Requires`, `@EnabledWhen`, `@Ensures` (closure), `@Returns` (reified + projectable).
+- Five in-core projections, including the prescriptive tool schema with OpenAI strict mode.
+- `@Sensitive` / `@Telemetry` plus safe-by-default redaction, the sensitive-flow detector, and the CLI.
+- The co-equal descriptor-first path — `Verify`, `contract()`, `toolSchemaFrom`, `defineConstraint`, the
+  `*Contracts` namespaces and the `Contracts` facade — the same enforcement and projections with no decorators.
+
+**On the roadmap** — a TC39 Stage-3 decorators adapter (`adorn/stage3`) beside the legacy one, consumer-facing
+JSDoc carried into `dist`, and string-format fuzzing arbitraries. A few known limitations (minification degrades
+recovered parameter names; closures are enforced but unprojectable; constructor-parameter decorators are not yet
+supported) are documented in [Decorators & contracts](docs/decorators.md#known-limitations).
+
+## Contributing / build from source
 
 ```bash
 npm install
 npm run build      # tsc -> ./dist (CJS mirror + CLI), then tsup -> ./dist/esm (the ESM bundles)
 npm test           # jest — 83 suites, 1412 tests
-npm run typecheck  # tsc --noEmit over src, tests, addons, tools (tsconfig.test.json)
+npm run typecheck  # tsc --noEmit over src, tests, add-ons, tools
 npm run demo       # ts-node examples/demo.ts — a genuine install smoke test
+npm run hooks      # enable the repo's pre-commit Prettier gate (.githooks)
 ```
 
-During the tsup pass you will see `You have emitDecoratorMetadata enabled but @swc/core was not installed,
-skipping swc plugin`. This is **expected, not a warning to fix**: adorn reads only a *consumer's*
-`design:paramtypes`, never its own, so the ESM bundles need no decorator metadata (DEC-004 / DEC-096).
-
-adorn is pinned to **TypeScript 6.0.3** for the build — the highest version the toolchain supports, because
-ts-jest has no TS 7 release yet (DEC-013). The shipped `.d.ts` compile cleanly under a consumer's
-`strict: true` (DEC-070).
-
-### Examples
-
-Runnable, self-contained scripts covering each capability — the LLM tool paths, `contract()`, boundary
-validation, the projections, observability, and redaction — live in [`examples/`](examples/README.md). Each
-is `npx ts-node examples/<file>.ts`.
-
----
-
-## Package entry points
-
-`adorn` is dual ESM + CommonJS (DEC-096). The root is the authoring surface; the rest of the API is grouped
-onto subpaths so a consumer imports only what it uses and a bundler can tree-shake the rest (DEC-097):
-
-| Entry point | What it holds |
-| --- | --- |
-| `adorn` | Decorators; the descriptor factories + the `Contracts` facade; `contract` / `contract.checked`; `Verify` / `Enforce`; `defineConstraint` / `constraintFromJSON`; and the configuration setters (`setViolationPolicy`, `setObservationSink`, …). |
-| `adorn/schema` | The projections — `toolSchemaForMethod`, `toolSchemaFrom`, `schemaForClass`, and the docs generators. |
-| `adorn/introspection` | The registry reads (`getContractsForClass`, `getEffective*`) and the shared evaluators (`evaluatePreconditions` / `evaluatePostconditions` / `evaluateEnabledness`). |
-| `adorn/observe` | Observation plumbing — `getObservationSink`, `nextCallId`, `settle`, `createConsoleObservationSink`, `violationFromCheck`, and the `ObservationSink` model. |
-| `adorn/privacy` | The telemetry / privacy-review projection — `telemetryForClass`, `generateTelemetryReport`. |
-| `adorn/otel` | An OpenTelemetry `ObservationSink` (optional peer `@opentelemetry/api`). |
-| `adorn/test` | Property-based testing from descriptors (optional peer `fast-check`). |
-
-Installing a sink stays on the root (`setObservationSink` is a configuration verb, like `setViolationPolicy`);
-*reading* or *constructing* observation data lives in `adorn/observe`.
-
-**A moved symbol takes its types with it.** Each subpath also exports the TypeScript types for what it holds,
-so repoint the type imports alongside the values: `ToolSchema` / `ToolSchemaOptions` / `ToolSchemaProvider` /
-`ToolSchemaFromInput` / `ToolParamSpec` / `ClassSchema` / `SchemaOptions` on `adorn/schema`; the
-`Observation` / `ObservationEvent` / `ObservationCall` / `Attributes` / `EmittedValue` / `ErrorFacts` /
-`SpanKind` / `Settlement` model on `adorn/observe`; `PostconditionResult` / `PreconditionResult` /
-`EnablednessResult` / `EnablednessGuard` on `adorn/introspection`; `TelemetryReport` on `adorn/privacy`.
-(`ConstraintDescriptor`, `ContractVerdict`, `CheckResult` and the authoring types stay on the root.)
-
-> **Upgrading across the curation (DEC-097):** these subpaths are **new in this release** — not a
-> pre-existing alternative import path. A repointing change (`import … from 'adorn/schema'`) will not compile
-> against an older adorn that exposes only the root plus `adorn/otel` / `adorn/test`. So **upgrade adorn
-> first, then repoint** — the two steps cannot be reordered, and a consumer commit that repoints must land
-> after the adorn version that introduces the subpaths.
-
----
-
-## Add-ons — the `adorn/otel` and `adorn/test` subpath exports
-
-Both ship in the package as **opt-in subpath exports** (DEC-073): built into `dist`, reachable as `adorn/otel`
-and `adorn/test`, but importing the package root (`require('adorn')`) never pulls them — the core runtime
-dependency stays `tslib` alone, asserted by the isolation tests. Each declares its heavy dependency as an
-**optional peer** you install only when you use that entry point.
-
-- **`adorn/test`** — `import { fuzzClass } from 'adorn/test'`. Property-based testing that derives `fast-check`
-  generators from constraint descriptors. Its rule is **sound generation**: produce only inputs the contract
-  accepts, or *decline* and say so (DEC-031). Phase B consumes the *same* functions enforcement runs, so the
-  oracle flags an input exactly when the enforced wrapper throws — an executably-pinned no-drift property.
-  `fuzzSequence` (DEC-090) extends this to **stateful** objects: it drives generated call sequences against
-  one evolving instance, skips calls whose `@EnabledWhen` guard says "not enabled here", and checks that
-  field invariants and postconditions survive every transition. Optional peer: `fast-check`.
-- **`adorn/otel`** — `import { createOtelSink } from 'adorn/otel'`. An OpenTelemetry `ObservationSink`
-  (DEC-046): `createOtelSink()` maps `scope` → an active span, `completed` → a duration histogram, `violation`
-  → `recordException` + a value-free span event; install it with `setObservationSink(createOtelSink({...}))`.
-  Optional peer: `@opentelemetry/api`.
-
----
-
-## Project state
-
-### Working
-
-- Parameter-constraint decorators (numeric, string, `@OneOf`/`@Const` membership, `@ArrayOf` arrays,
-  `@Dictionary` open maps + `@Shape` closed DTOs, the `@Nullable` combinator, `@Uuid`/`@DateTime`/`@Ipv4`/
-  `@Format` formats), the reified descriptor model, and the `@Contract()` / `@Validate()` installer.
-- Field decorators with inheritance — a subclass strengthens, never weakens (DEC-021).
-- Method-parameter inheritance — an overridden method inherits its parent's preconditions (DEC-022).
-- Postconditions — `@Ensures` (closure), `@Returns` (reified + projectable), the shared oracle.
-- Cross-parameter preconditions — `@Requires` (DEC-057), enforced before the call, caller-blamed.
-- Enforcement-aware `@Optional` / `@Default` and record-only `@Describe` / `@Tool`.
-- `@Log()`, `@Time()`, `@Observe()`.
-- Five in-core projections: Markdown docs, descriptive JSON Schema, prescriptive tool schema
-  (`toolSchemaForMethod`, incl. OpenAI strict mode via `{ provider: 'openai', strict: true }` on both
-  entries — DEC-071/093),
-  observability (O1 sink), privacy-review telemetry.
-- `@Sensitive` / `@Telemetry` plus safe-by-default redaction.
-- Build-time sensitive-flow detector, and the `adorn` CLI (`docs` / `schema` / `check`).
-- The descriptor-first path, co-equal to decorators — `Verify.that`/`Verify.check`, `contract()`,
-  `toolSchemaFrom`, `defineConstraint`, and the `*Contracts` namespaces — the same enforcement and projections
-  with no decorators and no compiler flags.
-
-### Validated against OpenAI
-
-The generated tool schemas round-trip through OpenAI's live function-calling API — schema accepted, model
-returns a tool call, arguments validate against the same declaration — across nested objects, nullable-optional
-fields, and strict mode. Method and offline evidence: [`docs/q31-results.md`](docs/q31-results.md),
-[`docs/q32-results.md`](docs/q32-results.md), [`docs/q31-capstone-results.md`](docs/q31-capstone-results.md).
-
-### Roadmap / next
-
-- The add-ons now ship as `adorn/otel` / `adorn/test` **subpath exports** (DEC-073). Promoting either to its
-  own top-level `@adorn/*` package later remains an option, but is no longer required to consume them.
-- Consumer-facing JSDoc on the source declarations, so guidance survives into `dist/index.d.ts`; and
-  string-format `fast-check` arbitraries (the fuzzer currently *declines* on formats).
-- **A TC39 Stage-3 decorators adapter** (`adorn/stage3`) beside the legacy one, recording into the same Core
-  model (DEC-040) — the successor to `experimentalDecorators`, so the paradigm survives the language's
-  decorator transition.
-- **The add-on ecosystem** (DEC-041/042): `@adorn/rx`, `@adorn/cache`, `@adorn/policy`, and a flow-control
-  family (`@adorn/resilience`, `@adorn/limit`, `@adorn/idempotency`) — deliberately kept out of core.
-
-### Known rough edges
-
-- **Parameter names come from `Function.prototype.toString()`.** Minification degrades them (`message` → `s`),
-  and that propagates into generated documents and schemas. Enforcement and every projection degrade
-  *together* — a schema saying `s` about a check saying `s` beats one saying `arg0` about a check saying `sku`
-  (SMELL-1).
-- **Arity is lost.** A wrapped method reports `length === 0` (its `.name` is correct); destructured/rest
-  signatures can misalign recovered names (Q-10) — which is why a faithful OpenAPI path emitter is still
-  blocked.
-- **Closures can't be projected.** `@Ensures` / `@Requires` are enforced but invisible to docs, schema, and
-  fuzzing (a `@Requires`-only method emits an empty tool schema). `@Ensures` types its `result` as `unknown`,
-  so under `strict` the author must annotate.
-- **The `@Sensitive` primitive-parameter gap is permanent.** `transfer(ssn: string)` must be marked on the
-  parameter; JavaScript's value semantics destroy the link to a `@Sensitive` field (DEC-PII-5). A method
-  *return* likewise can't be directly `@Sensitive`; `@Telemetry.result()` gives the opt-in half, the veto half
-  needs class-level `@Sensitive`.
-
-For the full picture, [`docs/DECISIONS.md`](docs/DECISIONS.md) is the decision log (DEC-001…DEC-090) and
-[`CHANGELOG.md`](CHANGELOG.md) tracks releases.
-
----
+Formatting is enforced by Prettier (`npm run format`) and gated in CI; run `npm run hooks` once per clone so the
+pre-commit hook catches drift before it reaches a push.
 
 ## License
 
