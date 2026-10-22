@@ -1,0 +1,39 @@
+# Executable docs: every `import ... from 'adorn...'` in the README and the published guides must resolve
+# to a real export of the named entry point, checked against the PACKED artifact (`npm pack`) under three
+# consumer module modes (ESM/NodeNext, CJS/Node16, bundler). This is the dogfood that makes it impossible
+# for a documented import to drift from the published surface — the defect that shipped in the 0.1.0 README.
+name: Docs
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  doc-imports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Builds dist, packs the tarball, installs it into three clean consumer fixtures, and typechecks
+      # every documented adorn import against it. Fails if any import names a symbol the packed surface
+      # does not export under that module resolution.
+      - name: Every documented import resolves against the packed artifact
+        run: node scripts/docs/check-docs.mjs

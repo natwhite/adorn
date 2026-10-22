@@ -138,11 +138,18 @@ export default tseslint.config(
     },
 
     {
-        // Jest config, this config, and the npm lifecycle scripts (scripts/**) are Node CommonJS scripts,
-        // not library sources: `require()`, `process`, `module` and `__dirname` are correct there, not lapses.
-        files: ['jest.config.js', 'eslint.config.mjs', 'scripts/**/*.js'],
+        // Jest config, this config, and the scripts/ utilities are Node scripts (CommonJS or ESM), not
+        // library sources: `require()`/`process`/`console`/`module`/`__dirname` are correct there, not lapses.
+        files: ['jest.config.js', 'eslint.config.mjs', 'scripts/**/*.{js,cjs,mjs}'],
         languageOptions: {
-            globals: {module: 'writable', require: 'readonly', __dirname: 'readonly', process: 'readonly'},
+            globals: {
+                module: 'writable',
+                require: 'readonly',
+                __dirname: 'readonly',
+                process: 'readonly',
+                console: 'readonly',
+                URL: 'readonly',
+            },
         },
         rules: {
             '@typescript-eslint/no-require-imports': 'off',
