@@ -47,7 +47,8 @@ projections with no decorators and no compiler flags.
 A worked boundary-validation example:
 
 ```ts
-import { Verify, toolSchemaFrom, Contracts } from 'adorn';
+import { Verify, Contracts } from 'adorn';
+import { toolSchemaFrom } from 'adorn/schema';
 
 // A per-session tool schema whose enum is known only now:
 const params = {

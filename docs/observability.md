@@ -25,7 +25,7 @@ The stream isn't decorator-only — a functional codebase (no classes to `@Obser
 the installed sink, the observation analog of `Verify.check`:
 
 ```ts
-import { getObservationSink, nextCallId } from 'adorn';
+import { getObservationSink, nextCallId } from 'adorn/observe';
 import type { Observation } from 'adorn/observe';
 
 const observation: Observation = {

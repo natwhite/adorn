@@ -35,8 +35,9 @@ thing you wrote on the signature.
 ```ts
 import {
     Contract, Tool, Describe, NotEmpty, OneOf,
-    GreaterThanEqual, LessThanEqual, toolSchemaForMethod,
+    GreaterThanEqual, LessThanEqual,
 } from 'adorn';
+import { toolSchemaForMethod } from 'adorn/schema';
 
 @Contract()
 class WeatherTool {
@@ -112,7 +113,8 @@ decorators adopts the identical enforcement and projections without them — and
 
 ```ts
 // The descriptor path — same enforcement, same schema, no decorators:
-import { Verify, toolSchemaFrom, Contracts } from 'adorn';
+import { Verify, Contracts } from 'adorn';
+import { toolSchemaFrom } from 'adorn/schema';
 
 const params = { city: Contracts.string.notEmpty(), days: Contracts.number.between(1, 7) };
 
