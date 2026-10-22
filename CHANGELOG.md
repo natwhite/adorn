@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and adorn follows
 [Semantic Versioning](https://semver.org/). Pre-1.0, minor releases may include breaking changes.
 
+## [0.1.1] — 2026-10-22
+
+A documentation release. No runtime or API changes — this patches the docs the npm page serves and the
+tooling that keeps them honest.
+
+### Fixed
+
+- The published README's examples imported `toolSchemaForMethod` and `toolSchemaFrom` from the package
+  root, but the 0.1.0 surface curation moved the projections to `adorn/schema` (and the observation reads
+  to `adorn/observe`). Every documented import now names the correct entry point.
+
+### Changed
+
+- The README is now a lean overview; the full reference lives in topical guides under `docs/`
+  (decorators, schemas, functional API, observability, add-ons). Internal decision-log codes and the
+  pre-publish "not yet on npm" caveats are gone, and the artifacts table names real entry points.
+- Corrected the 0.1.0 entry below (the provider profile, optional metadata, co-equal descriptor API) and
+  the decorator-roadmap naming: TC39 standard decorators are at Stage 2.7, so the planned adapter is
+  `adorn/standard`, not `adorn/stage3`.
+
+### Added (repo tooling, not shipped in the package)
+
+- Executable-docs CI: every `import … from 'adorn…'` in the README and guides is typechecked against the
+  **packed** artifact under ESM/NodeNext, CJS/Node16, and bundler consumer fixtures, so a documented import
+  cannot drift from the published surface again.
+- A pre-commit hook (`npm run hooks`) that runs Prettier on staged files.
+
 ## [0.1.0] — 2026-10-18
 
 First public release — contracts as data for TypeScript. One declaration is the single source for
@@ -63,4 +90,5 @@ drift by construction.
   `strict: true`.
 - Published from GitHub Actions via npm Trusted Publishing, with provenance.
 
+[0.1.1]: https://github.com/natwhite/adorn/releases/tag/v0.1.1
 [0.1.0]: https://github.com/natwhite/adorn/releases/tag/v0.1.0

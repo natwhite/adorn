@@ -1,6 +1,6 @@
 {
   "name": "adorn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One TypeScript declaration → an LLM tool schema, a runtime validator, JSON Schema, and docs, derived from a single source.",
   "keywords": [
     "typescript",
