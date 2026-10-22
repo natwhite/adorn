@@ -28,33 +28,34 @@ thing you wrote on the signature.
 
 ```ts
 import {
-    Contract, Tool, Describe, NotEmpty, OneOf,
+    Contract, Describe, NotEmpty, OneOf,
     GreaterThanEqual, LessThanEqual,
 } from 'adorn';
 import { toolSchemaForMethod } from 'adorn/schema';
 
 @Contract()
-class WeatherTool {
-    @Tool('Look up a weather forecast.')
+class WeatherService {
     getWeather(
         @Describe('the city to look up') @NotEmpty() location: string,
         @OneOf(['celsius', 'fahrenheit']) unit: string,
         @GreaterThanEqual(1) @LessThanEqual(7) days: number,
     ): string {
-        // @Contract() has already rejected any call whose arguments violate the same
-        // constraints the schema advertises. If the model sends {days: 99} or omits
-        // `location`, this body never runs.
+        // @Contract() has already rejected any call whose arguments violate the
+        // constraints. If a caller sends {days: 99} or omits `location`, this body
+        // never runs.
         return /* ... */;
     }
 }
 
-// Exactly the object a function-calling API wants:
-const parameters = toolSchemaForMethod(WeatherTool, 'getWeather');
+// One projection of that contract — the prescriptive tool schema a function-calling API wants:
+const parameters = toolSchemaForMethod(WeatherService, 'getWeather', {
+    description: 'Look up a weather forecast.',
+});
 ```
 
 ```json
 {
-  "title": "WeatherTool.getWeather",
+  "title": "WeatherService.getWeather",
   "description": "Look up a weather forecast.",
   "type": "object",
   "properties": {
@@ -68,8 +69,8 @@ const parameters = toolSchemaForMethod(WeatherTool, 'getWeather');
 ```
 
 That one line — `@GreaterThanEqual(1) @LessThanEqual(7) days: number` — is *both* the `{minimum: 1, maximum: 7}`
-the model is steered by **and** the predicate that throws when the model sends `{days: 99}`. Change
-`@LessThanEqual(7)` to `@LessThanEqual(14)` and *both* the schema the model reads and the check its reply faces
+a consumer is steered by **and** the predicate that throws when a caller sends `{days: 99}`. Change
+`@LessThanEqual(7)` to `@LessThanEqual(14)` and *both* the schema a consumer reads and the check its input faces
 move together, because there is only one of them, and it lives on the signature.
 
 ### Why this matters even more for machine consumers
