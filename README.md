@@ -84,14 +84,14 @@ schema* silently corrupts every call.
 
 ## One declaration, every artifact
 
-| One declaration on the signature produces | Where it ships |
+| One declaration produces | Entry point |
 | --- | --- |
-| **Runtime validation** — the check that runs on every call | core |
-| **Prescriptive tool schema** — the LLM's `parameters` object (`toolSchemaForMethod`) | core |
-| **Descriptive JSON Schema** — draft 2020-12 (`schemaForClass`) | core |
-| **Documentation** — Markdown generated from the same statement it enforces | core |
-| **Observability** — value-free violation & completion facts through a neutral sink | core |
-| **Privacy review** — the disclosure each parameter/return carries (`telemetryForClass`) | core |
+| **Runtime validation** — the check that runs on every call | `adorn` |
+| **Prescriptive tool schema** — the LLM's `parameters` object (`toolSchemaForMethod`) | [`adorn/schema`](docs/schemas.md) |
+| **Descriptive JSON Schema** — draft 2020-12 (`schemaForClass`) | [`adorn/schema`](docs/schemas.md) |
+| **Documentation** — Markdown generated from the same statement it enforces | [`adorn/schema`](docs/schemas.md) |
+| **Observability** — value-free violation & completion facts through a neutral sink | [`adorn/observe`](docs/observability.md) |
+| **Privacy review** — the disclosure each parameter/return carries (`telemetryForClass`) | [`adorn/privacy`](docs/observability.md) |
 | **Property-based tests** — `fast-check` inputs derived from the contract | [`adorn/test`](docs/add-ons.md) |
 
 **adorn is a validator, not a coercion library.** It *rejects* an invalid value; it never silently coerces,
@@ -199,7 +199,7 @@ public surface is pinned by a test, and the suite is green (83 suites, 1412 test
 - The co-equal descriptor-first path — `Verify`, `contract()`, `toolSchemaFrom`, `defineConstraint`, the
   `*Contracts` namespaces and the `Contracts` facade — the same enforcement and projections with no decorators.
 
-**On the roadmap** — a TC39 Stage-3 decorators adapter (`adorn/stage3`) beside the legacy one, consumer-facing
+**On the roadmap** — a TC39 standard-decorators adapter (`adorn/standard`) beside the legacy one, consumer-facing
 JSDoc carried into `dist`, and string-format fuzzing arbitraries. A few known limitations (minification degrades
 recovered parameter names; closures are enforced but unprojectable; constructor-parameter decorators are not yet
 supported) are documented in [Decorators & contracts](docs/decorators.md#known-limitations).

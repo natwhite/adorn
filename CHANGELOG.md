@@ -23,8 +23,8 @@ drift by construction.
 - **LLM tool-calling** — `toolSchemaForMethod` (from a decorated method) and `toolSchemaFrom`
   (descriptor-first, so a per-session enum needs no class) emit the prescriptive `parameters` object a
   function-calling API expects; the same declaration validates the model's reply. Both take
-  `{ providerStrict }` to emit OpenAI-strict-compatible schemas (recursive; nullability lives in the
-  declaration). The output was round-tripped end-to-end through OpenAI `gpt-4o-mini`.
+  a provider profile (`{ provider: 'openai', strict: true }`) to emit OpenAI-strict-compatible schemas
+  (recursive; nullability lives in the declaration). The output was round-tripped end-to-end through OpenAI `gpt-4o-mini`.
 - **Imperative validation** — `Verify.that` (throws) and `Verify.check` (non-throwing; narrows
   `unknown` to the constraint's output type, with the failing `path` and `expected` on a violation).
 - **Pre / postconditions** — `@Requires` (cross-parameter precondition), `@EnabledWhen` (state-reading
@@ -49,10 +49,14 @@ drift by construction.
 ### Notes
 
 - The only runtime dependency is `tslib`.
-- Decorators are the authoring path (`experimentalDecorators` / `emitDecoratorMetadata`). For a value
-  with no signature to decorate — a raw `unknown` off the wire, a per-session schema — the same
-  constraints are usable directly (`Verify.check`, the `*Contracts` namespaces, `toolSchemaFrom`) with
-  those flags off; the escape hatch, not the front door.
+- Two co-equal authoring paths. Decorator *syntax* needs only `experimentalDecorators` —
+  `emitDecoratorMetadata` is optional and purely cosmetic (it fills an inferred `Type` column in generated
+  docs, nothing more). The same constraints are equally usable directly (`Verify.check`, the `*Contracts`
+  namespaces and the `Contracts` facade, `contract()`, `toolSchemaFrom`) with no compiler flags — a
+  co-equal authoring path, not a fallback.
+- The root `adorn` is the authoring surface; the projections, registry introspection, observation
+  plumbing, and privacy review are grouped onto curated subpath exports (`adorn/schema`,
+  `adorn/introspection`, `adorn/observe`, `adorn/privacy`) so a consumer imports only what it uses.
 - The add-ons ship inside the package as subpath exports (`adorn/test`, `adorn/otel`); importing the
   package root never loads them or their peers.
 - Shipped `.d.ts` files compile under a consumer's `strict: true`; the library itself builds with

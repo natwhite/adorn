@@ -5,8 +5,8 @@ import {defineConfig} from 'tsup';
  *
  * The CJS build stays the untouched `tsc` dist-mirror (`dist/index.js` + `dist/src/**` + `dist/addons/**` +
  * the CLI + the sensitive-flow detector), preserving every runtime-`require` path, the `bin`, and the
- * `tslib`-only isolation of the core graph. This pass adds ESM bundles for the three library entry points
- * ONLY, into `dist/esm/`, so a modern consumer's `import` resolves to real ESM a bundler can tree-shake, while
+ * `tslib`-only isolation of the core graph. This pass adds one ESM bundle per entry point — the root, the four curated
+ * subpaths, and the two add-ons — into `dist/esm/`, so a modern consumer's `import` resolves to real ESM a bundler can tree-shake, while
  * `require('adorn')` still resolves to the identical CJS. Types are shared: the `.d.ts` the CJS `tsc` already
  * emits are referenced by both `exports` conditions, so tsup emits no declarations here.
  *
